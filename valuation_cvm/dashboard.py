@@ -1061,6 +1061,10 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
     lucro  = _f(m.get("lucro_liquido"))
     fcl    = _f(m.get("fcl_aprox"))
 
+    # Placeholder para o painel de resumo no topo (preenchido após cálculos)
+    _top_summary = st.empty()
+    st.markdown("---")
+
     # ── SEÇÃO 1: WACC Calculator ────────────────────────────────────────────
     with st.expander("🧮  WACC — Custo Médio Ponderado de Capital (CAPM)", expanded=True):
         box("O WACC é a taxa de desconto usada no DCF. Ajuste os parâmetros abaixo para o contexto brasileiro.", "info")
@@ -1219,6 +1223,8 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
     box("EV = Σ FCL/(1+WACC)ᵗ + TV/(1+WACC)ⁿ  |  TV = FCL_n×(1+g)/(WACC−g)  |  "
         "Equity = EV − Dívida Líquida", "info")
 
+    eq_shr = None  # inicializado aqui; preenchido pelo bloco DCF abaixo
+
     d1, d2 = st.columns([1, 1])
     with d1:
         st.markdown("**FCL Base e Fases de Crescimento**")
@@ -1336,10 +1342,41 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
             textposition="outside", textfont=dict(color=C["t2"], size=11),
         ))
         fig_comp.update_layout(**_PL, title="Comparativo de Enterprise Values (R$ Bilhões)",
-                               showlegend=False,
-                               xaxis=dict(**_PL["xaxis"]),
-                               yaxis=dict(**_PL["yaxis"], tickfont=dict(color=C["t2"], size=11)))
+                               showlegend=False)
         st.plotly_chart(fig_comp, use_container_width=True)
+
+    # ── Painel de resumo no topo (preenchido após todos os cálculos) ─────────
+    _epv_shr = epv_res.get("epv_per_share") if epv_shr > 0 else None
+    _dcf_shr = eq_shr  # None se DCF não calculado
+    _preco   = preco if preco else None
+
+    with _top_summary.container():
+        sec("Resumo — Valor Justo por Ação")
+        _sc = st.columns(4)
+        _sc[0].markdown(mc("Preço de Mercado",
+                           f"R$ {_preco:,.2f}" if _preco else "–", "blu"),
+                        unsafe_allow_html=True)
+        _sc[1].markdown(mc("EPV / Ação",
+                           f"R$ {_epv_shr:,.2f}" if _epv_shr else "–",
+                           _cls(_epv_shr) if _epv_shr else "nd"),
+                        unsafe_allow_html=True)
+        _sc[2].markdown(mc("DCF / Ação",
+                           f"R$ {_dcf_shr:,.2f}" if _dcf_shr else "–",
+                           _cls(_dcf_shr) if _dcf_shr else "nd"),
+                        unsafe_allow_html=True)
+        if _epv_shr and _preco:
+            _up = (_epv_shr / _preco - 1) * 100
+            _sc[3].markdown(mc("Upside EPV vs Mercado",
+                               f"{_up:+.1f}%", "pos" if _up > 0 else "neg"),
+                            unsafe_allow_html=True)
+        elif _dcf_shr and _preco:
+            _up = (_dcf_shr / _preco - 1) * 100
+            _sc[3].markdown(mc("Upside DCF vs Mercado",
+                               f"{_up:+.1f}%", "pos" if _up > 0 else "neg"),
+                            unsafe_allow_html=True)
+        else:
+            _sc[3].markdown(mc("Upside", "Informe preço e FCL", "nd"),
+                            unsafe_allow_html=True)
 
 
 def _tab_macro():

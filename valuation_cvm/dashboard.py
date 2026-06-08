@@ -25,6 +25,7 @@ import streamlit as st
 PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.brapi_client import BrapiClient
 from src.company_mapper import filter_company_by_name_or_cvm, load_company_registry
 from src.config import DEMONSTRATIVOS, TIPOS_DOC, get_processed_path
 from src.financial_statements import build_company_snapshot, load_processed_statement
@@ -716,6 +717,13 @@ def _history(cd, tipo):
     return pd.DataFrame(rows)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _brapi_quote(ticker: str) -> Optional[Dict]:
+    """Cotação BRAPI com cache de 5 minutos."""
+    client = BrapiClient()
+    return client.get_quote(ticker)
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def _bcb_serie(code: int, n: int = 36) -> pd.DataFrame:
     """Busca série temporal do Banco Central (api.bcb.gov.br)."""
@@ -1041,7 +1049,7 @@ def _tab_health(snap_ext, m, hist):
         st.plotly_chart(fig_lev, use_container_width=True)
 
 
-def _tab_valuation(m, snap_ext, cd, hist):
+def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
     """Aba de Valuation: WACC + Múltiplos + EPV + DCF."""
 
     ebit   = _f(m.get("ebit"))
@@ -1103,11 +1111,21 @@ def _tab_valuation(m, snap_ext, cd, hist):
     box("Informe o preço atual da ação e o total de ações para calcular os múltiplos. "
         "Fonte: B3, brapi.dev ou Yahoo Finance.", "info")
 
+    # Auto-preencher com dados BRAPI se disponíveis
+    brapi_preco = _f(brapi_data.get("regularMarketPrice")) if brapi_data else 0.0
+    brapi_acoes = (_f(brapi_data.get("sharesOutstanding")) or 0) / 1e6 if brapi_data else 0.0
+
+    if brapi_data and brapi_preco:
+        box(f"✅ Preço e ações preenchidos automaticamente via BRAPI.dev  "
+            f"(<b>{brapi_data.get('shortName','')}</b>  "
+            f"R$ {brapi_preco:.2f} · {brapi_acoes:.0f}M ações)", "ok")
+
     mv1, mv2 = st.columns(2)
     with mv1:
-        preco  = st.number_input("Preço da ação (R$)", 0.0, 99999.0, 0.0, 0.01, key="mult_preco",
-                                  format="%.2f")
-        acoes  = st.number_input("Total de ações (milhões)", 0.0, 99999.0, 0.0, 10.0, key="mult_acoes")
+        preco  = st.number_input("Preço da ação (R$)", 0.0, 99999.0, brapi_preco, 0.01,
+                                  key="mult_preco", format="%.2f")
+        acoes  = st.number_input("Total de ações (milhões)", 0.0, 99999.0, brapi_acoes, 10.0,
+                                  key="mult_acoes")
 
     mktcap = preco * acoes * 1e6 if preco > 0 and acoes > 0 else None
     ev_mkt = (mktcap + (nd or 0)) if mktcap is not None else None
@@ -1479,6 +1497,54 @@ def _welcome(avail):
                     st.markdown(mc(f"{tipo}/{stmt}", "Não baixado", "nd"), unsafe_allow_html=True)
 
 
+def _render_brapi_panel(q: Dict, ticker: str):
+    """Painel completo de dados de mercado BRAPI."""
+    sec(f"📈 Dados de Mercado — {ticker}  (BRAPI.dev · atualizado a cada 5 min)")
+
+    preco  = q.get("regularMarketPrice", 0)
+    var_d  = q.get("regularMarketChangePercent", 0)
+    var_r  = q.get("regularMarketChange", 0)
+    mktcap = q.get("marketCap")
+    acoes  = q.get("sharesOutstanding")
+    vol    = q.get("regularMarketVolume")
+    vol10d = q.get("averageDailyVolume10Day")
+    pl     = q.get("priceEarningsRatio")
+    pvp    = q.get("priceToBook")
+    ev_ebd = q.get("enterpriseValueEbitda")
+    ev     = q.get("enterpriseValue")
+    dy     = q.get("dividendYield")
+    hi52   = q.get("fiftyTwoWeekHigh")
+    lo52   = q.get("fiftyTwoWeekLow")
+    nome_c = q.get("shortName", ticker)
+
+    cor_v  = _cls(var_d)
+    sinal  = "▲" if var_d >= 0 else "▼"
+
+    # Row 1: preço e variação
+    c = st.columns(5)
+    c[0].markdown(mc("Preço Atual", f"R$ {preco:.2f}", cor_v,
+                     f"{sinal} R$ {abs(var_r):.2f} ({var_d:+.2f}%)"), unsafe_allow_html=True)
+    c[1].markdown(mc("Market Cap",  fbrl(mktcap, 1e9), "blu"), unsafe_allow_html=True)
+    c[2].markdown(mc("Ações (B)",   f"{acoes/1e9:.3f}B" if acoes else "–", "neu"), unsafe_allow_html=True)
+    c[3].markdown(mc("Volume Hoje", f"{vol/1e6:.1f}M" if vol else "–", "neu",
+                     f"Média 10d: {vol10d/1e6:.1f}M" if vol10d else ""), unsafe_allow_html=True)
+    c[4].markdown(mc("Dividend Yield", f"{dy:.2f}%" if dy else "–",
+                     "pos" if dy and dy > 0 else "nd"), unsafe_allow_html=True)
+
+    # Row 2: múltiplos de mercado (BRAPI)
+    c2 = st.columns(5)
+    c2[0].markdown(mc("P/L (mercado)",      fmult(pl, 1)   if pl   else "–", "neu"), unsafe_allow_html=True)
+    c2[1].markdown(mc("P/VP (mercado)",     fmult(pvp, 2)  if pvp  else "–", "neu"), unsafe_allow_html=True)
+    c2[2].markdown(mc("EV/EBITDA (mercado)",fmult(ev_ebd,1)if ev_ebd else "–", "neu"), unsafe_allow_html=True)
+    c2[3].markdown(mc("Enterprise Value",   fbrl(ev, 1e9)  if ev   else "–", "cyan"), unsafe_allow_html=True)
+    if hi52 and lo52:
+        pos_pct = (preco - lo52) / (hi52 - lo52) * 100 if hi52 != lo52 else 50
+        c2[4].markdown(mc("52 Semanas",
+                          f"R$ {lo52:.2f} – R$ {hi52:.2f}",
+                          "pos" if pos_pct > 50 else "neg",
+                          f"Posição atual: {pos_pct:.0f}%"), unsafe_allow_html=True)
+
+
 def _no_data():
     box("""<b>⚠ Nenhum dado processado encontrado</b><br><br>
 Execute o pipeline CVM no seu computador para baixar os dados:<br><br>
@@ -1601,6 +1667,56 @@ Para baixar dados:<br>
 
     co_strip(selected_name, selected_cd, tipo_doc, selected_setor)
 
+    # ── Painel BRAPI (cotação ao vivo) ────────────────────────────────────
+    brapi_data = None
+    with st.sidebar:
+        st.markdown("---")
+        st.markdown('<div class="sec">📈 Cotação B3 (BRAPI)</div>', unsafe_allow_html=True)
+        ticker_input = st.text_input(
+            "", placeholder="Ex: PETR4, VALE3, WEGE3",
+            key="ticker", label_visibility="collapsed",
+        )
+        if ticker_input:
+            with st.spinner("Buscando cotação…"):
+                brapi_data = _brapi_quote(ticker_input.strip().upper())
+            if brapi_data:
+                preco   = brapi_data.get("regularMarketPrice", 0)
+                var_d   = brapi_data.get("regularMarketChangePercent", 0)
+                cor_v   = C["green"] if var_d >= 0 else C["red"]
+                sinal   = "▲" if var_d >= 0 else "▼"
+                st.markdown(
+                    f'<div style="background:{C["surf"]};border:1px solid {C["brd"]};'
+                    f'border-left:3px solid {C["blue"]};border-radius:6px;padding:10px 14px;margin-top:4px">'
+                    f'<div style="color:{C["t3"]};font-size:10px;letter-spacing:1px">{ticker_input.upper()}</div>'
+                    f'<div style="color:{C["t1"]};font-size:22px;font-weight:700">R$ {preco:.2f}</div>'
+                    f'<div style="color:{cor_v};font-size:12px">{sinal} {abs(var_d):.2f}% hoje</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                hi52 = brapi_data.get("fiftyTwoWeekHigh")
+                lo52 = brapi_data.get("fiftyTwoWeekLow")
+                if hi52 and lo52:
+                    pos_pct = (preco - lo52) / (hi52 - lo52) * 100 if hi52 != lo52 else 50
+                    st.markdown(
+                        f'<div style="font-size:10px;color:{C["t3"]};margin-top:6px">'
+                        f'52 sem: R$ {lo52:.2f} — R$ {hi52:.2f}<br>'
+                        f'<div style="background:{C["brd2"]};border-radius:3px;height:5px;margin-top:4px">'
+                        f'<div style="background:{C["blue"]};width:{pos_pct:.0f}%;height:100%;border-radius:3px"></div>'
+                        f'</div></div>',
+                        unsafe_allow_html=True,
+                    )
+                dy = brapi_data.get("dividendYield")
+                if dy:
+                    st.markdown(f'<span style="color:{C["t3"]};font-size:10px">DY: <b style="color:{C["green"]}">{dy:.2f}%</b></span>',
+                                unsafe_allow_html=True)
+            else:
+                st.markdown(f'<span style="color:{C["red"]};font-size:11px">Ticker não encontrado ou API offline.</span>',
+                            unsafe_allow_html=True)
+
+    # Painel de cotação na área principal (se ticker fornecido)
+    if brapi_data:
+        _render_brapi_panel(brapi_data, ticker_input.upper())
+
     tabs = st.tabs(["VISÃO GERAL", "HISTÓRICO", "DEMONSTRATIVOS",
                     "SAÚDE FINANCEIRA", "VALUATION", "MACRO BRASIL"])
 
@@ -1608,7 +1724,7 @@ Para baixar dados:<br>
     with tabs[1]: _tab_history(selected_cd, tipo_doc, selected_name)
     with tabs[2]: _tab_statements(selected_cd, tipo_doc)
     with tabs[3]: _tab_health(snap_ext, m, hist)
-    with tabs[4]: _tab_valuation(m, snap_ext, selected_cd, hist)
+    with tabs[4]: _tab_valuation(m, snap_ext, selected_cd, hist, brapi_data=brapi_data)
     with tabs[5]: _tab_macro()
 
 

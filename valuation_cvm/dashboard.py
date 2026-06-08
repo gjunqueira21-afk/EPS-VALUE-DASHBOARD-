@@ -724,6 +724,46 @@ def _brapi_quote(ticker: str) -> Optional[Dict]:
     return client.get_quote(ticker)
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _brapi_search(query: str) -> List[Dict]:
+    """Busca tickers pelo nome da empresa, com cache de 1 hora."""
+    try:
+        client = BrapiClient()
+        return client.search_ticker(query)
+    except Exception:
+        return []
+
+
+_STOP_WORDS = {"SA", "S.A", "S.A.", "DO", "DA", "DE", "DOS", "DAS", "E",
+               "EM", "LTDA", "CIA", "COMPANHIA", "INDUSTRIAS", "INDUSTRIA",
+               "GRUPO", "HOLDING", "PARTICIPACOES", "PARTICIPAÇÕES"}
+
+
+def _auto_ticker_from_name(company_name: str) -> str:
+    """Tenta encontrar o ticker B3 mais relevante dado o nome da empresa CVM."""
+    words = [w.rstrip(".,/") for w in company_name.upper().split()]
+    search_words = [w for w in words if len(w) >= 3 and w not in _STOP_WORDS]
+    search_term = search_words[0] if search_words else company_name[:20]
+
+    results = _brapi_search(search_term)
+    if not results:
+        return ""
+
+    # Filtrar apenas ações (não FIIs/BDRs) e ordenar por volume
+    stocks = [r for r in results
+              if not str(r.get("stock", "")).endswith("11")   # exclui FIIs
+              and not str(r.get("stock", "")).endswith("34")]  # exclui BDRs
+    if not stocks:
+        stocks = results
+
+    # Preferir PN (terminam em 4) ou ON (terminam em 3)
+    pn = [r for r in stocks if str(r.get("stock", "")).endswith("4")]
+    on = [r for r in stocks if str(r.get("stock", "")).endswith("3")]
+    best_list = pn or on or stocks
+
+    return best_list[0].get("stock", "")
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def _bcb_serie(code: int, n: int = 36) -> pd.DataFrame:
     """Busca série temporal do Banco Central (api.bcb.gov.br)."""
@@ -1724,6 +1764,13 @@ Para baixar dados:<br>
 
     co_strip(selected_name, selected_cd, tipo_doc, selected_setor)
 
+    # ── Auto-detect ticker quando empresa muda ───────────────────────────────
+    if selected_cd and st.session_state.get("_last_cd_ticker") != selected_cd:
+        st.session_state["_last_cd_ticker"] = selected_cd
+        detected = _auto_ticker_from_name(selected_name or "")
+        if detected:
+            st.session_state["ticker"] = detected
+
     # ── Painel BRAPI (cotação ao vivo) ────────────────────────────────────
     brapi_data = None
     with st.sidebar:
@@ -1734,8 +1781,7 @@ Para baixar dados:<br>
             key="ticker", label_visibility="collapsed",
         )
         if ticker_input:
-            with st.spinner("Buscando cotação…"):
-                brapi_data = _brapi_quote(ticker_input.strip().upper())
+            brapi_data = _brapi_quote(ticker_input.strip().upper())
             if brapi_data:
                 preco   = brapi_data.get("regularMarketPrice", 0)
                 var_d   = brapi_data.get("regularMarketChangePercent", 0)

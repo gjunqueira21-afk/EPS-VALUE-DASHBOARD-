@@ -886,7 +886,7 @@ def _tab_history(cd, tipo, company):
     def b(col): return [(_f(v)/1e6 if _f(v) is not None else None) for v in hist[col]]
 
     # Resultado
-    sec("Evolução do Resultado (R$ Bilhões)")
+    sec("Evolução do Resultado (R$ Milhões)")
     fig1 = _lines(anos, [
         ("Receita Líquida", b("receita"),    C["blue"]),
         ("EBITDA",          b("ebitda"),     C["cyan"]),
@@ -898,15 +898,15 @@ def _tab_history(cd, tipo, company):
     # FCOP
     fcop_vals = b("fcop")
     if any(v is not None for v in fcop_vals):
-        sec("Fluxo de Caixa Operacional (R$ Bilhões)")
+        sec("Fluxo de Caixa Operacional (R$ Milhões)")
         fig2 = _bar(anos, fcop_vals, "FCOP", C["teal"],
-                    f"{company} — FCOP", sfx="B")
+                    f"{company} — FCOP", sfx="M")
         st.plotly_chart(fig2, use_container_width=True)
 
     # PL e Ativo
     pl_vals = b("pl"); at_vals = b("ativo")
     if any(v is not None for v in pl_vals):
-        sec("Patrimônio e Ativo (R$ Bilhões)")
+        sec("Patrimônio e Ativo (R$ Milhões)")
         fig3 = _lines(anos, [
             ("Patrimônio Líquido", pl_vals, C["yellow"]),
             ("Ativo Total",        at_vals, C["t2"]),
@@ -1528,122 +1528,135 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
 
 
 def _tab_macro():
-    """Aba de dados macroeconômicos brasileiros via BCB."""
-    sec("Indicadores Macroeconômicos — Banco Central do Brasil")
+    """Aba de dados macroeconômicos — Banco Central do Brasil (SGS)."""
 
-    # Definição das séries
-    SERIES = {
-        "SELIC Meta (% a.a.)":       (432,  C["blue"],  "Comitê de Política Monetária"),
-        "IPCA (% mensal)":           (433,  C["red"],   "Inflação oficial"),
-        "CDI Diário (% a.a.)":       (4392, C["cyan"],  "Taxa interbancária"),
-        "IGP-M (% mensal)":          (189,  C["yellow"],"FGV — aluguéis"),
-        "INPC (% mensal)":           (188,  C["purple"],"Famílias de baixa renda"),
-        "USD/BRL (ptax venda)":      (1,    C["teal"],  "Dólar comercial"),
+    # ── Definição das séries por categoria ───────────────────────────────────
+    # (codigo_SGS, cor, unidade, n_obs, é_mensal)
+    JUROS = {
+        "SELIC Meta":    (432,  C["blue"],   "% a.a.",        40,  False),
+        "SELIC Efetiva": (11,   C["cyan"],   "% a.a. diário", 756, False),
+        "CDI":           (4392, C["teal"],   "% a.a. diário", 756, False),
+    }
+    INFLACAO = {
+        "IPCA":  (433, C["red"],    "% mensal", 36, True),
+        "INPC":  (188, C["purple"], "% mensal", 36, True),
+        "IGP-M": (189, C["yellow"], "% mensal", 36, True),
+    }
+    CAMBIO = {
+        "USD/BRL (PTAX)": (1, C["teal"], "R$/US$", 756, False),
     }
 
-    # Cards com último valor
-    col_cards = st.columns(len(SERIES))
-    series_data = {}
+    # Fetch
+    def _fetch(cat):
+        return {k: (_bcb_serie(v[0], v[3]), v[1], v[2], v[4]) for k, v in cat.items()}
 
-    for i, (nome, (codigo, cor, desc)) in enumerate(SERIES.items()):
-        df_s = _bcb_serie(codigo, 36)
-        series_data[nome] = (df_s, cor)
+    juros_d  = _fetch(JUROS)
+    inf_d    = _fetch(INFLACAO)
+    cambio_d = _fetch(CAMBIO)
 
-        with col_cards[i]:
+    # ── Helper: card com último valor ─────────────────────────────────────────
+    def _card(col, nome, df_s, unidade, is_cambio=False):
+        with col:
             if not df_s.empty:
                 last_val  = df_s["valor"].iloc[-1]
                 last_date = df_s["data"].iloc[-1].strftime("%d/%m/%y")
                 prev_val  = df_s["valor"].iloc[-2] if len(df_s) > 1 else None
                 delta     = last_val - prev_val if prev_val is not None else None
-                cls_d     = "pos" if (delta or 0) < 0 and nome.startswith("USD") \
-                           else "neg" if (delta or 0) > 0 and nome.startswith("USD") \
-                           else "pos" if (delta or 0) > 0 else "neg"
-                sub_txt = f"Δ {delta:+.2f}  |  {last_date}" if delta is not None else last_date
-                st.markdown(mc(nome.split("(")[0].strip(),
-                               f"{last_val:.2f}", cls_d, sub_txt), unsafe_allow_html=True)
+                cls_d     = ("neg" if (delta or 0) > 0 else "pos") if is_cambio \
+                            else ("pos" if (delta or 0) > 0 else "neg")
+                sub = f"Δ {delta:+.3f}  |  {last_date}  ({unidade})" if delta is not None \
+                      else f"{last_date}  ({unidade})"
+                col.markdown(mc(nome, f"{last_val:.2f}", cls_d, sub), unsafe_allow_html=True)
             else:
-                st.markdown(mc(nome.split("(")[0].strip(), "Offline", "nd",
-                               "BCB API indisponível"), unsafe_allow_html=True)
+                col.markdown(mc(nome, "Offline", "nd", "BCB API indisponível"),
+                             unsafe_allow_html=True)
 
-    # Gráficos
-    sec("Gráficos Históricos — Últimos 36 Meses")
+    # ── Cards ────────────────────────────────────────────────────────────────
+    sec("Juros — Banco Central do Brasil (SGS)")
+    cj = st.columns(3)
+    for i, (nome, (df_s, cor, unid, _)) in enumerate(juros_d.items()):
+        _card(cj[i], nome, df_s, unid)
 
-    # SELIC + CDI
-    df_sel = series_data.get("SELIC Meta (% a.a.)", (pd.DataFrame(), ""))[0]
-    df_cdi = series_data.get("CDI Diário (% a.a.)", (pd.DataFrame(), ""))[0]
+    sec("Inflação")
+    ci = st.columns(3)
+    for i, (nome, (df_s, cor, unid, _)) in enumerate(inf_d.items()):
+        _card(ci[i], nome, df_s, unid)
 
-    if not df_sel.empty or not df_cdi.empty:
-        fig_sel = go.Figure()
-        if not df_sel.empty:
-            fig_sel.add_trace(go.Scatter(x=df_sel["data"], y=df_sel["valor"],
-                                         name="SELIC Meta", mode="lines",
-                                         line=dict(color=C["blue"], width=2.5)))
-        if not df_cdi.empty:
-            fig_sel.add_trace(go.Scatter(x=df_cdi["data"], y=df_cdi["valor"],
-                                         name="CDI", mode="lines",
-                                         line=dict(color=C["cyan"], width=1.5, dash="dot")))
-        fig_sel.update_layout(**_PL, title="SELIC Meta e CDI (% a.a.)")
-        st.plotly_chart(fig_sel, use_container_width=True)
+    sec("Câmbio")
+    cc = st.columns(4)
+    for i, (nome, (df_s, cor, unid, _)) in enumerate(cambio_d.items()):
+        _card(cc[i], nome, df_s, unid, is_cambio=True)
 
-    # IPCA + IGPM + INPC
-    df_ipca = series_data.get("IPCA (% mensal)", (pd.DataFrame(), ""))[0]
-    df_igpm = series_data.get("IGP-M (% mensal)", (pd.DataFrame(), ""))[0]
-    df_inpc = series_data.get("INPC (% mensal)", (pd.DataFrame(), ""))[0]
+    # ── Gráfico: Juros ────────────────────────────────────────────────────────
+    sec("Gráficos Históricos")
+    fig_j = go.Figure()
+    for nome, (df_s, cor, unid, _) in juros_d.items():
+        if not df_s.empty:
+            fig_j.add_trace(go.Scatter(
+                x=df_s["data"], y=df_s["valor"], name=nome, mode="lines",
+                line=dict(color=cor, width=2.5 if "Meta" in nome else 1.5,
+                          dash="solid" if "Meta" in nome else "dot"),
+            ))
+    fig_j.update_layout(**_PL, title="SELIC Meta / SELIC Efetiva / CDI  (% a.a.)")
+    st.plotly_chart(fig_j, use_container_width=True)
 
-    if not df_ipca.empty:
-        fig_inf = go.Figure()
-        if not df_ipca.empty:
-            fig_inf.add_trace(go.Scatter(x=df_ipca["data"], y=df_ipca["valor"],
-                                          name="IPCA", mode="lines+markers",
-                                          line=dict(color=C["red"], width=2)))
-        if not df_igpm.empty:
-            fig_inf.add_trace(go.Scatter(x=df_igpm["data"], y=df_igpm["valor"],
-                                          name="IGP-M", mode="lines",
-                                          line=dict(color=C["yellow"], width=1.5, dash="dot")))
-        if not df_inpc.empty:
-            fig_inf.add_trace(go.Scatter(x=df_inpc["data"], y=df_inpc["valor"],
-                                          name="INPC", mode="lines",
-                                          line=dict(color=C["purple"], width=1.5, dash="dot")))
-        fig_inf.update_layout(**_PL, title="Inflação Mensal (%)")
-        st.plotly_chart(fig_inf, use_container_width=True)
+    # ── Gráfico: Inflação ─────────────────────────────────────────────────────
+    fig_inf = go.Figure()
+    for nome, (df_s, cor, unid, _) in inf_d.items():
+        if not df_s.empty:
+            fig_inf.add_trace(go.Scatter(
+                x=df_s["data"], y=df_s["valor"], name=nome, mode="lines+markers",
+                line=dict(color=cor, width=2 if "IPCA" in nome else 1.5,
+                          dash="solid" if "IPCA" in nome else "dot"),
+                marker=dict(size=3),
+            ))
+    fig_inf.add_hline(y=0, line_width=1, line_dash="dot", line_color=C["brd2"])
+    fig_inf.update_layout(**_PL, title="Inflação Mensal (%) — Últimos 36 meses")
+    st.plotly_chart(fig_inf, use_container_width=True)
 
-    # USD/BRL
-    df_usd = series_data.get("USD/BRL (ptax venda)", (pd.DataFrame(), ""))[0]
+    # ── Gráfico: Câmbio ───────────────────────────────────────────────────────
+    df_usd = cambio_d.get("USD/BRL (PTAX)", (pd.DataFrame(),))[0]
     if not df_usd.empty:
         fig_usd = go.Figure()
-        fig_usd.add_trace(go.Scatter(x=df_usd["data"], y=df_usd["valor"],
-                                      name="USD/BRL", mode="lines",
-                                      line=dict(color=C["teal"], width=2),
-                                      fill="tozeroy",
-                                      fillcolor=rgba(C["teal"], 0.07)))
-        fig_usd.update_layout(**_PL, title="Dólar Comercial (PTAX Venda)")
+        fig_usd.add_trace(go.Scatter(
+            x=df_usd["data"], y=df_usd["valor"], name="USD/BRL PTAX", mode="lines",
+            line=dict(color=C["teal"], width=2),
+            fill="tozeroy", fillcolor=rgba(C["teal"], 0.07),
+        ))
+        fig_usd.update_layout(**_PL, title="Dólar Comercial — PTAX Venda (R$/US$)")
         st.plotly_chart(fig_usd, use_container_width=True)
 
-    # Tabela consolidada
-    sec("Tabela de Referência Macroeconômica")
-    macro_rows = []
-    for nome, (df_s, cor) in series_data.items():
+    # ── Tabela consolidada ────────────────────────────────────────────────────
+    sec("Tabela de Referência — BCB / SGS")
+    all_series = {**juros_d, **inf_d, **cambio_d}
+    rows = []
+    for nome, (df_s, cor, unid, is_mensal) in all_series.items():
         if not df_s.empty:
             last = df_s.iloc[-1]
-            acum = df_s["valor"].tail(12).sum() if "mensal" in nome.lower() else None
-            macro_rows.append({
+            acum12 = None
+            if is_mensal and len(df_s) >= 12:
+                acum12 = df_s["valor"].tail(12).sum()
+            rows.append({
                 "Indicador":    nome,
-                "Último Valor": f"{last['valor']:.2f}",
+                "Unidade":      unid,
+                "Último Valor": f"{last['valor']:.4f}",
                 "Data":         last["data"].strftime("%d/%m/%Y"),
-                "Acum. 12m":   f"{acum:.2f}%" if acum is not None else "–",
-                "Fonte":        "BCB / SGS",
+                "Acum. 12m":    f"{acum12:.2f}%" if acum12 is not None else "–",
+                "Fonte (SGS)":  str({"SELIC Meta": 432, "SELIC Efetiva": 11, "CDI": 4392,
+                                     "IPCA": 433, "INPC": 188, "IGP-M": 189,
+                                     "USD/BRL (PTAX)": 1}.get(nome, "–")),
             })
         else:
-            macro_rows.append({
-                "Indicador": nome, "Último Valor": "Offline",
-                "Data": "–", "Acum. 12m": "–", "Fonte": "BCB / SGS",
-            })
+            rows.append({"Indicador": nome, "Unidade": unid,
+                         "Último Valor": "Offline", "Data": "–",
+                         "Acum. 12m": "–", "Fonte (SGS)": "–"})
 
-    if macro_rows:
-        st.dataframe(pd.DataFrame(macro_rows), use_container_width=True, hide_index=True)
+    if rows:
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-    box("Dados em tempo real via <b>api.bcb.gov.br/dados/serie</b> (Banco Central do Brasil — SGS). "
-        "Atualização a cada 30 minutos. Se offline, verifique sua conexão com a internet.", "info")
+    box("Fonte: <b>api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados?formato=json</b> "
+        "(Banco Central do Brasil — Sistema Gerenciador de Séries Temporais). "
+        "Cache 30 min. SELIC Efetiva e CDI: últimos 756 dias úteis (~3 anos).", "info")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -193,34 +193,87 @@ def build_company_snapshot(cd_cvm: str, tipo_doc: str = "DFP") -> Dict:
             return None
         return _get_value(df, cd_cvm, keys)
 
-    # DRE
-    receita = get(dre, ["receita líquida", "receita de venda", "receita operacional líquida"])
-    lucro_bruto = get(dre, ["lucro bruto"])
-    ebit = get(dre, ["resultado operacional", "ebit", "lucro operacional"])
-    lucro_liq = get(dre, ["lucro líquido", "resultado líquido do período"])
+    # DRE — keywords expandidos para nomenclatura padrão CVM
+    receita = get(dre, [
+        "receita de venda de bens",          # CVM padrão: 3.01
+        "receita líquida",
+        "receita de venda",
+        "receita operacional líquida",
+        "receitas",
+    ])
+    lucro_bruto = get(dre, [
+        "resultado bruto",                   # CVM padrão: 3.03
+        "lucro bruto",
+    ])
+    ebit = get(dre, [
+        "resultado antes do resultado financeiro",   # CVM padrão: 3.05
+        "resultado antes dos tributos sobre o lucro",
+        "resultado operacional",
+        "lucro operacional",
+        "ebit",
+    ])
+    lucro_liq = get(dre, [
+        "lucro/prejuízo consolidado do período",     # CVM padrão: 3.11
+        "resultado líquido das operações continuadas",  # 3.09
+        "lucro/prejuízo do período",
+        "lucro líquido",
+        "resultado líquido do período",
+        "resultado do período",
+    ])
 
-    # BPA
-    caixa = get(bpa, ["caixa e equivalentes", "disponibilidades", "caixa"])
-    aplicacoes = get(bpa, ["aplicações financeiras", "títulos e valores", "investimentos financeiros"])
+    # BPA — keywords expandidos
+    caixa = get(bpa, [
+        "caixa e equivalentes de caixa",     # CVM padrão
+        "caixa e equivalentes",
+        "disponibilidades",
+        "caixa",
+    ])
+    aplicacoes = get(bpa, [
+        "aplicações financeiras",
+        "títulos e valores mobiliários",
+        "títulos e valores",
+        "investimentos financeiros",
+    ])
     ativo_total = get(bpa, ["ativo total"])
 
-    # BPP
+    # BPP — keywords expandidos
     passivo_total = get(bpp, ["passivo total"])
-    pl = get(bpp, ["patrimônio líquido", "total do patrimônio líquido"])
-    divida_cp = get(bpp, ["empréstimos e financiamentos", "debentures", "dívida", "debêntures"])
-
-    # BPP — dívida de longo prazo
-    divida_lp = get(bpp, ["empréstimos e financiamentos de longo prazo"])
+    pl = get(bpp, [
+        "patrimônio líquido consolidado",
+        "patrimônio líquido",
+        "total do patrimônio líquido",
+    ])
+    divida_cp = get(bpp, [
+        "empréstimos e financiamentos",
+        "debêntures",
+        "debentures",
+        "dívida",
+    ])
+    divida_lp = get(bpp, [
+        "empréstimos e financiamentos de longo prazo",
+    ])
 
     divida_bruta = None
     if divida_cp is not None or divida_lp is not None:
         divida_bruta = (divida_cp or 0.0) + (divida_lp or 0.0)
 
-    # DFC
-    fcop = get(dfc, ["caixa gerado", "caixa líquido nas atividades operacionais",
-                      "fluxo de caixa das atividades operacionais"])
-    capex = get(dfc, ["aquisição de imobilizado", "capex", "investimentos em ativo imobilizado",
-                      "pagamento pela aquisição de imobilizado e intangível"])
+    # DFC — keywords expandidos
+    fcop = get(dfc, [
+        "caixa líquido atividades operacionais",     # CVM padrão
+        "caixa líquido nas atividades operacionais",
+        "caixa gerado nas operações",
+        "caixa gerado",
+        "fluxo de caixa das atividades operacionais",
+        "atividades operacionais",
+    ])
+    capex = get(dfc, [
+        "aquisição de imobilizado",
+        "pagamento pela aquisição de imobilizado",
+        "investimentos em ativo imobilizado",
+        "capex",
+        "adições ao ativo imobilizado",
+        "aquisição de ativo imobilizado e intangível",
+    ])
 
     # Dívida líquida
     caixa_total = (caixa or 0.0) + (aplicacoes or 0.0)

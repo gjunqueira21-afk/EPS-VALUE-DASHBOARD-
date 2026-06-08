@@ -646,7 +646,8 @@ def _ext_snap(cd, tipo):
     snap["passivo_circulante"]= pick(bpp, "passivo circulante")
     snap["estoques"]          = pick(bpa, "estoques", "inventário")
     snap["desp_financeiras"]  = pick(dre, "despesas financeiras", "resultado financeiro",
-                                     "receitas e despesas financeiras")
+                                     "receitas e despesas financeiras",
+                                     "resultado financeiro líquido")
     snap["depreciacao"]       = pick(dfc, "depreciação", "amortização",
                                      "depreciação, amortização e exaustão",
                                      "depreciação e amortização")
@@ -696,7 +697,7 @@ def _history(cd, tipo):
     rows = []
     for y in years:
         da = pick(f, y, "depreciação", "amortização", "depreciação e amortização")
-        eb = pick(d, y, "resultado operacional", "ebit", "lucro operacional")
+        eb = pick(d, y, "resultado antes do resultado financeiro", "resultado antes dos tributos sobre o lucro", "resultado operacional", "lucro operacional", "ebit")
         ebitda = (eb + abs(da)) if eb is not None and da is not None else None
         rows.append({
             "ano":         int(y),
@@ -704,9 +705,8 @@ def _history(cd, tipo):
             "lucro_bruto": pick(d, y, "lucro bruto"),
             "ebit":        eb,
             "ebitda":      ebitda,
-            "lucro_liq":   pick(d, y, "lucro líquido", "resultado líquido"),
-            "fcop":        pick(f, y, "caixa gerado", "caixa líquido nas atividades operacionais",
-                                "fluxo de caixa das atividades operacionais"),
+            "lucro_liq":   pick(d, y, "lucro/prejuízo consolidado do período", "resultado líquido das operações continuadas", "lucro/prejuízo do período", "lucro líquido", "resultado líquido"),
+            "fcop":        pick(f, y, "caixa líquido atividades operacionais", "caixa gerado", "caixa líquido nas atividades operacionais", "fluxo de caixa das atividades operacionais", "atividades operacionais"),
             "depamort":    da,
             "ativo":       pick(b, y, "ativo total"),
             "pl":          pick(p, y, "patrimônio líquido"),

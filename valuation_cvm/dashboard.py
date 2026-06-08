@@ -1223,7 +1223,8 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
     box("EV = Σ FCL/(1+WACC)ᵗ + TV/(1+WACC)ⁿ  |  TV = FCL_n×(1+g)/(WACC−g)  |  "
         "Equity = EV − Dívida Líquida", "info")
 
-    eq_shr = None  # inicializado aqui; preenchido pelo bloco DCF abaixo
+    eq_shr  = None  # preenchido pelo bloco DCF abaixo
+    dcf_res = None  # idem
 
     d1, d2 = st.columns([1, 1])
     with d1:
@@ -1346,37 +1347,56 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
         st.plotly_chart(fig_comp, use_container_width=True)
 
     # ── Painel de resumo no topo (preenchido após todos os cálculos) ─────────
-    _epv_shr = epv_res.get("epv_per_share") if epv_shr > 0 else None
-    _dcf_shr = eq_shr  # None se DCF não calculado
-    _preco   = preco if preco else None
+    _preco    = preco   if preco  > 0  else None
+    _acoes_m  = acoes   if acoes  > 0  else None
+    _epv_shr  = epv_res.get("epv_per_share") if epv_shr > 0 else None
+    _epv_ev   = _f(epv_res.get("epv_enterprise"))
+    _epv_eq   = _f(epv_res.get("epv_equity"))
+    _dcf_ev   = _f(dcf_res.get("enterprise_value")) if dcf_res else None
+    _dcf_eq   = _f(dcf_res.get("equity_value"))     if dcf_res else None
+    _dcf_shr  = eq_shr
 
     with _top_summary.container():
-        sec("Resumo — Valor Justo por Ação")
+        sec("Resumo — Valuation")
         _sc = st.columns(4)
-        _sc[0].markdown(mc("Preço de Mercado",
-                           f"R$ {_preco:,.2f}" if _preco else "–", "blu"),
-                        unsafe_allow_html=True)
-        _sc[1].markdown(mc("EPV / Ação",
-                           f"R$ {_epv_shr:,.2f}" if _epv_shr else "–",
-                           _cls(_epv_shr) if _epv_shr else "nd"),
-                        unsafe_allow_html=True)
-        _sc[2].markdown(mc("DCF / Ação",
-                           f"R$ {_dcf_shr:,.2f}" if _dcf_shr else "–",
-                           _cls(_dcf_shr) if _dcf_shr else "nd"),
-                        unsafe_allow_html=True)
-        if _epv_shr and _preco:
-            _up = (_epv_shr / _preco - 1) * 100
-            _sc[3].markdown(mc("Upside EPV vs Mercado",
-                               f"{_up:+.1f}%", "pos" if _up > 0 else "neg"),
-                            unsafe_allow_html=True)
-        elif _dcf_shr and _preco:
-            _up = (_dcf_shr / _preco - 1) * 100
-            _sc[3].markdown(mc("Upside DCF vs Mercado",
-                               f"{_up:+.1f}%", "pos" if _up > 0 else "neg"),
-                            unsafe_allow_html=True)
+
+        # Card 1 — EPV
+        if _epv_shr:
+            _sc[0].markdown(mc("EPV / Ação", f"R$ {_epv_shr:,.2f}", _cls(_epv_shr)), unsafe_allow_html=True)
+        elif _epv_eq:
+            _sc[0].markdown(mc("EPV Equity", fbrl(_epv_eq, 1e9), _cls(_epv_eq)), unsafe_allow_html=True)
+        elif _epv_ev:
+            _sc[0].markdown(mc("EPV Enterprise", fbrl(_epv_ev, 1e9), _cls(_epv_ev)), unsafe_allow_html=True)
         else:
-            _sc[3].markdown(mc("Upside", "Informe preço e FCL", "nd"),
-                            unsafe_allow_html=True)
+            _sc[0].markdown(mc("EPV", "Preencha EBIT abaixo", "nd"), unsafe_allow_html=True)
+
+        # Card 2 — DCF
+        if _dcf_shr:
+            _sc[1].markdown(mc("DCF / Ação", f"R$ {_dcf_shr:,.2f}", _cls(_dcf_shr)), unsafe_allow_html=True)
+        elif _dcf_eq:
+            _sc[1].markdown(mc("DCF Equity", fbrl(_dcf_eq, 1e9), _cls(_dcf_eq)), unsafe_allow_html=True)
+        elif _dcf_ev:
+            _sc[1].markdown(mc("DCF Enterprise", fbrl(_dcf_ev, 1e9), _cls(_dcf_ev)), unsafe_allow_html=True)
+        else:
+            _sc[1].markdown(mc("DCF", "Preencha FCL abaixo", "nd"), unsafe_allow_html=True)
+
+        # Card 3 — Preço de mercado
+        _sc[2].markdown(mc("Preço de Mercado",
+                           f"R$ {_preco:,.2f}" if _preco else "Informe em Múltiplos ↓",
+                           "blu" if _preco else "nd"), unsafe_allow_html=True)
+
+        # Card 4 — Upside
+        _ref_shr = _epv_shr or _dcf_shr
+        if _ref_shr and _preco:
+            _lbl_up = "Upside EPV" if _epv_shr else "Upside DCF"
+            _up = (_ref_shr / _preco - 1) * 100
+            _sc[3].markdown(mc(_lbl_up, f"{_up:+.1f}%", "pos" if _up > 0 else "neg"), unsafe_allow_html=True)
+        elif _epv_ev and _dcf_ev:
+            _up_ev = (_epv_ev / _dcf_ev - 1) * 100
+            _sc[3].markdown(mc("EPV vs DCF Enterprise", f"{_up_ev:+.1f}%",
+                               "pos" if _up_ev > 0 else "neg"), unsafe_allow_html=True)
+        else:
+            _sc[3].markdown(mc("Upside", "Informe preço + ações ↓", "nd"), unsafe_allow_html=True)
 
 
 def _tab_macro():

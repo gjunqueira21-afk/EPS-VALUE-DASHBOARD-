@@ -786,7 +786,10 @@ def _bcb_serie(code: int, n: int = 36) -> pd.DataFrame:
 # Tab renderers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _tab_overview(m, snap):
+def _tab_overview(m, snap, brapi_data=None, ticker_input=""):
+    if brapi_data and ticker_input:
+        _render_brapi_panel(brapi_data, ticker_input.upper())
+        st.markdown("---")
     sec("Resultado")
     c = st.columns(4)
     c[0].markdown(mc("Receita Líquida",  fbrl(m.get("receita_liquida")),  "blu"),  unsafe_allow_html=True)
@@ -1261,34 +1264,55 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
     # ── SEÇÃO 4: DCF Completo ─────────────────────────────────────────────
     sec("DCF — Discounted Cash Flow Completo")
     box("EV = Σ FCL/(1+WACC)ᵗ + TV/(1+WACC)ⁿ  |  TV = FCL_n×(1+g)/(WACC−g)  |  "
-        "Equity = EV − Dívida Líquida", "info")
+        "Equity = EV − Dívida Líquida  |  "
+        "FCL = Caixa Operacional − CAPEX (dados CVM)", "info")
 
     eq_shr  = None  # preenchido pelo bloco DCF abaixo
     dcf_res = None  # idem
 
+    # FCL base: usa dados CVM (FCOP − |CAPEX|)
+    fcop_cvm  = _f(snap_ext.get("fluxo_caixa_operacional"))
+    capex_cvm = _f(snap_ext.get("capex"))
+    fcl_cvm   = None
+    if fcop_cvm is not None:
+        fcl_cvm = fcop_cvm - abs(capex_cvm or 0)
+    fcl_default = round(fcl_cvm / 1e6, 1) if fcl_cvm else (round(_f(fcl)/1e6, 1) if fcl else 0.0)
+
     d1, d2 = st.columns([1, 1])
     with d1:
-        st.markdown("**FCL Base e Fases de Crescimento**")
-        dcf_fcl = st.number_input("FCL Base (R$ M)",
-                                  value=round(_f(fcl)/1e6, 1) if fcl else 0.0,
-                                  step=100.0, key="dcf_fcl")
-        dcf_nd  = st.number_input("Dívida Líquida (R$ M)",
+        st.markdown("**Premissas — FCL e Capital (dados CVM como base)**")
+        if fcl_cvm is not None:
+            st.caption(
+                f"CVM: FCOP = {fbrl(fcop_cvm, 1e9)}  |  CAPEX = {fbrl(capex_cvm, 1e9)}  "
+                f"→  **FCL = {fbrl(fcl_cvm, 1e9)}**"
+            )
+        dcf_fcl = st.number_input("FCL Base (R$ M) — auditável",
+                                  value=fcl_default, step=100.0, key="dcf_fcl",
+                                  help="Pre-preenchido com FCOP−CAPEX da CVM. Edite se necessário.")
+        dcf_nd  = st.number_input("Dívida Líquida (R$ M) — auditável",
                                   value=round(_f(nd)/1e6, 1) if nd else 0.0,
-                                  step=100.0, key="dcf_nd2")
+                                  step=100.0, key="dcf_nd2",
+                                  help="Dívida Bruta − Caixa (dados CVM)")
         dcf_shr = st.number_input("Ações (M) — para Equity/ação",
                                   value=acoes, step=10.0, key="dcf_shr")
 
-        st.markdown("**Taxas de crescimento por fase:**")
+        st.markdown("**Premissas de Crescimento — auditáveis**")
         cg1, cg2 = st.columns(2)
         with cg1:
             g12 = st.slider("Anos 1–2 (%)",  0.0, 35.0, 10.0, 0.5, key="dg12") / 100
-            g34 = st.slider("Anos 3–4 (%)",  0.0, 25.0, 7.0,  0.5, key="dg34") / 100
+            g34 = st.slider("Anos 3–4 (%)",  0.0, 25.0,  7.0, 0.5, key="dg34") / 100
         with cg2:
-            g5  = st.slider("Ano 5 (%)",      0.0, 20.0, 5.0,  0.5, key="dg5")  / 100
-            g_t = st.slider("g terminal (%)", 0.0,  7.0, 3.0,  0.25,key="dgt")  / 100
+            g5  = st.slider("Ano 5 (%)",      0.0, 20.0,  6.0, 0.5, key="dg5")  / 100
+            g_t = st.slider("g terminal (%)", 0.0,  7.0,  4.5, 0.25, key="dgt") / 100
 
         dcf_wacc = st.number_input("WACC (%) — preenche com o calculado acima",
                                    0.0, 30.0, round(wacc_final*100, 2), 0.25, key="dcf_wacc2") / 100
+
+        st.caption(
+            f"Premissas: FCL R$ {dcf_fcl:,.0f}M | g12={g12:.1%} | g34={g34:.1%} | "
+            f"g5={g5:.1%} | g_terminal={g_t:.2%} | WACC={dcf_wacc:.2%} | "
+            f"Dívida Líq R$ {dcf_nd:,.0f}M | Ações {dcf_shr:,.0f}M"
+        )
 
         growth_rates = [g12, g12, g34, g34, g5]
 
@@ -1298,7 +1322,7 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
         if dcf_wacc <= g_t:
             box(f"WACC ({dcf_wacc:.3f}) deve ser maior que g terminal ({g_t:.3f})!", "err")
         elif dcf_fcl == 0:
-            box("Informe o FCL Base para calcular.", "warn")
+            box("FCL = 0. Verifique se os dados CVM estão carregados ou edite o FCL Base acima.", "warn")
         else:
             dcf_res = calculate_dcf(
                 base_fcf=dcf_fcl * 1e6,
@@ -1816,14 +1840,10 @@ Para baixar dados:<br>
                 st.markdown(f'<span style="color:{C["red"]};font-size:11px">Ticker não encontrado ou API offline.</span>',
                             unsafe_allow_html=True)
 
-    # Painel de cotação na área principal (se ticker fornecido)
-    if brapi_data:
-        _render_brapi_panel(brapi_data, ticker_input.upper())
-
     tabs = st.tabs(["VISÃO GERAL", "HISTÓRICO", "DEMONSTRATIVOS",
                     "SAÚDE FINANCEIRA", "VALUATION", "MACRO BRASIL"])
 
-    with tabs[0]: _tab_overview(m, snap_ext)
+    with tabs[0]: _tab_overview(m, snap_ext, brapi_data=brapi_data, ticker_input=ticker_input)
     with tabs[1]: _tab_history(selected_cd, tipo_doc, selected_name)
     with tabs[2]: _tab_statements(selected_cd, tipo_doc)
     with tabs[3]: _tab_health(snap_ext, m, hist)

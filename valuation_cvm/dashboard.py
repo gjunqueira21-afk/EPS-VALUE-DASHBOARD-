@@ -1331,7 +1331,7 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
     epv_ev2 = _f(epv_res.get("epv_enterprise"))
     if epv_ev2:
         val_labels.append("EPV Enterprise"); val_values.append(epv_ev2 / 1e9)
-    if 'dcf_res' in dir() and _f(dcf_res.get("enterprise_value")):
+    if dcf_res and _f(dcf_res.get("enterprise_value")):
         val_labels.append("DCF Enterprise"); val_values.append(_f(dcf_res.get("enterprise_value")) / 1e9)
 
     if len(val_labels) >= 2:

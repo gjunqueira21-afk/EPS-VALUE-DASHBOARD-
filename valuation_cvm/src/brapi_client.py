@@ -24,6 +24,18 @@ except ImportError:
 
 from .logger import logger
 
+
+def _get_brapi_token() -> str:
+    """Lê o token BRAPI do .env ou do st.secrets (Streamlit Cloud)."""
+    token = os.getenv("BRAPI_TOKEN", "")
+    if not token:
+        try:
+            import streamlit as st
+            token = st.secrets.get("BRAPI_TOKEN", "")
+        except Exception:
+            pass
+    return token
+
 _BASE = "https://brapi.dev/api"
 _TIMEOUT = 12
 
@@ -32,7 +44,7 @@ class BrapiClient:
     """Cliente para a API BRAPI.dev."""
 
     def __init__(self, token: Optional[str] = None):
-        self.token = token or os.getenv("BRAPI_TOKEN", "")
+        self.token = token or _get_brapi_token()
         if not self.token:
             logger.warning("BrapiClient: BRAPI_TOKEN não configurado.")
 

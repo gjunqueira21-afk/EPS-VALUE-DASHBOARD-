@@ -9,7 +9,6 @@ venv/
 # Dados (não versionar arquivos pesados)
 data/raw/*.zip
 data/raw/*.csv
-data/processed/*.csv
 data/cache/
 
 # Env

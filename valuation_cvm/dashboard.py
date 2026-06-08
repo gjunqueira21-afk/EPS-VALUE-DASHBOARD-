@@ -500,9 +500,9 @@ def _f(v):
     except: return None
 
 
-def fbrl(v, scale=1e9, sfx="B"):
+def fbrl(v, scale=1e6, sfx="M"):
     x = _f(v)
-    return "–" if x is None else f"R$ {x/scale:,.2f}{sfx}"
+    return "–" if x is None else f"R$ {x/scale:,.0f}{sfx}"
 
 
 def fpct(v, d=2):
@@ -573,16 +573,35 @@ def header():
 </div>""", unsafe_allow_html=True)
 
 
-def co_strip(name, cd_cvm, tipo_doc, setor=""):
+def co_strip(name, cd_cvm, tipo_doc, setor="", brapi_data=None, ticker=""):
     tags = "".join([
         f'<span class="co-tag">CD_CVM {cd_cvm}</span>',
         f'<span class="co-tag">{tipo_doc}</span>',
         f'<span class="co-tag">{setor}</span>' if setor else "",
     ])
+    price_html = ""
+    if brapi_data:
+        preco = brapi_data.get("regularMarketPrice", 0)
+        var_d = brapi_data.get("regularMarketChangePercent", 0)
+        cor_v = C["green"] if var_d >= 0 else C["red"]
+        sinal = "▲" if var_d >= 0 else "▼"
+        price_html = (
+            f'<div style="margin-left:auto;text-align:right;padding-left:24px">'
+            f'<div style="color:{C["t3"]};font-size:10px;letter-spacing:1.5px;margin-bottom:2px">'
+            f'{ticker.upper()}</div>'
+            f'<div style="color:{C["t1"]};font-size:26px;font-weight:700;line-height:1">'
+            f'R$ {preco:.2f}</div>'
+            f'<div style="color:{cor_v};font-size:12px;margin-top:4px">'
+            f'{sinal} {abs(var_d):.2f}% hoje</div>'
+            f'</div>'
+        )
     st.markdown(f"""
-<div class="co-strip">
-  <div class="co-name">{name}</div>
-  <div style="display:flex;gap:8px;flex-wrap:wrap">{tags}</div>
+<div class="co-strip" style="display:flex;align-items:center;justify-content:space-between">
+  <div>
+    <div class="co-name">{name}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">{tags}</div>
+  </div>
+  {price_html}
 </div>""", unsafe_allow_html=True)
 
 
@@ -606,6 +625,40 @@ def _avail():
 @st.cache_data(ttl=60)
 def _snap(cd, tipo):
     return build_company_snapshot(cd, tipo_doc=tipo)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _capital_social() -> pd.DataFrame:
+    """Carrega capital_social.csv — total de ações por empresa (Capital Emitido)."""
+    p = Path(__file__).resolve().parent / "data" / "processed" / "capital_social.csv"
+    if not p.exists():
+        return pd.DataFrame()
+    df = pd.read_csv(p, sep=";", encoding="latin1")
+    df = df[df["Tipo_Capital"] == "Capital Emitido"].copy()
+    return df[["CNPJ_Companhia", "Quantidade_Total_Acoes",
+               "Quantidade_Acoes_Ordinarias", "Quantidade_Acoes_Preferenciais"]].reset_index(drop=True)
+
+
+def _shares_for_cvm(cd_cvm: str) -> Optional[float]:
+    """Retorna total de ações em milhões para um CD_CVM (via capital_social.csv)."""
+    try:
+        cad = _registry()
+        if cad.empty:
+            return None
+        row = cad[cad["CD_CVM"].astype(str).str.strip() == str(cd_cvm).strip()]
+        if row.empty:
+            return None
+        cnpj = row.iloc[0]["CNPJ_CIA"]
+        cap = _capital_social()
+        if cap.empty:
+            return None
+        match = cap[cap["CNPJ_Companhia"] == cnpj]
+        if match.empty:
+            return None
+        total = float(match.iloc[0]["Quantidade_Total_Acoes"])
+        return total / 1e6
+    except Exception:
+        return None
 
 
 @st.cache_data(ttl=60)
@@ -830,7 +883,7 @@ def _tab_history(cd, tipo, company):
 
     anos = hist["ano"].tolist()
 
-    def b(col): return [(_f(v)/1e9 if _f(v) is not None else None) for v in hist[col]]
+    def b(col): return [(_f(v)/1e6 if _f(v) is not None else None) for v in hist[col]]
 
     # Resultado
     sec("Evolução do Resultado (R$ Bilhões)")
@@ -865,7 +918,7 @@ def _tab_history(cd, tipo, company):
     disp = hist[["ano", "receita", "ebitda", "ebit", "lucro_liq", "fcop", "pl", "ativo"]].copy()
     for col in ["receita", "ebitda", "ebit", "lucro_liq", "fcop", "pl", "ativo"]:
         disp[col] = disp[col].apply(
-            lambda x: f"R$ {x/1e9:.2f}B" if pd.notna(x) and x != 0 else "–"
+            lambda x: f"R$ {x/1e6:,.0f}M" if pd.notna(x) and x != 0 else "–"
         )
     disp.columns = ["Ano", "Receita", "EBITDA", "EBIT", "Lucro Líq.", "FCOP", "PL", "Ativo"]
     st.dataframe(disp, use_container_width=True, hide_index=True)
@@ -999,9 +1052,9 @@ def _tab_health(snap_ext, m, hist):
         sec("Capital de Giro & Dados")
         cg1, cg2, cg3 = st.columns(3)
         ncg = (ac - pc) if ac and pc else None
-        cg1.markdown(mc("Ativo Circulante",  fbrl(ac, 1e9), "blu"), unsafe_allow_html=True)
-        cg2.markdown(mc("Passivo Circulante",fbrl(pc, 1e9), _cls(pc, False) if pc else "nd"), unsafe_allow_html=True)
-        cg3.markdown(mc("Capital de Giro",   fbrl(ncg, 1e9), _cls(ncg)), unsafe_allow_html=True)
+        cg1.markdown(mc("Ativo Circulante",  fbrl(ac), "blu"), unsafe_allow_html=True)
+        cg2.markdown(mc("Passivo Circulante",fbrl(pc), _cls(pc, False) if pc else "nd"), unsafe_allow_html=True)
+        cg3.markdown(mc("Capital de Giro",   fbrl(ncg), _cls(ncg)), unsafe_allow_html=True)
 
     # ── Estrutura da dívida ─────────────────────────────────────────────────
     sec("Estrutura da Dívida")
@@ -1034,8 +1087,8 @@ def _tab_health(snap_ext, m, hist):
 
                 cp_pct = cp_val / total * 100
                 lp_pct = lp_val / total * 100
-                st.caption(f"CP: **{fbrl(cp_val, 1e9)}** ({cp_pct:.0f}%) | "
-                           f"LP: **{fbrl(lp_val, 1e9)}** ({lp_pct:.0f}%) | "
+                st.caption(f"CP: **{fbrl(cp_val)}** ({cp_pct:.0f}%) | "
+                           f"LP: **{fbrl(lp_val)}** ({lp_pct:.0f}%) | "
                            f"Duration aprox: **{f'{duration_ap:.1f} anos' if duration_ap else '–'}**")
         else:
             box("Estrutura de dívida CP/LP não encontrada nos dados processados.", "warn")
@@ -1082,8 +1135,8 @@ def _tab_health(snap_ext, m, hist):
             return divcp + divlp
 
         anos_h = hist["ano"].tolist()
-        nd_vals  = [_nd_hist(r) / 1e9 for _, r in hist.iterrows()]
-        ebd_vals = [(_f(r.get("ebitda")) or 0) / 1e9 for _, r in hist.iterrows()]
+        nd_vals  = [_nd_hist(r) / 1e6 for _, r in hist.iterrows()]
+        ebd_vals = [(_f(r.get("ebitda")) or 0) / 1e6 for _, r in hist.iterrows()]
 
         fig_lev = _lines(anos_h, [
             ("Dívida Bruta Aprox.", nd_vals,  C["red"]),
@@ -1158,28 +1211,39 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
     box("Informe o preço atual da ação e o total de ações para calcular os múltiplos. "
         "Fonte: B3, brapi.dev ou Yahoo Finance.", "info")
 
-    # Auto-preencher com dados BRAPI se disponíveis
+    # Ações: prioridade CSV capital_social > BRAPI > 0
+    cvm_shares  = _shares_for_cvm(cd)
     brapi_preco = _f(brapi_data.get("regularMarketPrice")) if brapi_data else 0.0
     brapi_acoes = (_f(brapi_data.get("sharesOutstanding")) or 0) / 1e6 if brapi_data else 0.0
+    acoes_default = cvm_shares or brapi_acoes or 0.0
 
-    if brapi_data and brapi_preco:
-        box(f"✅ Preço e ações preenchidos automaticamente via BRAPI.dev  "
-            f"(<b>{brapi_data.get('shortName','')}</b>  "
-            f"R$ {brapi_preco:.2f} · {brapi_acoes:.0f}M ações)", "ok")
+    fonte_acoes = ""
+    if cvm_shares:
+        fonte_acoes = f"FRE CVM 2026: {cvm_shares:,.0f}M ações"
+    elif brapi_acoes:
+        fonte_acoes = f"BRAPI: {brapi_acoes:,.0f}M ações"
+
+    if brapi_preco or cvm_shares:
+        msg = f"✅ Dados preenchidos automaticamente —"
+        if brapi_preco:
+            msg += f" Preço R$ {brapi_preco:.2f} (BRAPI)"
+        if fonte_acoes:
+            msg += f"  |  {fonte_acoes}"
+        box(msg, "ok")
 
     mv1, mv2 = st.columns(2)
     with mv1:
         preco  = st.number_input("Preço da ação (R$)", 0.0, 99999.0, brapi_preco, 0.01,
                                   key="mult_preco", format="%.2f")
-        acoes  = st.number_input("Total de ações (milhões)", 0.0, 99999.0, brapi_acoes, 10.0,
+        acoes  = st.number_input("Total de ações (milhões)", 0.0, 9999999.0, acoes_default, 10.0,
                                   key="mult_acoes")
 
     mktcap = preco * acoes * 1e6 if preco > 0 and acoes > 0 else None
     ev_mkt = (mktcap + (nd or 0)) if mktcap is not None else None
 
     mult_rows = [
-        ("Market Cap",   fbrl(mktcap, 1e9), "–"),
-        ("Enterprise Value (EV)", fbrl(ev_mkt, 1e9), "EV = Mkt Cap + Dívida Líquida"),
+        ("Market Cap",   fbrl(mktcap), "–"),
+        ("Enterprise Value (EV)", fbrl(ev_mkt), "EV = Mkt Cap + Dívida Líquida"),
         ("P / Lucro (P/L)",      fmult(_f(mktcap)/_f(lucro) if mktcap and lucro and lucro>0 else None),
                                  "< 15× barato | 15-25× justo | > 25× caro"),
         ("P / Valor Patrimonial (P/VP)", fmult(_f(mktcap)/_f(pl) if mktcap and pl and pl>0 else None),
@@ -1198,8 +1262,8 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
 
     with mv2:
         if mktcap:
-            st.markdown(mc("Market Cap", fbrl(mktcap, 1e9), "blu"), unsafe_allow_html=True)
-            st.markdown(mc("EV",         fbrl(ev_mkt, 1e9), "cyan"), unsafe_allow_html=True)
+            st.markdown(mc("Market Cap", fbrl(mktcap), "blu"), unsafe_allow_html=True)
+            st.markdown(mc("EV",         fbrl(ev_mkt), "cyan"), unsafe_allow_html=True)
 
     sec("Tabela de Múltiplos")
     df_mult = pd.DataFrame(mult_rows, columns=["Múltiplo", "Valor", "Referência"])
@@ -1244,9 +1308,9 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
         if epv_shr > 0 and epv_res.get("epv_equity"):
             epv_res["epv_per_share"] = epv_res["epv_equity"] / (epv_shr * 1e6)
 
-        st.markdown(mc("NOPAT",          fbrl(epv_res.get("nopat"), 1e9),          _cls(epv_res.get("nopat"))), unsafe_allow_html=True)
-        st.markdown(mc("EPV Enterprise", fbrl(epv_res.get("epv_enterprise"), 1e9), _cls(epv_res.get("epv_enterprise"))), unsafe_allow_html=True)
-        st.markdown(mc("EPV Equity",     fbrl(epv_res.get("epv_equity"), 1e9),     _cls(epv_res.get("epv_equity"))), unsafe_allow_html=True)
+        st.markdown(mc("NOPAT",          fbrl(epv_res.get("nopat")),          _cls(epv_res.get("nopat"))), unsafe_allow_html=True)
+        st.markdown(mc("EPV Enterprise", fbrl(epv_res.get("epv_enterprise")), _cls(epv_res.get("epv_enterprise"))), unsafe_allow_html=True)
+        st.markdown(mc("EPV Equity",     fbrl(epv_res.get("epv_equity")),     _cls(epv_res.get("epv_equity"))), unsafe_allow_html=True)
         if epv_res.get("epv_per_share"):
             st.markdown(mc("EPV por Ação", f"R$ {epv_res['epv_per_share']:,.2f}",
                            _cls(epv_res.get("epv_per_share"))), unsafe_allow_html=True)
@@ -1256,8 +1320,8 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
         epv_ev = _f(epv_res.get("epv_enterprise"))
         epv_nopat = _f(epv_res.get("nopat"))
         if epv_nopat and epv_ev:
-            box(f"NOPAT = R$ {epv_nopat/1e9:.2f}B  ÷  WACC {epv_wacc*100:.2f}%  =  "
-                f"EPV Enterprise R$ {epv_ev/1e9:.2f}B", "ok")
+            box(f"NOPAT = R$ {epv_nopat/1e6:,.0f}M  ÷  WACC {epv_wacc*100:.2f}%  =  "
+                f"EPV Enterprise R$ {epv_ev/1e6:,.0f}M", "ok")
 
     st.markdown("---")
 
@@ -1283,8 +1347,8 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
         st.markdown("**Premissas — FCL e Capital (dados CVM como base)**")
         if fcl_cvm is not None:
             st.caption(
-                f"CVM: FCOP = {fbrl(fcop_cvm, 1e9)}  |  CAPEX = {fbrl(capex_cvm, 1e9)}  "
-                f"→  **FCL = {fbrl(fcl_cvm, 1e9)}**"
+                f"CVM: FCOP = {fbrl(fcop_cvm)}  |  CAPEX = {fbrl(capex_cvm)}  "
+                f"→  **FCL = {fbrl(fcl_cvm)}**"
             )
         dcf_fcl = st.number_input("FCL Base (R$ M) — auditável",
                                   value=fcl_default, step=100.0, key="dcf_fcl",
@@ -1377,7 +1441,7 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
                     if w > g + 0.005:
                         d = calculate_dcf(dcf_fcl*1e6, growth_rates, g, w, dcf_nd*1e6)
                         ev_s = _f(d.get("enterprise_value"))
-                        row[f"g={g:.1%}"] = f"{ev_s/1e9:.1f}B" if ev_s else "N/D"
+                        row[f"g={g:.1%}"] = f"R$ {ev_s/1e6:,.0f}M" if ev_s else "N/D"
                     else:
                         row[f"g={g:.1%}"] = "—"
                 sens.append(row)
@@ -1389,14 +1453,14 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
     val_values = []
 
     if mktcap:
-        val_labels.append("Market Cap (mercado)"); val_values.append(_f(mktcap) / 1e9)
+        val_labels.append("Market Cap (mercado)"); val_values.append(_f(mktcap) / 1e6)
     if pl:
-        val_labels.append("Valor Patrimonial (PL)"); val_values.append(_f(pl) / 1e9)
+        val_labels.append("Valor Patrimonial (PL)"); val_values.append(_f(pl) / 1e6)
     epv_ev2 = _f(epv_res.get("epv_enterprise"))
     if epv_ev2:
-        val_labels.append("EPV Enterprise"); val_values.append(epv_ev2 / 1e9)
+        val_labels.append("EPV Enterprise"); val_values.append(epv_ev2 / 1e6)
     if dcf_res and _f(dcf_res.get("enterprise_value")):
-        val_labels.append("DCF Enterprise"); val_values.append(_f(dcf_res.get("enterprise_value")) / 1e9)
+        val_labels.append("DCF Enterprise"); val_values.append(_f(dcf_res.get("enterprise_value")) / 1e6)
 
     if len(val_labels) >= 2:
         bar_colors = [C["blue"], C["purple"], C["teal"], C["green"]][:len(val_labels)]
@@ -1428,9 +1492,9 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
         if _epv_shr:
             _sc[0].markdown(mc("EPV / Ação", f"R$ {_epv_shr:,.2f}", _cls(_epv_shr)), unsafe_allow_html=True)
         elif _epv_eq:
-            _sc[0].markdown(mc("EPV Equity", fbrl(_epv_eq, 1e9), _cls(_epv_eq)), unsafe_allow_html=True)
+            _sc[0].markdown(mc("EPV Equity", fbrl(_epv_eq), _cls(_epv_eq)), unsafe_allow_html=True)
         elif _epv_ev:
-            _sc[0].markdown(mc("EPV Enterprise", fbrl(_epv_ev, 1e9), _cls(_epv_ev)), unsafe_allow_html=True)
+            _sc[0].markdown(mc("EPV Enterprise", fbrl(_epv_ev), _cls(_epv_ev)), unsafe_allow_html=True)
         else:
             _sc[0].markdown(mc("EPV", "Preencha EBIT abaixo", "nd"), unsafe_allow_html=True)
 
@@ -1438,9 +1502,9 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
         if _dcf_shr:
             _sc[1].markdown(mc("DCF / Ação", f"R$ {_dcf_shr:,.2f}", _cls(_dcf_shr)), unsafe_allow_html=True)
         elif _dcf_eq:
-            _sc[1].markdown(mc("DCF Equity", fbrl(_dcf_eq, 1e9), _cls(_dcf_eq)), unsafe_allow_html=True)
+            _sc[1].markdown(mc("DCF Equity", fbrl(_dcf_eq), _cls(_dcf_eq)), unsafe_allow_html=True)
         elif _dcf_ev:
-            _sc[1].markdown(mc("DCF Enterprise", fbrl(_dcf_ev, 1e9), _cls(_dcf_ev)), unsafe_allow_html=True)
+            _sc[1].markdown(mc("DCF Enterprise", fbrl(_dcf_ev), _cls(_dcf_ev)), unsafe_allow_html=True)
         else:
             _sc[1].markdown(mc("DCF", "Preencha FCL abaixo", "nd"), unsafe_allow_html=True)
 
@@ -1645,8 +1709,8 @@ def _render_brapi_panel(q: Dict, ticker: str):
     c = st.columns(5)
     c[0].markdown(mc("Preço Atual", f"R$ {preco:.2f}", cor_v,
                      f"{sinal} R$ {abs(var_r):.2f} ({var_d:+.2f}%)"), unsafe_allow_html=True)
-    c[1].markdown(mc("Market Cap",  fbrl(mktcap, 1e9), "blu"), unsafe_allow_html=True)
-    c[2].markdown(mc("Ações (B)",   f"{acoes/1e9:.3f}B" if acoes else "–", "neu"), unsafe_allow_html=True)
+    c[1].markdown(mc("Market Cap",  fbrl(mktcap), "blu"), unsafe_allow_html=True)
+    c[2].markdown(mc("Ações (M)",   f"{acoes/1e6:,.0f}M" if acoes else "–", "neu"), unsafe_allow_html=True)
     c[3].markdown(mc("Volume Hoje", f"{vol/1e6:.1f}M" if vol else "–", "neu",
                      f"Média 10d: {vol10d/1e6:.1f}M" if vol10d else ""), unsafe_allow_html=True)
     c[4].markdown(mc("Dividend Yield", f"{dy:.2f}%" if dy else "–",
@@ -1657,7 +1721,7 @@ def _render_brapi_panel(q: Dict, ticker: str):
     c2[0].markdown(mc("P/L (mercado)",      fmult(pl, 1)   if pl   else "–", "neu"), unsafe_allow_html=True)
     c2[1].markdown(mc("P/VP (mercado)",     fmult(pvp, 2)  if pvp  else "–", "neu"), unsafe_allow_html=True)
     c2[2].markdown(mc("EV/EBITDA (mercado)",fmult(ev_ebd,1)if ev_ebd else "–", "neu"), unsafe_allow_html=True)
-    c2[3].markdown(mc("Enterprise Value",   fbrl(ev, 1e9)  if ev   else "–", "cyan"), unsafe_allow_html=True)
+    c2[3].markdown(mc("Enterprise Value",   fbrl(ev)  if ev   else "–", "cyan"), unsafe_allow_html=True)
     if hi52 and lo52:
         pos_pct = (preco - lo52) / (hi52 - lo52) * 100 if hi52 != lo52 else 50
         c2[4].markdown(mc("52 Semanas",
@@ -1786,17 +1850,23 @@ Para baixar dados:<br>
         m["divida_liquida"] = snap_ext.get("divida_liquida")
         hist = _history(selected_cd, tipo_doc)
 
-    co_strip(selected_name, selected_cd, tipo_doc, selected_setor)
-
     # ── Auto-detect ticker quando empresa muda ───────────────────────────────
     if selected_cd and st.session_state.get("_last_cd_ticker") != selected_cd:
         st.session_state["_last_cd_ticker"] = selected_cd
         detected = _auto_ticker_from_name(selected_name or "")
         if detected:
             st.session_state["ticker"] = detected
+        st.rerun()
 
-    # ── Painel BRAPI (cotação ao vivo) ────────────────────────────────────
-    brapi_data = None
+    # ── Busca cotação BRAPI antes de renderizar o cabeçalho ──────────────────
+    ticker_input = st.session_state.get("ticker", "").strip().upper()
+    brapi_data = _brapi_quote(ticker_input) if ticker_input else None
+
+    # ── Cabeçalho com nome + cotação ao lado ─────────────────────────────────
+    co_strip(selected_name, selected_cd, tipo_doc, selected_setor,
+             brapi_data=brapi_data, ticker=ticker_input)
+
+    # ── Sidebar: ticker editável + detalhes ──────────────────────────────────
     with st.sidebar:
         st.markdown("---")
         st.markdown('<div class="sec">📈 Cotação B3 (BRAPI)</div>', unsafe_allow_html=True)
@@ -1804,46 +1874,44 @@ Para baixar dados:<br>
             "", placeholder="Ex: PETR4, VALE3, WEGE3",
             key="ticker", label_visibility="collapsed",
         )
-        if ticker_input:
-            brapi_data = _brapi_quote(ticker_input.strip().upper())
-            if brapi_data:
-                preco   = brapi_data.get("regularMarketPrice", 0)
-                var_d   = brapi_data.get("regularMarketChangePercent", 0)
-                cor_v   = C["green"] if var_d >= 0 else C["red"]
-                sinal   = "▲" if var_d >= 0 else "▼"
+        if brapi_data:
+            preco = brapi_data.get("regularMarketPrice", 0)
+            var_d = brapi_data.get("regularMarketChangePercent", 0)
+            cor_v = C["green"] if var_d >= 0 else C["red"]
+            sinal = "▲" if var_d >= 0 else "▼"
+            st.markdown(
+                f'<div style="background:{C["surf"]};border:1px solid {C["brd"]};'
+                f'border-left:3px solid {C["blue"]};border-radius:6px;padding:10px 14px;margin-top:4px">'
+                f'<div style="color:{C["t3"]};font-size:10px;letter-spacing:1px">{ticker_input.upper()}</div>'
+                f'<div style="color:{C["t1"]};font-size:22px;font-weight:700">R$ {preco:.2f}</div>'
+                f'<div style="color:{cor_v};font-size:12px">{sinal} {abs(var_d):.2f}% hoje</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            hi52 = brapi_data.get("fiftyTwoWeekHigh")
+            lo52 = brapi_data.get("fiftyTwoWeekLow")
+            if hi52 and lo52 and hi52 != lo52:
+                pos_pct = (preco - lo52) / (hi52 - lo52) * 100
                 st.markdown(
-                    f'<div style="background:{C["surf"]};border:1px solid {C["brd"]};'
-                    f'border-left:3px solid {C["blue"]};border-radius:6px;padding:10px 14px;margin-top:4px">'
-                    f'<div style="color:{C["t3"]};font-size:10px;letter-spacing:1px">{ticker_input.upper()}</div>'
-                    f'<div style="color:{C["t1"]};font-size:22px;font-weight:700">R$ {preco:.2f}</div>'
-                    f'<div style="color:{cor_v};font-size:12px">{sinal} {abs(var_d):.2f}% hoje</div>'
-                    f'</div>',
+                    f'<div style="font-size:10px;color:{C["t3"]};margin-top:6px">'
+                    f'52 sem: R$ {lo52:.2f} — R$ {hi52:.2f}<br>'
+                    f'<div style="background:{C["brd2"]};border-radius:3px;height:5px;margin-top:4px">'
+                    f'<div style="background:{C["blue"]};width:{pos_pct:.0f}%;height:100%;border-radius:3px"></div>'
+                    f'</div></div>',
                     unsafe_allow_html=True,
                 )
-                hi52 = brapi_data.get("fiftyTwoWeekHigh")
-                lo52 = brapi_data.get("fiftyTwoWeekLow")
-                if hi52 and lo52:
-                    pos_pct = (preco - lo52) / (hi52 - lo52) * 100 if hi52 != lo52 else 50
-                    st.markdown(
-                        f'<div style="font-size:10px;color:{C["t3"]};margin-top:6px">'
-                        f'52 sem: R$ {lo52:.2f} — R$ {hi52:.2f}<br>'
-                        f'<div style="background:{C["brd2"]};border-radius:3px;height:5px;margin-top:4px">'
-                        f'<div style="background:{C["blue"]};width:{pos_pct:.0f}%;height:100%;border-radius:3px"></div>'
-                        f'</div></div>',
-                        unsafe_allow_html=True,
-                    )
-                dy = brapi_data.get("dividendYield")
-                if dy:
-                    st.markdown(f'<span style="color:{C["t3"]};font-size:10px">DY: <b style="color:{C["green"]}">{dy:.2f}%</b></span>',
-                                unsafe_allow_html=True)
-            else:
-                st.markdown(f'<span style="color:{C["red"]};font-size:11px">Ticker não encontrado ou API offline.</span>',
+            dy = brapi_data.get("dividendYield")
+            if dy:
+                st.markdown(f'<span style="color:{C["t3"]};font-size:10px">DY: <b style="color:{C["green"]}">{dy:.2f}%</b></span>',
                             unsafe_allow_html=True)
+        elif ticker_input:
+            st.markdown(f'<span style="color:{C["red"]};font-size:11px">Ticker não encontrado ou API offline.</span>',
+                        unsafe_allow_html=True)
 
     tabs = st.tabs(["VISÃO GERAL", "HISTÓRICO", "DEMONSTRATIVOS",
                     "SAÚDE FINANCEIRA", "VALUATION", "MACRO BRASIL"])
 
-    with tabs[0]: _tab_overview(m, snap_ext, brapi_data=brapi_data, ticker_input=ticker_input)
+    with tabs[0]: _tab_overview(m, snap_ext)
     with tabs[1]: _tab_history(selected_cd, tipo_doc, selected_name)
     with tabs[2]: _tab_statements(selected_cd, tipo_doc)
     with tabs[3]: _tab_health(snap_ext, m, hist)

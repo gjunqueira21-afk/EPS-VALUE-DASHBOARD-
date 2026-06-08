@@ -979,7 +979,7 @@ def _tab_health(snap_ext, m, hist):
                     insidetextfont=dict(color=C["t1"]),
                 ))
                 fig_pie.update_layout(
-                    **{k: v for k, v in _PL.items() if k not in ["xaxis", "yaxis"]},
+                    **{k: v for k, v in _PL.items() if k not in ["xaxis", "yaxis", "legend", "margin", "hovermode"]},
                     title="CP vs LP",
                     height=260,
                     showlegend=True,
@@ -1019,7 +1019,7 @@ def _tab_health(snap_ext, m, hist):
                 textfont=dict(color=C["t1"], size=11),
             ))
             fig_idx.update_layout(
-                **{k: v for k, v in _PL.items() if k not in ["xaxis", "yaxis"]},
+                **{k: v for k, v in _PL.items() if k not in ["xaxis", "yaxis", "legend", "margin", "hovermode"]},
                 title="Composição dos Indexadores",
                 height=260,
                 showlegend=True,

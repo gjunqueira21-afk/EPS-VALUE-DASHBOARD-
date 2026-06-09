@@ -13,9 +13,11 @@ Uso:
     streamlit run dashboard.py
 """
 
+import re
 import sys
 from pathlib import Path
 from datetime import datetime
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -858,6 +860,25 @@ def _auto_ticker_from_name(company_name: str) -> str:
     best_list = pn or on or stocks
 
     return best_list[0].get("stock", "")
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _ticker_to_company_name(ticker: str) -> str:
+    """Resolve ticker B3 → nome da empresa via BRAPI search.
+    Usado para busca por ticker: ITUB4 → 'ITAU UNIBANCO HOLDING S.A.'
+    """
+    results = _brapi_search(ticker.upper())
+    if not results:
+        return ""
+    for r in results:
+        if str(r.get("stock", "")).upper() == ticker.upper():
+            return str(r.get("name", ""))
+    return str(results[0].get("name", "")) if results else ""
+
+
+def _is_ticker_like(s: str) -> bool:
+    """Detecta se o input parece um ticker B3 (ex: ITUB4, PETR3, VALE3, CYRE3F)."""
+    return bool(re.match(r'^[A-Za-z]{3,6}[0-9]{1,2}[FWf]?$', s.strip()))
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -1791,7 +1812,7 @@ def _tab_macro():
 
 def _welcome(avail):
     box("""<b>EPS Value Terminal</b> — Análise fundamentalista de empresas brasileiras.<br>
-🔍 Busque uma empresa na barra lateral por <b>nome</b>, <b>CD_CVM</b> ou <b>CNPJ</b>.<br>
+🔍 Busque uma empresa na barra lateral por <b>ticker B3</b> (ex: ITUB4, PETR4, VALE3), <b>nome</b>, <b>CD_CVM</b> ou <b>CNPJ</b>.<br>
 📊 Veja DRE, Balanço, DFC, métricas e histórico gráfico.<br>
 📋 Analise saúde financeira: alavancagem, liquidez, estrutura da dívida.<br>
 💹 Calcule EPV e DCF com WACC breakdown completo.<br>
@@ -1911,7 +1932,7 @@ def main():
     # ── Sidebar ──────────────────────────────────────────────────────────────
     with st.sidebar:
         st.markdown('<div class="sec">🔍 Buscar Empresa</div>', unsafe_allow_html=True)
-        query    = st.text_input("", placeholder="Nome, CD_CVM ou CNPJ…",
+        query    = st.text_input("", placeholder="Nome, ticker (ITUB4), CD_CVM ou CNPJ…",
                                  key="q", label_visibility="collapsed")
         tipo_raw = st.selectbox("Tipo de relatório",
                                 ["DFP — Demonstração Anual", "ITR — Informação Trimestral"],
@@ -1957,7 +1978,37 @@ Para baixar dados:<br>
         if reg.empty:
             box("Cadastro de empresas não encontrado.", "warn")
         else:
-            matches = filter_company_by_name_or_cvm(query, df=reg)
+            # ── Busca por ticker B3 (ex: ITUB4, PETR4) ───────────────────────
+            ticker_override = ""
+            if _is_ticker_like(query):
+                t = query.strip().upper()
+                with st.spinner(f"Resolvendo ticker {t} via BRAPI…"):
+                    cname = _ticker_to_company_name(t)
+                if cname:
+                    ticker_override = t
+                    matches = filter_company_by_name_or_cvm(cname, df=reg)
+                    if matches.empty:
+                        # Fallback: primeira palavra significativa do nome CVM
+                        _stop = {"S.A.", "S.A", "SA", "HOLDING", "BANCO", "FUNDO",
+                                 "PARTICIPACOES", "PARTICIPAÇÕES", "DO", "DA", "DE",
+                                 "E", "DOS", "DAS", "LTDA"}
+                        words = [w.rstrip(".,/") for w in cname.split()
+                                 if len(w) >= 4 and w.upper().rstrip(".,/") not in _stop]
+                        if words:
+                            matches = filter_company_by_name_or_cvm(words[0], df=reg)
+                    if not matches.empty:
+                        box(f"✅ Ticker <b>{t}</b> → empresa encontrada: "
+                            f"<b>{cname}</b>", "ok")
+                    else:
+                        box(f"Ticker <b>{t}</b> identificado como <b>{cname}</b> mas não "
+                            f"encontrado no cadastro CVM. Tente buscar pelo nome.", "warn")
+                else:
+                    box(f"Ticker <b>{t}</b> não encontrado via BRAPI. "
+                        f"Verifique o token ou tente buscar pelo nome da empresa.", "warn")
+                    matches = filter_company_by_name_or_cvm(query, df=reg)
+            else:
+                matches = filter_company_by_name_or_cvm(query, df=reg)
+
             if matches.empty:
                 box(f'Nenhuma empresa encontrada para <b>"{query}"</b>.', "warn")
             else:
@@ -1976,6 +2027,11 @@ Para baixar dados:<br>
                 selected_cd    = str(row.get("CD_CVM", "")).strip()
                 selected_name  = str(row.get("DENOM_CIA", "N/D")).strip()
                 selected_setor = str(row.get("SETOR_ATIV", "")).strip()
+
+                # Ticker search: define ticker agora para evitar auto-detect posterior
+                if ticker_override:
+                    st.session_state["ticker"] = ticker_override
+                    st.session_state["_last_cd_ticker"] = selected_cd
 
     if not selected_cd:
         _welcome(avail)

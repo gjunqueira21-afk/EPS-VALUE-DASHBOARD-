@@ -131,6 +131,84 @@ def get_latest_company_statement(
 # Helpers internos de extração de valor
 # ---------------------------------------------------------------------------
 
+def _latest_year_mask(df: pd.DataFrame) -> pd.DataFrame:
+    """Filtra o DataFrame para o exercício mais recente disponível.
+
+    Os arquivos processados expõem ANO_REFER e/ou DT_FIM_EXERC (não DT_REFER).
+    """
+    if df.empty:
+        return df
+    if "ANO_REFER" in df.columns and df["ANO_REFER"].notna().any():
+        last = df["ANO_REFER"].max()
+        return df[df["ANO_REFER"] == last]
+    for dc in ("DT_FIM_EXERC", "DT_REFER"):
+        if dc in df.columns and df[dc].notna().any():
+            last = df[dc].max()
+            return df[df[dc] == last]
+    return df
+
+
+def _pick_value(
+    df: pd.DataFrame,
+    cd_cvm: str,
+    cd_contas: Optional[List[str]] = None,
+    keywords: Optional[List[str]] = None,
+    year: Optional[int] = None,
+    value_col: str = "VL_CONTA_AJUSTADO",
+) -> Optional[float]:
+    """Extrai o valor de uma conta no exercício mais recente (ou `year`).
+
+    Estratégia robusta:
+        1. Filtra a empresa (CD_CVM)
+        2. Filtra o ano (o mais recente por padrão)
+        3. Tenta casar por CD_CONTA exato (Plano de Contas Padronizado CVM) — preferencial
+        4. Se não houver código, casa por palavra-chave em DS_CONTA (conta de
+           menor nível hierárquico, mais agregada)
+
+    Códigos CD_CONTA são muito mais confiáveis que texto: a CVM padroniza os
+    níveis 1–3 do plano de contas para empresas não-financeiras.
+    """
+    if df.empty or "CD_CVM" not in df.columns:
+        return None
+
+    sub = df[df["CD_CVM"].astype(str).str.strip() == str(cd_cvm).strip()].copy()
+    if sub.empty or value_col not in sub.columns:
+        return None
+
+    if year is not None and "ANO_REFER" in sub.columns:
+        sub = sub[sub["ANO_REFER"] == year]
+    else:
+        sub = _latest_year_mask(sub)
+    if sub.empty:
+        return None
+
+    # 1) Match exato por CD_CONTA (preferencial)
+    if cd_contas and "CD_CONTA" in sub.columns:
+        codes = sub["CD_CONTA"].astype(str).str.strip()
+        for code in cd_contas:
+            hit = sub[codes == code]
+            v = hit[value_col].dropna()
+            if not v.empty:
+                return float(v.iloc[0])
+
+    # 2) Fallback por palavra-chave em DS_CONTA
+    if keywords and "DS_CONTA" in sub.columns:
+        ds = sub["DS_CONTA"].fillna("").str.upper()
+        for kw in keywords:
+            m = ds.str.contains(kw.upper(), regex=False, na=False)
+            if m.any():
+                hit = sub[m]
+                if "CD_CONTA" in hit.columns:
+                    hit = hit.assign(
+                        _lvl=hit["CD_CONTA"].astype(str).str.count(r"\.")
+                    ).sort_values("_lvl")
+                v = hit[value_col].dropna()
+                if not v.empty:
+                    return float(v.iloc[0])
+
+    return None
+
+
 def _get_value(
     df: pd.DataFrame,
     cd_cvm: str,
@@ -138,34 +216,8 @@ def _get_value(
     date_col: str = "DT_REFER",
     value_col: str = "VL_CONTA_AJUSTADO",
 ) -> Optional[float]:
-    """
-    Extrai o valor de uma conta para a data mais recente disponível.
-    Retorna None se não encontrar.
-    """
-    sub = extract_account(df, cd_cvm=cd_cvm, account_keywords=keywords)
-    if sub.empty or value_col not in sub.columns:
-        return None
-
-    if date_col in sub.columns:
-        last_date = sub[date_col].max()
-        sub = sub[sub[date_col] == last_date]
-
-    # Se múltiplas linhas, pega a de maior VL_CONTA_AJUSTADO absoluto
-    # (situação de contas com agrupamentos diferentes)
-    vals = sub[value_col].dropna()
-    if vals.empty:
-        return None
-
-    # Prefere a conta de menor nível hierárquico (CD_CONTA mais curto = mais agregado)
-    if "CD_CONTA" in sub.columns:
-        sub_sorted = sub.assign(
-            _lvl=sub["CD_CONTA"].astype(str).str.count(r"\.")
-        ).sort_values("_lvl")
-        first_val = sub_sorted.iloc[0][value_col]
-        if pd.notna(first_val):
-            return float(first_val)
-
-    return float(vals.iloc[0])
+    """Compatibilidade: extrai valor por palavra-chave no exercício mais recente."""
+    return _pick_value(df, cd_cvm, cd_contas=None, keywords=keywords, value_col=value_col)
 
 
 # ---------------------------------------------------------------------------
@@ -188,91 +240,59 @@ def build_company_snapshot(cd_cvm: str, tipo_doc: str = "DFP") -> Dict:
     bpp = load_processed_statement("BPP", tipo_doc)
     dfc = load_processed_statement("DFC_MI", tipo_doc)
 
-    def get(df: pd.DataFrame, keys: List[str]) -> Optional[float]:
+    def get(df: pd.DataFrame, codes: List[str], keys: List[str]) -> Optional[float]:
         if df.empty:
             return None
-        return _get_value(df, cd_cvm, keys)
+        return _pick_value(df, cd_cvm, cd_contas=codes, keywords=keys)
 
-    # DRE — keywords expandidos para nomenclatura padrão CVM
-    receita = get(dre, [
-        "receita de venda de bens",          # CVM padrão: 3.01
-        "receita líquida",
-        "receita de venda",
+    # DRE — CD_CONTA padrão CVM + fallback por texto
+    receita = get(dre, ["3.01"], [
+        "receita de venda de bens", "receita líquida", "receita de venda",
         "receita operacional líquida",
-        "receitas",
     ])
-    lucro_bruto = get(dre, [
-        "resultado bruto",                   # CVM padrão: 3.03
-        "lucro bruto",
+    lucro_bruto = get(dre, ["3.03"], ["resultado bruto", "lucro bruto"])
+    ebit = get(dre, ["3.05"], [
+        "resultado antes do resultado financeiro",
+        "resultado operacional", "lucro operacional",
     ])
-    ebit = get(dre, [
-        "resultado antes do resultado financeiro",   # CVM padrão: 3.05
-        "resultado antes dos tributos sobre o lucro",
-        "resultado operacional",
-        "lucro operacional",
-        "ebit",
-    ])
-    lucro_liq = get(dre, [
-        "lucro/prejuízo consolidado do período",     # CVM padrão: 3.11
-        "resultado líquido das operações continuadas",  # 3.09
-        "lucro/prejuízo do período",
-        "lucro líquido",
-        "resultado líquido do período",
-        "resultado do período",
+    lucro_liq = get(dre, ["3.11", "3.09"], [
+        "lucro/prejuízo consolidado do período",
+        "lucro/prejuízo do período", "lucro líquido",
     ])
 
-    # BPA — keywords expandidos
-    caixa = get(bpa, [
-        "caixa e equivalentes de caixa",     # CVM padrão
-        "caixa e equivalentes",
-        "disponibilidades",
-        "caixa",
+    # BPA — Ativo
+    caixa = get(bpa, ["1.01.01"], [
+        "caixa e equivalentes de caixa", "caixa e equivalentes", "disponibilidades",
     ])
-    aplicacoes = get(bpa, [
-        "aplicações financeiras",
-        "títulos e valores mobiliários",
-        "títulos e valores",
-        "investimentos financeiros",
+    aplicacoes = get(bpa, ["1.01.02"], [
+        "aplicações financeiras", "títulos e valores mobiliários",
     ])
-    ativo_total = get(bpa, ["ativo total"])
+    ativo_total = get(bpa, ["1"], ["ativo total"])
 
-    # BPP — keywords expandidos
-    passivo_total = get(bpp, ["passivo total"])
-    pl = get(bpp, [
-        "patrimônio líquido consolidado",
-        "patrimônio líquido",
-        "total do patrimônio líquido",
+    # BPP — Passivo
+    passivo_total = get(bpp, ["2"], ["passivo total"])
+    pl = get(bpp, ["2.03"], [
+        "patrimônio líquido consolidado", "patrimônio líquido",
     ])
-    divida_cp = get(bpp, [
-        "empréstimos e financiamentos",
-        "debêntures",
-        "debentures",
-        "dívida",
-    ])
-    divida_lp = get(bpp, [
-        "empréstimos e financiamentos de longo prazo",
-    ])
+    # Dívida = Empréstimos e Financiamentos circulante (2.01.04) + não circulante (2.02.01)
+    # Inclui debêntures e arrendamentos (sub-contas já somadas nos códigos pais)
+    divida_cp = get(bpp, ["2.01.04"], None)
+    divida_lp = get(bpp, ["2.02.01"], None)
 
     divida_bruta = None
     if divida_cp is not None or divida_lp is not None:
         divida_bruta = (divida_cp or 0.0) + (divida_lp or 0.0)
 
-    # DFC — keywords expandidos
-    fcop = get(dfc, [
-        "caixa líquido atividades operacionais",     # CVM padrão
+    # DFC — Fluxo de caixa operacional (6.01) e CAPEX (6.02.01)
+    fcop = get(dfc, ["6.01"], [
+        "caixa líquido atividades operacionais",
         "caixa líquido nas atividades operacionais",
         "caixa gerado nas operações",
-        "caixa gerado",
-        "fluxo de caixa das atividades operacionais",
-        "atividades operacionais",
     ])
-    capex = get(dfc, [
+    capex = get(dfc, ["6.02.01"], [
+        "aquisições de ativos imobilizados e intangíveis",
         "aquisição de imobilizado",
-        "pagamento pela aquisição de imobilizado",
-        "investimentos em ativo imobilizado",
-        "capex",
         "adições ao ativo imobilizado",
-        "aquisição de ativo imobilizado e intangível",
     ])
 
     # Dívida líquida

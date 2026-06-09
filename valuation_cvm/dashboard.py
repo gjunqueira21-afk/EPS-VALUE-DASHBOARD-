@@ -676,38 +676,48 @@ def _ext_snap(cd, tipo):
     bpp = _stmt("BPP", tipo)
     dfc = _stmt("DFC_MI", tipo)
 
-    def pick(df, *kws):
+    def pick(df, codes, *kws):
+        """Extrai conta no exercício mais recente: CD_CONTA exato > keyword."""
         if df.empty or "CD_CVM" not in df.columns: return None
         s = df[df["CD_CVM"].astype(str).str.strip() == cd].copy()
         if s.empty: return None
         vc = "VL_CONTA_AJUSTADO" if "VL_CONTA_AJUSTADO" in s.columns else "VL_CONTA"
-        if "DT_REFER" in s.columns:
-            s = s[s["DT_REFER"] == s["DT_REFER"].max()]
-        if "DS_CONTA" not in s.columns or vc not in s.columns: return None
-        ds = s["DS_CONTA"].fillna("").str.upper()
-        for kw in kws:
-            m = ds.str.contains(kw.upper(), regex=False, na=False)
-            if m.any():
-                s2 = s[m]
-                if "CD_CONTA" in s2.columns:
-                    s2 = s2.assign(_l=s2["CD_CONTA"].astype(str).str.count(r"\.")
-                                   ).sort_values("_l")
-                v = s2[vc].dropna()
+        # Filtra o exercício mais recente (os processados têm ANO_REFER, não DT_REFER)
+        if "ANO_REFER" in s.columns and s["ANO_REFER"].notna().any():
+            s = s[s["ANO_REFER"] == s["ANO_REFER"].max()]
+        elif "DT_FIM_EXERC" in s.columns and s["DT_FIM_EXERC"].notna().any():
+            s = s[s["DT_FIM_EXERC"] == s["DT_FIM_EXERC"].max()]
+        if vc not in s.columns: return None
+        # 1) CD_CONTA exato (Plano de Contas Padronizado CVM)
+        if codes and "CD_CONTA" in s.columns:
+            cc = s["CD_CONTA"].astype(str).str.strip()
+            for code in codes:
+                hit = s[cc == code]
+                v = hit[vc].dropna()
                 if not v.empty: return float(v.iloc[0])
+        # 2) Fallback por palavra-chave
+        if "DS_CONTA" in s.columns:
+            ds = s["DS_CONTA"].fillna("").str.upper()
+            for kw in kws:
+                m = ds.str.contains(kw.upper(), regex=False, na=False)
+                if m.any():
+                    s2 = s[m]
+                    if "CD_CONTA" in s2.columns:
+                        s2 = s2.assign(_l=s2["CD_CONTA"].astype(str).str.count(r"\.")
+                                       ).sort_values("_l")
+                    v = s2[vc].dropna()
+                    if not v.empty: return float(v.iloc[0])
         return None
 
-    snap["ativo_circulante"]  = pick(bpa, "ativo circulante")
-    snap["passivo_circulante"]= pick(bpp, "passivo circulante")
-    snap["estoques"]          = pick(bpa, "estoques", "inventário")
-    snap["desp_financeiras"]  = pick(dre, "despesas financeiras", "resultado financeiro",
-                                     "receitas e despesas financeiras",
-                                     "resultado financeiro líquido")
-    snap["depreciacao"]       = pick(dfc, "depreciação", "amortização",
-                                     "depreciação, amortização e exaustão",
-                                     "depreciação e amortização")
-    snap["divida_cp"]         = pick(bpp, "empréstimos e financiamentos",
-                                     "debêntures", "debentures")
-    snap["divida_lp"]         = pick(bpp, "empréstimos e financiamentos de longo prazo")
+    snap["ativo_circulante"]  = pick(bpa, ["1.01"], "ativo circulante")
+    snap["passivo_circulante"]= pick(bpp, ["2.01"], "passivo circulante")
+    snap["estoques"]          = pick(bpa, ["1.01.04"], "estoques", "inventário")
+    snap["desp_financeiras"]  = pick(dre, ["3.06.02", "3.06"], "despesas financeiras",
+                                     "resultado financeiro")
+    # D&A: keyword "deprecia" evita casar "Amortizações de financiamentos" (6.03.xx)
+    snap["depreciacao"]       = pick(dfc, [], "deprecia")
+    snap["divida_cp"]         = pick(bpp, ["2.01.04"])
+    snap["divida_lp"]         = pick(bpp, ["2.02.01"])
     return snap
 
 
@@ -730,42 +740,52 @@ def _history(cd, tipo):
     if d.empty or "ANO_REFER" not in d.columns: return pd.DataFrame()
     years = sorted(d["ANO_REFER"].dropna().unique())
 
-    def pick(df, yr, *kws):
+    def pick(df, yr, codes, *kws):
+        """Extrai conta de um ano: CD_CONTA exato > keyword."""
         if df.empty or "ANO_REFER" not in df.columns: return None
         s = df[df["ANO_REFER"] == yr]
         if s.empty: return None
         vc = "VL_CONTA_AJUSTADO" if "VL_CONTA_AJUSTADO" in s.columns else "VL_CONTA"
-        if "DS_CONTA" not in s.columns or vc not in s.columns: return None
-        ds = s["DS_CONTA"].fillna("").str.upper()
-        for kw in kws:
-            m = ds.str.contains(kw.upper(), regex=False, na=False)
-            if m.any():
-                s2 = s[m]
-                if "CD_CONTA" in s2.columns:
-                    s2 = s2.assign(_l=s2["CD_CONTA"].astype(str).str.count(r"\.")
-                                   ).sort_values("_l")
-                v = s2[vc].dropna()
+        if vc not in s.columns: return None
+        # 1) CD_CONTA exato
+        if codes and "CD_CONTA" in s.columns:
+            cc = s["CD_CONTA"].astype(str).str.strip()
+            for code in codes:
+                hit = s[cc == code]
+                v = hit[vc].dropna()
                 if not v.empty: return float(v.iloc[0])
+        # 2) Fallback por palavra-chave
+        if "DS_CONTA" in s.columns:
+            ds = s["DS_CONTA"].fillna("").str.upper()
+            for kw in kws:
+                m = ds.str.contains(kw.upper(), regex=False, na=False)
+                if m.any():
+                    s2 = s[m]
+                    if "CD_CONTA" in s2.columns:
+                        s2 = s2.assign(_l=s2["CD_CONTA"].astype(str).str.count(r"\.")
+                                       ).sort_values("_l")
+                    v = s2[vc].dropna()
+                    if not v.empty: return float(v.iloc[0])
         return None
 
     rows = []
     for y in years:
-        da = pick(f, y, "depreciação", "amortização", "depreciação e amortização")
-        eb = pick(d, y, "resultado antes do resultado financeiro", "resultado antes dos tributos sobre o lucro", "resultado operacional", "lucro operacional", "ebit")
+        da = pick(f, y, [], "deprecia")
+        eb = pick(d, y, ["3.05"], "resultado antes do resultado financeiro", "resultado operacional")
         ebitda = (eb + abs(da)) if eb is not None and da is not None else None
         rows.append({
             "ano":         int(y),
-            "receita":     pick(d, y, "receita líquida", "receita de venda"),
-            "lucro_bruto": pick(d, y, "lucro bruto"),
+            "receita":     pick(d, y, ["3.01"], "receita de venda de bens", "receita líquida"),
+            "lucro_bruto": pick(d, y, ["3.03"], "resultado bruto", "lucro bruto"),
             "ebit":        eb,
             "ebitda":      ebitda,
-            "lucro_liq":   pick(d, y, "lucro/prejuízo consolidado do período", "resultado líquido das operações continuadas", "lucro/prejuízo do período", "lucro líquido", "resultado líquido"),
-            "fcop":        pick(f, y, "caixa líquido atividades operacionais", "caixa gerado", "caixa líquido nas atividades operacionais", "fluxo de caixa das atividades operacionais", "atividades operacionais"),
+            "lucro_liq":   pick(d, y, ["3.11", "3.09"], "lucro/prejuízo consolidado do período", "lucro/prejuízo do período", "lucro líquido"),
+            "fcop":        pick(f, y, ["6.01"], "caixa líquido atividades operacionais", "caixa líquido nas atividades operacionais"),
             "depamort":    da,
-            "ativo":       pick(b, y, "ativo total"),
-            "pl":          pick(p, y, "patrimônio líquido"),
-            "divida_cp":   pick(p, y, "empréstimos e financiamentos"),
-            "divida_lp":   pick(p, y, "empréstimos e financiamentos de longo prazo"),
+            "ativo":       pick(b, y, ["1"], "ativo total"),
+            "pl":          pick(p, y, ["2.03"], "patrimônio líquido consolidado", "patrimônio líquido"),
+            "divida_cp":   pick(p, y, ["2.01.04"]),
+            "divida_lp":   pick(p, y, ["2.02.01"]),
         })
     return pd.DataFrame(rows)
 

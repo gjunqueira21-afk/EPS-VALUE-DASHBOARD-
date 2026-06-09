@@ -271,7 +271,9 @@ def build_company_snapshot(cd_cvm: str, tipo_doc: str = "DFP") -> Dict:
 
     # BPP — Passivo
     passivo_total = get(bpp, ["2"], ["passivo total"])
-    pl = get(bpp, ["2.03"], [
+    # PL por palavra-chave (não por código): bancos usam 2.08, não-financeiras 2.03.
+    # "Patrimônio Líquido Consolidado" é descrição padrão em ambos os planos.
+    pl = get(bpp, None, [
         "patrimônio líquido consolidado", "patrimônio líquido",
     ])
     # Dívida = Empréstimos e Financiamentos circulante (2.01.04) + não circulante (2.02.01)

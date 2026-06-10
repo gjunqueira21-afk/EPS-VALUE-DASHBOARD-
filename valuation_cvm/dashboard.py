@@ -995,6 +995,35 @@ def _bcb_serie(code: int, n: int = 36) -> pd.DataFrame:
     return pd.DataFrame()
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _embi_brasil() -> Optional[float]:
+    """
+    Busca o EMBI+ Brasil (risco-país, série JPM366_EMBI366 do IPEA).
+
+    O IPEA disponibiliza o valor em pontos-base; converte para % (pb / 100).
+    Retorna None se a API estiver indisponível (sem mock — fallback fica a
+    cargo do chamador).
+    """
+    try:
+        import requests as _req
+        url = ("http://www.ipeadata.gov.br/api/odata4/ValoresSerie"
+               "(SERCODIGO='JPM366_EMBI366')")
+        r = _req.get(url, timeout=10)
+        if r.status_code == 200:
+            registros = r.json().get("value", [])
+            df = pd.DataFrame(registros)
+            if df.empty or "VALVALOR" not in df.columns:
+                return None
+            df["VALVALOR"] = pd.to_numeric(df["VALVALOR"], errors="coerce")
+            df["VALDATA"]  = pd.to_datetime(df["VALDATA"], errors="coerce")
+            df = df.dropna(subset=["VALVALOR", "VALDATA"]).sort_values("VALDATA")
+            if not df.empty:
+                return float(df["VALVALOR"].iloc[-1]) / 100.0
+    except Exception:
+        pass
+    return None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Tab renderers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1388,6 +1417,17 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
     if not _selic_df.empty:
         rf_def = float(np.clip(round(_selic_df["valor"].iloc[-1] * 4) / 4, 5.0, 18.0))
 
+    # Kd: CDI atual (BCB SGS 4392) + spread de crédito típico de dívida corporativa
+    _cdi_df = _bcb_serie(4392, 1)
+    _kd_spread = 3.0
+    kd_def = 14.0
+    if not _cdi_df.empty:
+        kd_def = float(np.clip(round((_cdi_df["valor"].iloc[-1] + _kd_spread) * 4) / 4, 5.0, 22.0))
+
+    # CRP: EMBI+ Brasil (risco-país, IPEA) — fallback para 2.5% se indisponível
+    _embi_pct = _embi_brasil()
+    crp_def = float(np.clip(round((_embi_pct or 2.5) * 4) / 4, 0.0, 6.0))
+
     # Placeholder para o painel de resumo no topo (preenchido após cálculos)
     _top_summary = st.empty()
 
@@ -1416,14 +1456,22 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
                                help="Beta da empresa versus Ibovespa")
             erp    = st.slider("ERP — Prêmio de Risco de Mercado %", 3.0, 9.0, 5.5, 0.25,
                                key="w_erp", help="Damodaran: ~5.5% para Brasil")
-            crp    = st.slider("CRP — Risco País %", 0.0, 6.0, 2.5, 0.25,
-                               key="w_crp", help="Brazil CDS spread / 100")
+            crp    = st.slider("CRP — Risco País %", 0.0, 6.0, crp_def, 0.25,
+                               key="w_crp", help="Pré-preenchido com EMBI+ Brasil (IPEA, em pb / 100)")
+            if _embi_pct is not None:
+                st.caption(f"⚡ CRP pré-preenchido com EMBI+ Brasil vigente: **{_embi_pct*100:,.0f} pb** ≈ **{_embi_pct:.2f}%** (IPEA)")
+            else:
+                st.caption("ℹ️ EMBI+ Brasil indisponível — CRP usando padrão de **2,5%**.")
             ke_pct = rf + beta * (erp + crp)
             st.markdown(f"**Ke = {rf:.2f}% + {beta:.2f}×({erp:.2f}%+{crp:.2f}%) = `{ke_pct:.2f}%`**")
 
         with w2:
             st.markdown("**Custo da Dívida (Kd) e Estrutura de Capital**")
-            kd_pct = st.slider("Kd — Custo da dívida bruta %", 5.0, 22.0, 14.0, 0.25, key="w_kd")
+            kd_pct = st.slider("Kd — Custo da dívida bruta %", 5.0, 22.0, kd_def, 0.25, key="w_kd",
+                               help="Pré-preenchido com CDI atual + spread de crédito (BCB SGS 4392)")
+            if not _cdi_df.empty:
+                st.caption(f"⚡ Kd pré-preenchido com CDI vigente (**{_cdi_df['valor'].iloc[-1]:.2f}% a.a.**) "
+                           f"+ spread de crédito de **{_kd_spread:.1f}pp** (BCB)")
             t_rate = st.slider("Alíquota efetiva (IR + CSLL) %", 15.0, 40.0, 34.0, 1.0, key="w_t")
             e_pct  = st.slider("% Equity (E/(E+D))", 10.0, 95.0, 60.0, 5.0, key="w_e",
                                help="Participação do capital próprio no capital total")
@@ -2224,7 +2272,8 @@ Para baixar dados:<br>
         st.session_state["_last_cd_val"] = selected_cd
         for _k in ("epv_ebit", "epv_nd", "epv_shr", "epv_tax", "epv_wacc2",
                    "dcf_fcl", "dcf_nd2", "dcf_shr", "dg12", "dg34", "dg5", "dgt",
-                   "dcf_wacc2", "mult_preco", "mult_acoes", "w_rf", "w_manual"):
+                   "dcf_wacc2", "mult_preco", "mult_acoes",
+                   "w_rf", "w_kd", "w_crp", "w_manual"):
             st.session_state.pop(_k, None)
 
     # ── Auto-detect ticker quando empresa muda ───────────────────────────────

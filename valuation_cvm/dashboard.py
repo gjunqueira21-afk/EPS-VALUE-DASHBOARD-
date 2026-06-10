@@ -99,7 +99,7 @@ def rgba(hex_c: str, alpha: float) -> str:
 
 CSS = f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
 html, body, [class*="css"] {{
     background-color: {C['bg']} !important;
@@ -107,8 +107,47 @@ html, body, [class*="css"] {{
     font-family: 'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif !important;
     font-feature-settings: "tnum" on, "lnum" on;  /* figuras tabulares para números */
 }}
-.stApp {{ background-color: {C['bg']}; }}
+.stApp {{
+    background:
+        radial-gradient(1100px 480px at 85% -10%, {rgba(C['blue'], 0.09)} 0%, transparent 60%),
+        radial-gradient(900px 420px at -5% 110%, {rgba(C['cyan'], 0.06)} 0%, transparent 55%),
+        linear-gradient(180deg, #0B1120 0%, {C['bg']} 45%) !important;
+}}
+/* grade técnica sutil ao fundo */
+.stApp::before {{
+    content: "";
+    position: fixed; inset: 0;
+    background-image:
+        linear-gradient({rgba(C['blue'], 0.028)} 1px, transparent 1px),
+        linear-gradient(90deg, {rgba(C['blue'], 0.028)} 1px, transparent 1px);
+    background-size: 44px 44px;
+    pointer-events: none;
+    z-index: 0;
+}}
 .main .block-container {{ padding-top: 0.5rem; padding-bottom: 2rem; max-width: 100%; }}
+
+/* ── Scrollbar ──────────────────────────────────────────────────────────── */
+::-webkit-scrollbar {{ width: 10px; height: 10px; }}
+::-webkit-scrollbar-track {{ background: {C['bg']}; }}
+::-webkit-scrollbar-thumb {{ background: {C['brd2']}; border-radius: 6px; }}
+::-webkit-scrollbar-thumb:hover {{ background: {C['blue']}; }}
+
+/* ── Animações ──────────────────────────────────────────────────────────── */
+@keyframes pulse-dot {{
+    0%, 100% {{ opacity: 1; box-shadow: 0 0 0 0 {rgba(C['green'], 0.55)}; }}
+    50%      {{ opacity: 0.55; box-shadow: 0 0 0 6px {rgba(C['green'], 0)}; }}
+}}
+@keyframes scan-line {{
+    0%   {{ background-position: -300% 0; }}
+    100% {{ background-position: 300% 0; }}
+}}
+.live-dot {{
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: {C['green']};
+    animation: pulse-dot 2s ease-in-out infinite;
+}}
 
 /* ── Sidebar ────────────────────────────────────────────────────────────── */
 section[data-testid="stSidebar"] {{
@@ -131,41 +170,58 @@ section[data-testid="stSidebar"] input:focus {{
 
 /* ── Header ─────────────────────────────────────────────────────────────── */
 .trm-header {{
-    background: linear-gradient(135deg, #0B1120 0%, {C['bg']} 100%);
-    border-bottom: 1px solid {C['brd2']};
+    position: relative;
+    background: linear-gradient(135deg, rgba(11,17,32,0.92) 0%, {rgba(C['bg'], 0.85)} 100%);
+    backdrop-filter: blur(8px);
+    border: 1px solid {C['brd']};
+    border-radius: 12px;
     padding: 14px 24px;
     margin-bottom: 20px;
     display: flex;
     align-items: center;
     gap: 14px;
+    overflow: hidden;
+}}
+/* linha de energia varrendo o topo do header */
+.trm-header::after {{
+    content: "";
+    position: absolute; top: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg,
+        transparent 0%, {rgba(C['cyan'], 0.0)} 30%,
+        {rgba(C['cyan'], 0.9)} 50%, {rgba(C['blue'], 0.0)} 70%, transparent 100%);
+    background-size: 300% 100%;
+    animation: scan-line 6s linear infinite;
 }}
 .trm-badge {{
-    background: {C['blue']};
+    background: linear-gradient(135deg, {C['blue']} 0%, {C['blue_d']} 100%);
     color: #fff;
     font-size: 13px;
-    font-weight: 700;
-    padding: 5px 14px;
-    border-radius: 5px;
+    font-weight: 800;
+    padding: 6px 15px;
+    border-radius: 7px;
     letter-spacing: 2px;
     text-transform: uppercase;
     white-space: nowrap;
+    box-shadow: 0 0 18px {rgba(C['blue'], 0.45)}, inset 0 1px 0 {rgba('#FFFFFF', 0.18)};
 }}
-.trm-title {{ color: {C['t1']}; font-size: 16px; font-weight: 600; margin: 0; }}
+.trm-title {{ color: {C['t1']}; font-size: 16px; font-weight: 700; margin: 0; letter-spacing: 0.5px; }}
 .trm-sub   {{ color: {C['t3']}; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; margin: 0; }}
 
 /* ── Company strip ──────────────────────────────────────────────────────── */
 .co-strip {{
-    background: {C['surf']};
-    border: 1px solid {C['brd']};
+    background: linear-gradient(135deg, {rgba(C['surf2'], 0.7)} 0%, {rgba(C['surf'], 0.9)} 100%);
+    backdrop-filter: blur(8px);
+    border: 1px solid {rgba(C['blue'], 0.25)};
     border-left: 4px solid {C['blue']};
-    border-radius: 0 8px 8px 0;
+    border-radius: 0 12px 12px 0;
     padding: 12px 20px;
     margin-bottom: 18px;
     display: flex;
     align-items: center;
     gap: 20px;
+    box-shadow: 0 4px 24px {rgba(C['blue'], 0.08)}, inset 0 1px 0 {rgba('#FFFFFF', 0.04)};
 }}
-.co-name {{ color: {C['t1']}; font-size: 18px; font-weight: 700; }}
+.co-name {{ color: {C['t1']}; font-size: 18px; font-weight: 800; letter-spacing: 0.3px; }}
 .co-tag  {{
     background: {rgba(C['blue'], 0.12)};
     color: {C['blue_l']};
@@ -176,17 +232,33 @@ section[data-testid="stSidebar"] input:focus {{
     border: 1px solid {rgba(C['blue'], 0.3)};
 }}
 
-/* ── Metric cards ───────────────────────────────────────────────────────── */
+/* ── Metric cards — glass + glow ────────────────────────────────────────── */
 .mc {{
-    background: {C['surf']};
+    position: relative;
+    background: linear-gradient(180deg, {rgba(C['surf2'], 0.55)} 0%, {rgba(C['surf'], 0.85)} 100%);
+    backdrop-filter: blur(6px);
     border: 1px solid {C['brd']};
-    border-radius: 8px;
-    padding: 12px 16px;
+    border-radius: 10px;
+    padding: 13px 16px;
     margin-bottom: 8px;
-    transition: border-color 0.15s, background 0.15s;
-    min-height: 74px;
+    min-height: 76px;
+    overflow: hidden;
+    transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.25s ease;
 }}
-.mc:hover {{ border-color: {C['brd2']}; background: {C['surf2']}; }}
+/* filete de energia no topo de cada card */
+.mc::before {{
+    content: "";
+    position: absolute; top: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, transparent, {rgba(C['blue'], 0.65)}, transparent);
+    opacity: 0.5;
+    transition: opacity 0.25s ease;
+}}
+.mc:hover {{
+    transform: translateY(-2px);
+    border-color: {rgba(C['blue'], 0.5)};
+    box-shadow: 0 8px 28px {rgba(C['blue'], 0.16)}, 0 0 0 1px {rgba(C['blue'], 0.12)};
+}}
+.mc:hover::before {{ opacity: 1; }}
 .mc-lbl {{
     color: {C['t3']};
     font-size: 10px;
@@ -195,25 +267,40 @@ section[data-testid="stSidebar"] input:focus {{
     text-transform: uppercase;
     margin-bottom: 7px;
 }}
-.mc-val {{ font-size: 19px; font-weight: 700; color: {C['t1']}; line-height: 1; }}
-.mc-val.pos {{ color: {C['green']}; }}
-.mc-val.neg {{ color: {C['red']}; }}
-.mc-val.blu {{ color: {C['blue_l']}; }}
-.mc-val.yel {{ color: {C['yellow']}; }}
-.mc-val.nd  {{ color: {C['t3']}; font-size: 14px; font-weight: 400; }}
+.mc-val {{
+    font-family: 'JetBrains Mono', 'Inter', monospace;
+    font-size: 19px; font-weight: 700; color: {C['t1']}; line-height: 1;
+}}
+.mc-val.pos  {{ color: {C['green']};  text-shadow: 0 0 16px {rgba(C['green'], 0.35)}; }}
+.mc-val.neg  {{ color: {C['red']};    text-shadow: 0 0 16px {rgba(C['red'], 0.35)}; }}
+.mc-val.blu  {{ color: {C['blue_l']}; text-shadow: 0 0 16px {rgba(C['blue'], 0.35)}; }}
+.mc-val.yel  {{ color: {C['yellow']}; text-shadow: 0 0 16px {rgba(C['yellow'], 0.3)}; }}
+.mc-val.cyan {{ color: {C['cyan']};   text-shadow: 0 0 16px {rgba(C['cyan'], 0.35)}; }}
+.mc-val.neu  {{ color: {C['t2']}; }}
+.mc-val.nd   {{ color: {C['t3']}; font-size: 14px; font-weight: 400; font-family: 'Inter', sans-serif; }}
 .mc-sub {{ color: {C['t3']}; font-size: 11px; margin-top: 4px; }}
 
 /* ── Section titles ─────────────────────────────────────────────────────── */
 .sec {{
+    position: relative;
     color: {C['t2']};
     font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 1.5px;
+    font-weight: 700;
+    letter-spacing: 1.8px;
     text-transform: uppercase;
     border-bottom: 1px solid {C['brd']};
     padding-bottom: 6px;
+    padding-left: 12px;
     margin-top: 22px;
     margin-bottom: 12px;
+}}
+/* marcador neon à esquerda do título */
+.sec::before {{
+    content: "";
+    position: absolute; left: 0; top: 1px; bottom: 7px;
+    width: 3px; border-radius: 2px;
+    background: linear-gradient(180deg, {C['cyan']}, {C['blue']});
+    box-shadow: 0 0 8px {rgba(C['cyan'], 0.6)};
 }}
 
 /* ── Alert boxes ────────────────────────────────────────────────────────── */
@@ -280,9 +367,10 @@ section[data-testid="stSidebar"] input:focus {{
     background: {rgba(C['blue'], 0.04)} !important;
 }}
 .stTabs [aria-selected="true"] {{
-    color: {C['blue_l']} !important;
-    border-bottom: 2px solid {C['blue']} !important;
-    background: {rgba(C['blue'], 0.06)} !important;
+    color: {C['cyan']} !important;
+    border-bottom: 2px solid {C['cyan']} !important;
+    background: linear-gradient(180deg, {rgba(C['cyan'], 0.10)} 0%, transparent 100%) !important;
+    text-shadow: 0 0 14px {rgba(C['cyan'], 0.55)};
 }}
 
 /* ── DataFrames ─────────────────────────────────────────────────────────── */
@@ -397,8 +485,8 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ─────────────────────────────────────────────────────────────────────────────
 
 _PL = dict(
-    paper_bgcolor=C["bg"],
-    plot_bgcolor=C["surf"],
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor=rgba(C["surf"], 0.55),
     font=dict(family="Inter, Segoe UI, sans-serif", color=C["t2"], size=11),
     title_font=dict(color=C["t1"], size=13, family="Inter, Segoe UI, sans-serif"),
     xaxis=dict(gridcolor=C["brd"], linecolor=C["brd2"],
@@ -484,7 +572,7 @@ def _gauge(value, max_val, title, invert=False):
         },
     ))
     fig.update_layout(
-        paper_bgcolor=C["bg"], plot_bgcolor=C["bg"],
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         height=200, margin=dict(l=15, r=15, t=40, b=10),
         font=dict(color=C["t2"]),
     )
@@ -572,6 +660,10 @@ def header():
     <div class="trm-title">Value Terminal</div>
     <div class="trm-sub">Análise Fundamentalista · CVM Open Data · B3 · Brasil · {datetime.now().strftime('%d/%m/%Y')}</div>
   </div>
+  <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+    <span class="live-dot"></span>
+    <span style="color:{C['t3']};font-size:10px;letter-spacing:2px;font-weight:600">LIVE</span>
+  </div>
 </div>""", unsafe_allow_html=True)
 
 
@@ -590,10 +682,13 @@ def co_strip(name, cd_cvm, tipo_doc, setor="", brapi_data=None, ticker=""):
         price_html = (
             f'<div style="margin-left:auto;text-align:right;padding-left:24px">'
             f'<div style="color:{C["t3"]};font-size:10px;letter-spacing:1.5px;margin-bottom:2px">'
+            f'<span class="live-dot" style="width:6px;height:6px;margin-right:6px"></span>'
             f'{ticker.upper()}</div>'
-            f'<div style="color:{C["t1"]};font-size:26px;font-weight:700;line-height:1">'
+            f'<div style="color:{C["t1"]};font-size:26px;font-weight:700;line-height:1;'
+            f'font-family:\'JetBrains Mono\',monospace;'
+            f'text-shadow:0 0 22px {rgba(cor_v, 0.4)}">'
             f'R$ {preco:.2f}</div>'
-            f'<div style="color:{cor_v};font-size:12px;margin-top:4px">'
+            f'<div style="color:{cor_v};font-size:12px;margin-top:4px;font-family:\'JetBrains Mono\',monospace">'
             f'{sinal} {abs(var_d):.2f}% hoje</div>'
             f'</div>'
         )
@@ -806,6 +901,7 @@ def _history(cd, tipo):
             "ebitda":      ebitda,
             "lucro_liq":   pick(d, y, ["3.11", "3.09"], "lucro/prejuízo consolidado do período", "lucro/prejuízo do período", "lucro líquido"),
             "fcop":        pick(f, y, ["6.01"], "caixa líquido atividades operacionais", "caixa líquido nas atividades operacionais"),
+            "capex":       pick(f, y, ["6.02.01"], "aquisições de ativos imobilizados e intangíveis"),
             "depamort":    da,
             "ativo":       pick(b, y, ["1"], "ativo total"),
             "pl":          pick(p, y, None, "patrimônio líquido consolidado", "patrimônio líquido"),
@@ -1212,7 +1308,7 @@ def _tab_health(snap_ext, m, hist):
         fig_lev = _lines(anos_h, [
             ("Dívida Bruta Aprox.", nd_vals,  C["red"]),
             ("EBITDA",             ebd_vals, C["green"]),
-        ], title="Evolução: Dívida vs EBITDA (R$ Bilhões)")
+        ], title="Evolução: Dívida vs EBITDA (R$ Milhões)")
         st.plotly_chart(fig_lev, use_container_width=True)
 
 
@@ -1230,6 +1326,67 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
 
     tipo   = snap_ext.get("tipo_doc", "DFP")
     is_fin = _is_financial(cd, tipo)
+
+    # ── Premissas pré-calculadas a partir de dados reais ────────────────────
+    # EBIT normalizado (Greenwald): média dos últimos 3 EBITs anuais
+    ebit_norm = None
+    ebit_norm_detail = ""
+    if not hist.empty and "ebit" in hist.columns:
+        eh = hist.dropna(subset=["ebit"]).sort_values("ano").tail(3)
+        if len(eh) > 0:
+            ebit_norm = float(eh["ebit"].mean())
+            ebit_norm_detail = "  ·  ".join(
+                f"{int(r.ano)}: R$ {r.ebit/1e6:,.0f}M" for r in eh.itertuples()
+            )
+    if ebit_norm is None:
+        ebit_norm = ebit
+
+    # FCL normalizado: média 3 anos de (FCOP − |CAPEX|) — suaviza anos atípicos
+    fcl_norm = None
+    fcl_norm_detail = ""
+    if not hist.empty and "fcop" in hist.columns:
+        fh = hist.dropna(subset=["fcop"]).sort_values("ano").tail(3)
+        if len(fh) > 0:
+            _fcls = [((_f(r.fcop) or 0) - abs(_f(getattr(r, "capex", None)) or 0))
+                     for r in fh.itertuples()]
+            fcl_norm = float(np.mean(_fcls))
+            fcl_norm_detail = "  ·  ".join(
+                f"{int(r.ano)}: R$ {v/1e6:,.0f}M" for r, v in zip(fh.itertuples(), _fcls)
+            )
+
+    # Crescimento: CAGR da receita histórica, amortecido para projeção
+    # (empresas não sustentam o CAGR passado indefinidamente — fade até g terminal)
+    cagr_rev = None
+    if not hist.empty and "receita" in hist.columns:
+        # janela recente (CAGR ~5 anos): ciclos antigos distorcem o cenário-base
+        rh = hist.dropna(subset=["receita"]).sort_values("ano").tail(6)
+        if len(rh) >= 3:
+            r_ini, r_fim = float(rh["receita"].iloc[0]), float(rh["receita"].iloc[-1])
+            n_anos_c = int(rh["ano"].iloc[-1] - rh["ano"].iloc[0])
+            if r_ini > 0 and r_fim > 0 and n_anos_c > 0:
+                cagr_rev = (r_fim / r_ini) ** (1 / n_anos_c) - 1
+
+    def _half_step(x):  # arredonda para o passo 0.5 dos sliders
+        return float(round(x * 2) / 2)
+
+    # Piso = 4.5% (g terminal): em termos nominais o fade converge para a
+    # perpetuidade, nunca abaixo dela (evita rampa em "V" sem sentido econômico)
+    if cagr_rev is not None:
+        g12_def = _half_step(float(np.clip(cagr_rev * 100 * 0.80, 4.5, 15.0)))
+        g34_def = _half_step(float(np.clip(cagr_rev * 100 * 0.55, 4.5, 10.0)))
+        g5_def  = _half_step(float(np.clip(cagr_rev * 100 * 0.40, 4.5,  8.0)))
+        g34_def = min(g34_def, g12_def)
+        g5_def  = min(g5_def, g34_def)
+        g_src   = f"CAGR receita {cagr_rev:.1%} a.a. com fade de 80%/55%/40% até o g terminal"
+    else:
+        g12_def, g34_def, g5_def = 8.0, 6.0, 5.0
+        g_src = "histórico insuficiente — perfil conservador padrão"
+
+    # Risk-free: SELIC Meta atual (BCB SGS 432)
+    _selic_df = _bcb_serie(432, 1)
+    rf_def = 10.5
+    if not _selic_df.empty:
+        rf_def = float(np.clip(round(_selic_df["valor"].iloc[-1] * 4) / 4, 5.0, 18.0))
 
     # Placeholder para o painel de resumo no topo (preenchido após cálculos)
     _top_summary = st.empty()
@@ -1251,8 +1408,10 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
 
         with w1:
             st.markdown("**Custo do Capital Próprio (Ke) — CAPM**")
-            rf     = st.slider("Rf — Risk-free (SELIC/CDI) %", 5.0, 18.0, 10.5, 0.25,
-                               key="w_rf", help="Taxa Selic atual ou NTN-B longa")
+            rf     = st.slider("Rf — Risk-free (SELIC/CDI) %", 5.0, 18.0, rf_def, 0.25,
+                               key="w_rf", help="Pré-preenchido com a SELIC Meta atual (BCB SGS 432)")
+            if not _selic_df.empty:
+                st.caption(f"⚡ Rf pré-preenchido com SELIC Meta vigente: **{_selic_df['valor'].iloc[-1]:.2f}% a.a.** (BCB)")
             beta   = st.slider("Beta (β)",  0.3, 2.5, 1.0, 0.05, key="w_beta",
                                help="Beta da empresa versus Ibovespa")
             erp    = st.slider("ERP — Prêmio de Risco de Mercado %", 3.0, 9.0, 5.5, 0.25,
@@ -1413,13 +1572,19 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
     # ── SEÇÃO 3: EPV ─────────────────────────────────────────────────────────
     sec("EPV — Earnings Power Value  (Greenwald)")
     box("EPV = NOPAT / WACC  |  NOPAT = EBIT normalizado × (1 − alíquota)  |  "
-        "EPV Equity = EPV − Dívida Líquida", "info")
+        "EPV Equity = EPV − Dívida Líquida  |  "
+        "<b>EBIT normalizado = média dos últimos 3 EBITs anuais</b> (suaviza ciclo)", "info")
+
+    if ebit_norm_detail:
+        box(f"⚡ <b>EBIT normalizado (média 3 anos):</b> {ebit_norm_detail}  "
+            f"→  <b>média = R$ {ebit_norm/1e6:,.0f}M</b>", "ok")
 
     e1, e2 = st.columns(2)
     with e1:
-        epv_ebit  = st.number_input("EBIT normalizado (R$ M)",
-                                    value=round(_f(ebit)/1e6, 1) if ebit else 0.0,
-                                    step=100.0, key="epv_ebit")
+        epv_ebit  = st.number_input("EBIT normalizado (R$ M) — média 3 anos, auditável",
+                                    value=round(_f(ebit_norm)/1e6, 1) if ebit_norm else 0.0,
+                                    step=100.0, key="epv_ebit",
+                                    help="Média dos últimos 3 EBITs anuais (CVM). Edite se quiser outra normalização.")
         epv_tax   = st.slider("Alíquota efetiva", 0.15, 0.45, t_rate/100, 0.01, key="epv_tax")
         epv_wacc  = st.number_input("WACC (%)", 0.0, 30.0, round(wacc_final*100, 2), 0.25, key="epv_wacc2") / 100
         epv_nd    = st.number_input("Dívida Líquida (R$ M)",
@@ -1461,25 +1626,31 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
     eq_shr  = None  # preenchido pelo bloco DCF abaixo
     dcf_res = None  # idem
 
-    # FCL base: usa dados CVM (FCOP − |CAPEX|)
+    # FCL base: média 3 anos de FCOP−|CAPEX| (normalizado) > último ano > snapshot
     fcop_cvm  = _f(snap_ext.get("fluxo_caixa_operacional"))
     capex_cvm = _f(snap_ext.get("capex"))
     fcl_cvm   = None
     if fcop_cvm is not None:
         fcl_cvm = fcop_cvm - abs(capex_cvm or 0)
-    fcl_default = round(fcl_cvm / 1e6, 1) if fcl_cvm else (round(_f(fcl)/1e6, 1) if fcl else 0.0)
+    fcl_base = fcl_norm if fcl_norm is not None else (fcl_cvm if fcl_cvm is not None else fcl)
+    fcl_default = round(fcl_base / 1e6, 1) if fcl_base else 0.0
 
     d1, d2 = st.columns([1, 1])
     with d1:
         st.markdown("**Premissas — FCL e Capital (dados CVM como base)**")
-        if fcl_cvm is not None:
+        if fcl_norm_detail:
             st.caption(
-                f"CVM: FCOP = {fbrl(fcop_cvm)}  |  CAPEX = {fbrl(capex_cvm)}  "
+                f"⚡ FCL normalizado (média 3 anos, FCOP−CAPEX): {fcl_norm_detail}  "
+                f"→  **média = {fbrl(fcl_norm)}**"
+            )
+        elif fcl_cvm is not None:
+            st.caption(
+                f"CVM (último ano): FCOP = {fbrl(fcop_cvm)}  |  CAPEX = {fbrl(capex_cvm)}  "
                 f"→  **FCL = {fbrl(fcl_cvm)}**"
             )
-        dcf_fcl = st.number_input("FCL Base (R$ M) — auditável",
+        dcf_fcl = st.number_input("FCL Base (R$ M) — média 3 anos, auditável",
                                   value=fcl_default, step=100.0, key="dcf_fcl",
-                                  help="Pre-preenchido com FCOP−CAPEX da CVM. Edite se necessário.")
+                                  help="Pré-preenchido com a média de 3 anos de FCOP−CAPEX da CVM. Edite se necessário.")
         dcf_nd  = st.number_input("Dívida Líquida (R$ M) — auditável",
                                   value=round(_f(nd)/1e6, 1) if nd else 0.0,
                                   step=100.0, key="dcf_nd2",
@@ -1488,12 +1659,14 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
                                   value=acoes, step=10.0, key="dcf_shr")
 
         st.markdown("**Premissas de Crescimento — auditáveis**")
+        st.caption(f"⚡ Pré-preenchido pelo cenário-base: {g_src}. "
+                   f"g terminal 4,5% ≈ inflação meta + crescimento real de longo prazo do PIB.")
         cg1, cg2 = st.columns(2)
         with cg1:
-            g12 = st.slider("Anos 1–2 (%)",  0.0, 35.0, 10.0, 0.5, key="dg12") / 100
-            g34 = st.slider("Anos 3–4 (%)",  0.0, 25.0,  7.0, 0.5, key="dg34") / 100
+            g12 = st.slider("Anos 1–2 (%)",  0.0, 35.0, g12_def, 0.5, key="dg12") / 100
+            g34 = st.slider("Anos 3–4 (%)",  0.0, 25.0, g34_def, 0.5, key="dg34") / 100
         with cg2:
-            g5  = st.slider("Ano 5 (%)",      0.0, 20.0,  6.0, 0.5, key="dg5")  / 100
+            g5  = st.slider("Ano 5 (%)",      0.0, 20.0, g5_def, 0.5, key="dg5")  / 100
             g_t = st.slider("g terminal (%)", 0.0,  7.0,  4.5, 0.25, key="dgt") / 100
 
         dcf_wacc = st.number_input("WACC (%) — preenche com o calculado acima",
@@ -2044,6 +2217,15 @@ Para baixar dados:<br>
         m["caixa_total"]    = (snap_ext.get("caixa_equivalentes") or 0) + (snap_ext.get("aplicacoes_financeiras") or 0) or None
         m["divida_liquida"] = snap_ext.get("divida_liquida")
         hist = _history(selected_cd, tipo_doc)
+
+    # Empresa mudou → limpa inputs de valuation para os defaults recalcularem
+    # (widgets com key mantêm o valor da empresa anterior se não forem resetados)
+    if st.session_state.get("_last_cd_val") != selected_cd:
+        st.session_state["_last_cd_val"] = selected_cd
+        for _k in ("epv_ebit", "epv_nd", "epv_shr", "epv_tax", "epv_wacc2",
+                   "dcf_fcl", "dcf_nd2", "dcf_shr", "dg12", "dg34", "dg5", "dgt",
+                   "dcf_wacc2", "mult_preco", "mult_acoes", "w_rf", "w_manual"):
+            st.session_state.pop(_k, None)
 
     # ── Auto-detect ticker quando empresa muda ───────────────────────────────
     if selected_cd and st.session_state.get("_last_cd_ticker") != selected_cd:

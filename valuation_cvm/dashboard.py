@@ -2133,28 +2133,23 @@ def _tab_macro():
     for i, (nome, (df_s, cor, unid, _)) in enumerate(cambio_d.items()):
         _card(cc[i], nome, df_s, unid, is_cambio=True)
 
-    # Câmbio em tempo real (BRAPI /v2/currency) — preenche os slots restantes
-    fx = _brapi_currency("USD-BRL,EUR-BRL")
-    fx_map = {f'{c.get("fromCurrency")}-{c.get("toCurrency")}': c for c in fx}
+    # Dólar em tempo real (BRAPI /v2/currency) — ao lado do PTAX do BCB
+    fx = _brapi_currency("USD-BRL")
     slot = len(cambio_d)
-    for par, label in [("USD-BRL", "USD/BRL (tempo real)"),
-                       ("EUR-BRL", "EUR/BRL (tempo real)")]:
-        if slot >= len(cc):
-            break
-        info = fx_map.get(par)
+    if slot < len(cc):
+        info = fx[0] if fx else None
         if info:
             price = _f(info.get("bidPrice"))
             chg   = _f(info.get("percentageChange"))
-            # moeda subindo = real desvalorizando → vermelho
+            # dólar subindo = real desvalorizando → vermelho
             cls_d = "neg" if (chg or 0) > 0 else "pos"
             sub = (f"Δ {chg:+.2f}%  ·  BRAPI tempo real" if chg is not None
                    else "BRAPI tempo real")
-            cc[slot].markdown(mc(label, f"{price:.4f}" if price else "–", cls_d, sub),
-                              unsafe_allow_html=True)
+            cc[slot].markdown(mc("USD/BRL (tempo real)", f"{price:.4f}" if price else "–",
+                                 cls_d, sub), unsafe_allow_html=True)
         else:
-            cc[slot].markdown(mc(label, "–", "nd", "BRAPI indisponível"),
+            cc[slot].markdown(mc("USD/BRL (tempo real)", "–", "nd", "BRAPI indisponível"),
                               unsafe_allow_html=True)
-        slot += 1
 
     # ── Gráfico: Juros ────────────────────────────────────────────────────────
     sec("Gráficos Históricos")

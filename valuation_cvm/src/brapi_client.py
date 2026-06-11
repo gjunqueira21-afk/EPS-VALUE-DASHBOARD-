@@ -48,6 +48,11 @@ class BrapiClient:
         if not self.token:
             logger.warning("BrapiClient: BRAPI_TOKEN não configurado.")
 
+    @property
+    def _headers(self) -> Dict[str, str]:
+        """Autenticação via Bearer (padrão recomendado pela BRAPI)."""
+        return {"Authorization": f"Bearer {self.token}"} if self.token else {}
+
     # ------------------------------------------------------------------
     # Cotação + dados fundamentais
     # ------------------------------------------------------------------
@@ -146,6 +151,30 @@ class BrapiClient:
         except Exception as exc:
             logger.warning("BrapiClient.get_inflation: %s", exc)
         return None
+
+    def get_currency(self, pairs: str = "USD-BRL,EUR-BRL") -> List[Dict]:
+        """
+        Cotações de câmbio em tempo real via BRAPI /v2/currency.
+
+        `pairs`: pares separados por vírgula (ex.: 'USD-BRL,EUR-BRL').
+        Cada item retorna fromCurrency, toCurrency, name, bidPrice,
+        askPrice, percentageChange, updatedAtDate, etc.
+        """
+        if not self.token:
+            return []
+        try:
+            resp = requests.get(
+                f"{_BASE}/v2/currency",
+                params={"currency": pairs},
+                headers=self._headers,
+                timeout=_TIMEOUT,
+            )
+            if resp.status_code == 200:
+                return resp.json().get("currency", [])
+            logger.warning("BrapiClient.get_currency: HTTP %d", resp.status_code)
+        except Exception as exc:
+            logger.warning("BrapiClient.get_currency: %s", exc)
+        return []
 
     # ------------------------------------------------------------------
     # Lista de tickers disponíveis

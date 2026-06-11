@@ -2804,7 +2804,7 @@ def _render_brapi_panel(q: Dict, ticker: str):
 
 
 def _tab_options(ticker_input: str = ""):
-    """Aba de Opções B3 (BRAPI /v2/options/expirations + /v2/options/{ticker})."""
+    """Aba de Opções B3 (BRAPI /v2/options/expirations + /v2/options/chain)."""
     sec("📑 Opções — Ativo-Objeto")
 
     under = st.text_input(
@@ -2839,14 +2839,9 @@ def _tab_options(ticker_input: str = ""):
 
     if not chain:
         box(f"BRAPI não retornou a cadeia de opções de <b>{under}</b> para o "
-            f"vencimento <b>{exp_sel}</b> em nenhuma das rotas testadas "
-            f"(<code>chain</code>, <code>series</code>, <code>strikes</code>, "
-            f"<code>/v2/options</code>, <code>/v2/options/{under}</code>). "
-            f"O diagnóstico abaixo mostra o status HTTP de cada tentativa — "
-            f"me envie esse conteúdo (ou o exemplo de requisição da seção "
-            f"\"Listar Séries Negociadas\" da documentação BRAPI) para "
-            f"ajustarmos a rota exata.", "warn")
-        with st.expander("🔍 Diagnóstico BRAPI (rotas testadas)", expanded=True):
+            f"vencimento <b>{exp_sel}</b> (<code>/v2/options/chain</code>). "
+            f"Veja o status HTTP e a resposta no diagnóstico abaixo.", "warn")
+        with st.expander("🔍 Diagnóstico BRAPI (/v2/options/chain)", expanded=True):
             st.json(chain_debug or {"info": "sem resposta"})
         return
 
@@ -2856,7 +2851,7 @@ def _tab_options(ticker_input: str = ""):
     if _ret_under and _ret_under != under:
         box(f"⚠ A BRAPI retornou dados para <b>{_ret_under}</b>, não para "
             f"<b>{under}</b> — verifique se o endpoint "
-            f"<code>/v2/options/{{ticker}}</code> suporta este ativo no seu plano.",
+            f"<code>/v2/options/chain</code> suporta este ativo no seu plano.",
             "warn")
 
     # Parsing tolerante: {"calls":[...], "puts":[...]}, {"options":[...]},

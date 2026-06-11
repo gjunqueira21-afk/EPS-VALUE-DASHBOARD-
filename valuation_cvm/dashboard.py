@@ -1019,6 +1019,35 @@ def _brapi_beta(fund: Optional[Dict]) -> Optional[float]:
     return None
 
 
+def _brapi_trailing_dy(fund: Optional[Dict], preco: Optional[float]) -> Optional[float]:
+    """Dividend Yield 12m (%) calculado dos proventos pagos (dividendsData).
+
+    O quote básico da BRAPI não traz DY pronto — calculamos a partir dos
+    proventos em dinheiro efetivamente pagos nos últimos 12 meses ÷ preço.
+    """
+    if not fund or not preco or preco <= 0:
+        return None
+    divs = ((fund.get("dividendsData") or {}).get("cashDividends")) or []
+    if not isinstance(divs, list):
+        return None
+    now = pd.Timestamp.now()
+    cutoff = now - pd.Timedelta(days=365)
+    total, found = 0.0, False
+    for d in divs:
+        if not isinstance(d, dict):
+            continue
+        dt = pd.to_datetime(d.get("paymentDate"), errors="coerce")
+        r = _f(d.get("rate"))
+        if dt is None or pd.isna(dt) or not r:
+            continue
+        if dt.tzinfo is not None:
+            dt = dt.tz_localize(None)
+        if cutoff <= dt <= now:
+            total += r
+            found = True
+    return (total / preco) * 100 if found else None
+
+
 def _brapi_consensus(fund: Optional[Dict]) -> Dict:
     """Preço-alvo e recomendação de analistas (módulo financialData)."""
     fd = (fund or {}).get("financialData") or {}
@@ -1346,24 +1375,65 @@ def _bcb_serie(code: int, n: int = 36) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def _brapi_macro_all() -> Dict[str, float]:
-    """SELIC, IPCA e CDI numa única chamada (BRAPI /v2/macro)."""
-    try:
-        return BrapiClient().get_macro("selic,ipca,cdi")
-    except Exception:
-        return {}
-
-
 def _brapi_macro(kind: str) -> Optional[float]:
-    """Fallback macro via BRAPI (/v2/macro) quando o BCB estiver indisponível.
+    """Fallback macro via BRAPI quando o BCB estiver indisponível.
 
-    kind ∈ {"selic", "ipca", "cdi"}.
+    Usa apenas os endpoints DOCUMENTADOS da BRAPI:
+      selic → /v2/prime-rate   ·   ipca → /v2/inflation
+    (o antigo /v2/macro não existe na API e retornava 404).
+    CDI não tem endpoint na BRAPI — retorna None.
     """
-    data = _brapi_macro_all()
-    for k, v in data.items():
-        if kind.lower() in k:
-            return v
+    try:
+        cli = BrapiClient()
+        if kind.lower() == "selic":
+            return cli.get_prime_rate()
+        if kind.lower() == "ipca":
+            return cli.get_inflation()
+    except Exception:
+        pass
     return None
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _brapi_macro_hist(kind: str, months: int) -> pd.DataFrame:
+    """Série histórica macro via BRAPI (fallback dos gráficos quando o BCB
+    está fora do ar). Mesmo formato de `_bcb_serie`: colunas data/valor.
+
+    kind ∈ {"selic", "ipca"} — únicos com endpoint documentado na BRAPI.
+    """
+    try:
+        cli = BrapiClient()
+        rows = (cli.get_prime_rate_history(months) if kind == "selic"
+                else cli.get_inflation_history(months) if kind == "ipca"
+                else [])
+        if rows:
+            df = pd.DataFrame(rows)
+            df["data"]  = pd.to_datetime(df["date"], dayfirst=True, errors="coerce")
+            df["valor"] = pd.to_numeric(
+                df["value"].astype(str).str.replace(",", ".", regex=False),
+                errors="coerce")
+            return df[["data", "valor"]].dropna().sort_values("data")
+    except Exception:
+        pass
+    return pd.DataFrame()
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _bcb_probe() -> Dict:
+    """Diagnóstico do acesso à API do BCB (SGS): status HTTP / erro da chamada.
+
+    A API do BCB costuma bloquear requisições de servidores fora do Brasil
+    (ex.: Streamlit Cloud) — este probe torna o problema visível na aba Macro.
+    """
+    try:
+        import requests as _req
+        r = _req.get(
+            "https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados/ultimos/1?formato=json",
+            timeout=10,
+        )
+        return {"status": r.status_code, "body": r.text[:300]}
+    except Exception as exc:
+        return {"status": None, "body": str(exc)}
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -2425,6 +2495,33 @@ def _tab_macro():
     inf_d    = _fetch(INFLACAO)
     cambio_d = _fetch(CAMBIO)
 
+    # O BCB respondeu para alguma série? (a API do SGS costuma bloquear
+    # requisições de servidores fora do Brasil — ex.: Streamlit Cloud)
+    _bcb_ok = any(not v[0].empty for v in {**juros_d, **inf_d, **cambio_d}.values())
+
+    # ── Fallback BRAPI (endpoints documentados) para SELIC e IPCA ────────────
+    # Substitui a série vazia do BCB pela equivalente da BRAPI, marcando a
+    # origem na unidade (transparência — sem dados ocultos).
+    if juros_d["SELIC Meta"][0].empty:
+        _df_fb = _brapi_macro_hist("selic", 24)
+        if not _df_fb.empty:
+            _, cor, unid, mensal = juros_d["SELIC Meta"]
+            juros_d["SELIC Meta"] = (_df_fb, cor, f"{unid} · BRAPI", mensal)
+    if inf_d["IPCA"][0].empty:
+        _df_fb = _brapi_macro_hist("ipca", 36)
+        if not _df_fb.empty:
+            _, cor, unid, mensal = inf_d["IPCA"]
+            inf_d["IPCA"] = (_df_fb, cor, f"{unid} · BRAPI", mensal)
+
+    if not _bcb_ok:
+        box("⚠️ <b>API do Banco Central (SGS) indisponível a partir deste servidor.</b> "
+            "O BCB costuma bloquear requisições vindas de fora do Brasil — é o caso "
+            "de servidores do Streamlit Cloud. Onde possível, as séries abaixo usam "
+            "o fallback da BRAPI (SELIC via <code>/v2/prime-rate</code> e IPCA via "
+            "<code>/v2/inflation</code>); as demais ficam offline.", "warn")
+        with st.expander("🔍 Diagnóstico BCB (SGS)"):
+            st.json(_bcb_probe())
+
     # ── Helper: card com último valor ─────────────────────────────────────────
     def _card(col, nome, df_s, unidade, is_cambio=False, fallback=None):
         with col:
@@ -2594,24 +2691,62 @@ def _welcome(avail):
 
 
 def _render_brapi_panel(q: Dict, ticker: str):
-    """Painel completo de dados de mercado BRAPI."""
+    """Painel completo de dados de mercado BRAPI (quote + módulos fundamentais).
+
+    O quote básico da BRAPI traz preço/volume/52 semanas; múltiplos como P/L,
+    P/VP, EV, EV/EBITDA e ações em circulação vêm dos módulos
+    `defaultKeyStatistics`/`financialData` — sem eles os cards ficavam vazios.
+    Quando nem o módulo traz o número pronto, calcula da forma padrão
+    (ex.: P/L = preço ÷ LPA, EV = mktcap + dívida − caixa).
+    """
     nome_c = q.get("shortName", ticker)
     sec(f"📈 Dados de Mercado — {nome_c} ({ticker})  (BRAPI.dev · cotação em tempo real)")
+
+    fund  = _brapi_fundamentals(ticker)
+    stats = (fund or {}).get("defaultKeyStatistics") or {}
+    fd    = (fund or {}).get("financialData") or {}
 
     preco  = q.get("regularMarketPrice", 0)
     var_d  = q.get("regularMarketChangePercent", 0)
     var_r  = q.get("regularMarketChange", 0)
-    mktcap = q.get("marketCap")
-    acoes  = q.get("sharesOutstanding")
+    mktcap = _bnum(q, "marketCap")
     vol    = q.get("regularMarketVolume")
-    vol10d = q.get("averageDailyVolume10Day")
-    pl     = q.get("priceEarningsRatio")
-    pvp    = q.get("priceToBook")
-    ev_ebd = q.get("enterpriseValueEbitda")
-    ev     = q.get("enterpriseValue")
-    dy     = q.get("dividendYield")
+    vol10d = _bnum(q, "averageDailyVolume10Day", "averageDailyVolume3Month")
     hi52   = q.get("fiftyTwoWeekHigh")
     lo52   = q.get("fiftyTwoWeekLow")
+
+    # Múltiplos: quote (legado) → módulos → cálculo direto
+    acoes = _bnum(q, "sharesOutstanding") or _bnum(stats, "sharesOutstanding")
+    if not acoes and mktcap and preco:
+        acoes = mktcap / preco
+
+    eps = _bnum(q, "earningsPerShare") or _bnum(stats, "trailingEps")
+    pl  = _bnum(q, "priceEarningsRatio", "priceEarnings")
+    if pl is None and preco and eps and eps > 0:
+        pl = preco / eps
+
+    bvps = _bnum(stats, "bookValue")  # valor patrimonial por ação
+    pvp  = _bnum(q, "priceToBook") or _bnum(stats, "priceToBook")
+    if pvp is None and preco and bvps and bvps > 0:
+        pvp = preco / bvps
+
+    ev = _bnum(q, "enterpriseValue") or _bnum(stats, "enterpriseValue")
+    if ev is None and mktcap is not None:
+        _debt, _cash = _bnum(fd, "totalDebt"), _bnum(fd, "totalCash")
+        if _debt is not None and _cash is not None:
+            ev = mktcap + _debt - _cash
+
+    ev_ebd = _bnum(q, "enterpriseValueEbitda") or _bnum(stats, "enterpriseToEbitda")
+    _ebd   = _bnum(fd, "ebitda")
+    if ev_ebd is None and ev and _ebd and _ebd > 0:
+        ev_ebd = ev / _ebd
+
+    dy = _bnum(q, "dividendYield")
+    dy_sub = ""
+    if dy is None:
+        dy = _brapi_trailing_dy(fund, preco)
+        if dy is not None:
+            dy_sub = "12m (proventos pagos)"
 
     cor_v  = _cls(var_d)
     sinal  = "▲" if var_d >= 0 else "▼"
@@ -2625,7 +2760,7 @@ def _render_brapi_panel(q: Dict, ticker: str):
     c[3].markdown(mc("Volume Hoje", f"{vol/1e6:.1f}M" if vol else "–", "neu",
                      f"Média 10d: {vol10d/1e6:.1f}M" if vol10d else ""), unsafe_allow_html=True)
     c[4].markdown(mc("Dividend Yield", f"{dy:.2f}%" if dy else "–",
-                     "pos" if dy and dy > 0 else "nd"), unsafe_allow_html=True)
+                     "pos" if dy and dy > 0 else "nd", dy_sub), unsafe_allow_html=True)
 
     # Row 2: múltiplos de mercado (BRAPI)
     c2 = st.columns(5)
@@ -2640,8 +2775,15 @@ def _render_brapi_panel(q: Dict, ticker: str):
                           "pos" if pos_pct > 50 else "neg",
                           f"Posição atual: {pos_pct:.0f}%"), unsafe_allow_html=True)
 
+    if fund is None and (pl is None or pvp is None or ev is None):
+        st.caption(
+            "⚠️ Módulos fundamentais da BRAPI indisponíveis para este ticker "
+            "(`defaultKeyStatistics`/`financialData` — verifique o plano/token). "
+            "P/L, P/VP, EV e EV/EBITDA dependem deles."
+        )
+
     # Row 3: consenso de analistas (módulo financialData da BRAPI)
-    _cons = _brapi_consensus(_brapi_fundamentals(ticker))
+    _cons = _brapi_consensus(fund)
     if _cons.get("target_mean"):
         tm = _cons["target_mean"]
         up = (tm / preco - 1) * 100 if preco else None

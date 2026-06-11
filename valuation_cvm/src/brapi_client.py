@@ -311,46 +311,79 @@ class BrapiClient:
             logger.warning("BrapiClient.get_options_expirations: %s", exc)
         return [], debug
 
+    # Índice (memoizado por processo) da rota de cadeia de opções que
+    # respondeu 200 — evita re-sondar todas a cada chamada.
+    _chain_route_ok: Optional[int] = None
+
     def get_options(
         self, underlying: str, expiration: Optional[str] = None
     ) -> Tuple[Optional[Dict], Dict]:
         """
-        Cadeia de opções (calls/puts) de um ativo-objeto B3 via BRAPI
-        /v2/options/{underlying}, opcionalmente filtrada por vencimento.
+        Cadeia de opções (calls/puts/séries) de um ativo-objeto B3 via BRAPI,
+        opcionalmente filtrada por vencimento.
+
+        A rota exata da seção "Listar Séries Negociadas" da BRAPI não está
+        confirmada (`/v2/options/{ticker}` retorna 404) — então sondamos as
+        rotas candidatas e memorizamos a que responder 200. TODAS as
+        tentativas ficam registradas em `debug["attempts"]` (url/status/erro),
+        visíveis no diagnóstico do painel.
 
         `underlying`: ticker do ativo-objeto (ex.: 'PETR4').
-        `expiration`: data de vencimento (formato retornado por
-        get_options_expirations), ou None para a próxima disponível.
+        `expiration`: data de vencimento (formato de get_options_expirations).
 
-        Retorna `(cadeia, debug)`. `debug` traz `url`, `status` e `body`
-        (resposta crua/erro) para diagnóstico.
+        Retorna `(cadeia, debug)`.
         """
-        debug: Dict = {"url": f"{_BASE}/v2/options/{underlying}", "status": None, "body": None}
+        debug: Dict = {"url": None, "status": None, "body": None, "attempts": []}
         if not self.token:
             debug["body"] = "BRAPI_TOKEN não configurado."
             return None, debug
         underlying = underlying.upper().strip()
-        params: Dict[str, str] = {}
-        if expiration:
-            params["expiration"] = expiration
-        try:
-            resp = requests.get(
-                f"{_BASE}/v2/options/{underlying}",
-                params=params,
-                headers=self._headers,
-                timeout=_TIMEOUT,
-            )
-            debug["url"] = resp.url
-            debug["status"] = resp.status_code
-            if resp.status_code == 200:
-                data = resp.json()
-                debug["body"] = data
-                return data, debug
-            debug["body"] = resp.text[:500]
-            logger.warning("BrapiClient.get_options: HTTP %d para %s", resp.status_code, underlying)
-        except Exception as exc:
-            debug["body"] = str(exc)
-            logger.warning("BrapiClient.get_options: %s", exc)
+
+        # (url, usa_query_string?) — espelha o padrão do endpoint de
+        # vencimentos (/v2/options/expirations?underlying=...)
+        routes = [
+            (f"{_BASE}/v2/options/chain", True),
+            (f"{_BASE}/v2/options/series", True),
+            (f"{_BASE}/v2/options/strikes", True),
+            (f"{_BASE}/v2/options", True),
+            (f"{_BASE}/v2/options/{underlying}", False),
+        ]
+        order = list(range(len(routes)))
+        if BrapiClient._chain_route_ok is not None:
+            ok = BrapiClient._chain_route_ok
+            order = [ok] + [i for i in order if i != ok]
+
+        for i in order:
+            url, use_qs = routes[i]
+            params: Dict[str, str] = {}
+            if use_qs:
+                params["underlying"] = underlying
+            if expiration:
+                params["expiration"] = expiration
+            att: Dict = {"url": url, "status": None, "body": None}
+            try:
+                resp = requests.get(url, params=params, headers=self._headers,
+                                    timeout=_TIMEOUT)
+                att["url"] = resp.url
+                att["status"] = resp.status_code
+                if resp.status_code == 200:
+                    data = resp.json()
+                    att["body"] = "200 OK"
+                    debug["attempts"].append(att)
+                    debug["url"], debug["status"] = resp.url, 200
+                    BrapiClient._chain_route_ok = i
+                    return data, debug
+                att["body"] = resp.text[:300]
+            except Exception as exc:
+                att["body"] = str(exc)
+            debug["attempts"].append(att)
+
+        last = debug["attempts"][-1] if debug["attempts"] else {}
+        debug["url"], debug["status"] = last.get("url"), last.get("status")
+        debug["body"] = ("Nenhuma rota candidata de cadeia de opções respondeu "
+                         "200 — ver 'attempts' para o status de cada uma.")
+        logger.warning("BrapiClient.get_options: nenhuma rota respondeu 200 para %s",
+                       underlying)
         return None, debug
 
     # ------------------------------------------------------------------

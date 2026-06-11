@@ -2839,8 +2839,14 @@ def _tab_options(ticker_input: str = ""):
 
     if not chain:
         box(f"BRAPI não retornou a cadeia de opções de <b>{under}</b> para o "
-            f"vencimento <b>{exp_sel}</b> (<code>/v2/options/{under}</code>).", "warn")
-        with st.expander("🔍 Diagnóstico BRAPI (/v2/options/{ticker})"):
+            f"vencimento <b>{exp_sel}</b> em nenhuma das rotas testadas "
+            f"(<code>chain</code>, <code>series</code>, <code>strikes</code>, "
+            f"<code>/v2/options</code>, <code>/v2/options/{under}</code>). "
+            f"O diagnóstico abaixo mostra o status HTTP de cada tentativa — "
+            f"me envie esse conteúdo (ou o exemplo de requisição da seção "
+            f"\"Listar Séries Negociadas\" da documentação BRAPI) para "
+            f"ajustarmos a rota exata.", "warn")
+        with st.expander("🔍 Diagnóstico BRAPI (rotas testadas)", expanded=True):
             st.json(chain_debug or {"info": "sem resposta"})
         return
 
@@ -2853,14 +2859,23 @@ def _tab_options(ticker_input: str = ""):
             f"<code>/v2/options/{{ticker}}</code> suporta este ativo no seu plano.",
             "warn")
 
-    # Parsing tolerante: {"calls":[...], "puts":[...]} ou {"options":[...]}.
+    # Parsing tolerante: {"calls":[...], "puts":[...]}, {"options":[...]},
+    # {"series":[...]} ou a primeira lista de dicts encontrada no payload.
     calls = chain.get("calls") or []
     puts  = chain.get("puts") or []
     if not calls and not puts:
-        for o in (chain.get("options") or chain.get("data") or []):
+        rows = (chain.get("options") or chain.get("series")
+                or chain.get("data") or [])
+        if not rows:
+            for v in chain.values():
+                if isinstance(v, list) and v and isinstance(v[0], dict):
+                    rows = v
+                    break
+        for o in rows:
             if not isinstance(o, dict):
                 continue
-            side = str(o.get("type") or o.get("side") or "").lower()
+            side = str(o.get("type") or o.get("side")
+                       or o.get("category") or "").lower()
             (puts if "put" in side else calls).append(o)
 
     def _opt_row(o):

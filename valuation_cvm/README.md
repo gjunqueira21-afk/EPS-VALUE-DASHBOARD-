@@ -24,6 +24,7 @@ Projetado para suportar valuation por **EPV**, **DCF**, **Franchise Value**, **c
 14. [Por que ticker precisa de outra fonte](#14-por-que-ticker-precisa-de-outra-fonte)
 15. [Como preencher ticker_mapper.csv](#15-como-preencher-ticker_mappercsv)
 16. [Próximos passos](#16-próximos-passos)
+17. [Deploy do dashboard (Streamlit Community Cloud)](#17-deploy-do-dashboard-streamlit-community-cloud)
 
 ---
 
@@ -360,6 +361,66 @@ O projeto está preparado para integrar:
 | **Ranking por desconto** | Comparar market cap atual vs EPV/DCF calculado |
 | **Franchise Value** | `Franchise Value = EPV com crescimento - EPV sem crescimento` |
 | **Comparáveis** | Agrupar por setor + calcular medianas de múltiplos |
+
+---
+
+## 17. Deploy do dashboard (Streamlit Community Cloud)
+
+A forma mais simples e gratuita de colocar o `dashboard.py` no ar com uma URL pública é o
+[Streamlit Community Cloud](https://share.streamlit.io). O projeto já está preparado para isso:
+o `BrapiClient` lê o token tanto de `.env` (uso local) quanto de `st.secrets` (uso na nuvem).
+
+### Passo a passo
+
+1. **Garanta que o repositório está no GitHub** com o código e os arquivos em
+   `valuation_cvm/data/processed/*.parquet` versionados (são a base fundamentalista da CVM —
+   sem eles o dashboard não tem dados históricos).
+
+2. Acesse **https://share.streamlit.io** e faça login com a sua conta GitHub.
+
+3. Clique em **"New app"** e configure:
+   - **Repository:** `gjunqueira21-afk/EPS-VALUE-DASHBOARD-`
+   - **Branch:** a branch que você quer publicar (ex.: `main`, após o merge do PR)
+   - **Main file path:** `valuation_cvm/dashboard.py`
+
+4. Em **"Advanced settings" → "Secrets"**, cole:
+
+   ```toml
+   BRAPI_TOKEN = "seu_token_aqui"
+   ```
+
+   Esse é o único segredo necessário — o restante (Selic, IPCA, câmbio, opções) usa a mesma
+   chave da BRAPI.
+
+5. Clique em **"Deploy"**. Em alguns minutos o app fica disponível em uma URL pública do tipo
+   `https://<nome-do-app>.streamlit.app`. A cada novo `git push` na branch escolhida, o
+   Streamlit Cloud reimplanta automaticamente.
+
+### Sobre "tempo real"
+
+- **Cotações, opções, câmbio e indicadores macro** vêm da BRAPI a cada visita/recarregamento da
+  página, respeitando os caches já configurados no dashboard (`@st.cache_data`):
+  cotação 60s, cadeia de opções 120s, vencimentos e macro 5min. Ou seja, dentro dessas janelas
+  o app reaproveita a última resposta — fora delas, busca dados novos da BRAPI.
+- **Dados fundamentalistas da CVM** (DRE, BPA, BPP, DFC) são trimestrais/anuais e ficam nos
+  `.parquet` versionados no repositório. Para atualizar, rode o pipeline localmente
+  (`python -m src.main --start-year 2019 --end-year 2026`) e faça commit/push dos novos
+  arquivos — o app na nuvem passa a usar os dados atualizados no próximo deploy automático.
+
+### Segurança
+
+- Nunca faça commit do arquivo `.env` nem do token BRAPI em texto plano — use sempre o gerenciador
+  de **Secrets** do Streamlit Cloud (`App settings → Secrets`).
+- Se quiser testar `st.secrets` localmente, crie `valuation_cvm/.streamlit/secrets.toml` (já
+  ignorado pelo Git) com o mesmo conteúdo do passo 4.
+
+### Alternativas
+
+| Plataforma | Quando usar |
+|------------|-------------|
+| **Streamlit Community Cloud** | Recomendado — gratuito, deploy direto do GitHub, suporte nativo a `st.secrets` |
+| **Hugging Face Spaces** (SDK Streamlit) | Alternativa gratuita, útil se já usa o ecossistema HF |
+| **Render / Railway** | Para quem precisa de mais controle (Docker, variáveis de ambiente, domínio próprio) |
 
 ---
 

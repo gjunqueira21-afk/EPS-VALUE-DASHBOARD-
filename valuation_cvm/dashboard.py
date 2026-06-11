@@ -1067,16 +1067,24 @@ def _bcb_serie(code: int, n: int = 36) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def _brapi_macro(kind: str) -> Optional[float]:
-    """Fallback macro via BRAPI quando BCB/IPEA estiverem indisponíveis.
-
-    kind="selic" → taxa SELIC (% a.a.);  kind="ipca" → IPCA (% no período).
-    """
+def _brapi_macro_all() -> Dict[str, float]:
+    """SELIC, IPCA e CDI numa única chamada (BRAPI /v2/macro)."""
     try:
-        c = BrapiClient()
-        return c.get_prime_rate() if kind == "selic" else c.get_inflation()
+        return BrapiClient().get_macro("selic,ipca,cdi")
     except Exception:
-        return None
+        return {}
+
+
+def _brapi_macro(kind: str) -> Optional[float]:
+    """Fallback macro via BRAPI (/v2/macro) quando o BCB estiver indisponível.
+
+    kind ∈ {"selic", "ipca", "cdi"}.
+    """
+    data = _brapi_macro_all()
+    for k, v in data.items():
+        if kind.lower() in k:
+            return v
+    return None
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -2118,8 +2126,10 @@ def _tab_macro():
     # ── Cards ────────────────────────────────────────────────────────────────
     sec("Juros — Banco Central do Brasil (SGS)")
     cj = st.columns(3)
+    _juros_fb = {"SELIC Meta": "selic", "CDI": "cdi"}
     for i, (nome, (df_s, cor, unid, _)) in enumerate(juros_d.items()):
-        fb = (lambda: _brapi_macro("selic")) if nome == "SELIC Meta" else None
+        _sym = _juros_fb.get(nome)
+        fb = (lambda s=_sym: _brapi_macro(s)) if _sym else None
         _card(cj[i], nome, df_s, unid, fallback=fb)
 
     sec("Inflação")

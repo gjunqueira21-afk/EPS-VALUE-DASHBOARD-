@@ -176,6 +176,45 @@ class BrapiClient:
             logger.warning("BrapiClient.get_currency: %s", exc)
         return []
 
+    def get_macro(self, symbols: str = "selic,ipca,cdi") -> Dict[str, float]:
+        """
+        Indicadores macro via BRAPI /v2/macro (SELIC, IPCA, CDI numa chamada).
+
+        Retorna {symbol: valor_float}, ex.: {"selic": 15.0, "ipca": 0.45, "cdi": 14.9}.
+        Tolerante ao formato (valor pode vir como número ou string com vírgula).
+        """
+        out: Dict[str, float] = {}
+        if not self.token:
+            return out
+        try:
+            resp = requests.get(
+                f"{_BASE}/v2/macro",
+                params={"symbols": symbols, "sortOrder": "desc"},
+                headers=self._headers,
+                timeout=_TIMEOUT,
+            )
+            if resp.status_code != 200:
+                logger.warning("BrapiClient.get_macro: HTTP %d", resp.status_code)
+                return out
+            data = resp.json()
+            items = data.get("macro") or data.get("results") or data.get("data") or []
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                sym = str(it.get("symbol") or it.get("name") or "").strip().lower()
+                raw = it.get("value")
+                if raw is None:
+                    raw = it.get("latest") or it.get("close")
+                try:
+                    val = float(str(raw).replace("%", "").replace(",", ".").strip())
+                except (TypeError, ValueError):
+                    val = None
+                if sym and val is not None:
+                    out[sym] = val
+        except Exception as exc:
+            logger.warning("BrapiClient.get_macro: %s", exc)
+        return out
+
     # ------------------------------------------------------------------
     # Lista de tickers disponíveis
     # ------------------------------------------------------------------

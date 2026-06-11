@@ -4,7 +4,6 @@ Configuração de logging centralizada para o projeto valuation_cvm.
 
 import logging
 import sys
-from pathlib import Path
 
 
 def setup_logger(name: str = "valuation_cvm", level: int = logging.INFO) -> logging.Logger:

@@ -14,7 +14,6 @@ IMPORTANTE:
 - A normalização do EBIT requer série histórica.
 """
 
-import math
 from typing import Dict, List, Literal, Optional
 
 import numpy as np

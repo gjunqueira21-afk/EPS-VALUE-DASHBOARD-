@@ -2,13 +2,11 @@
 Módulo para carregar, filtrar e construir snapshots financeiros de empresas.
 """
 
-from pathlib import Path
 from typing import Dict, List, Optional
 
-import numpy as np
 import pandas as pd
 
-from .config import PROCESSED_DIR, get_processed_path
+from .config import get_processed_path
 from .logger import logger
 
 

@@ -13,13 +13,10 @@ IMPORTANTE:
 - Não inventa premissas: todas as taxas devem ser fornecidas explicitamente.
 """
 
-import math
 from typing import Dict, List, Optional
 
-import numpy as np
-
 from .logger import logger
-from .valuation_metrics import safe_divide, _to_float
+from .valuation_metrics import safe_divide
 
 
 # ---------------------------------------------------------------------------

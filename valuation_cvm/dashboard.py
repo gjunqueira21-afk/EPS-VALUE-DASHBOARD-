@@ -18,7 +18,7 @@ import sys
 import unicodedata
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -860,6 +860,12 @@ def _ext_snap(cd, tipo):
     """Snapshot estendido com campos adicionais para saúde financeira."""
     snap = _snap(cd, tipo)
 
+    # Preserva o EBIT original da CVM (3.05) ANTES de qualquer reconciliação
+    # com a BRAPI poder sobrescrever snap_ext["ebit"]/m["ebit"]. É usado para
+    # montar o EBITDA "EBIT(CVM) + D&A(CVM)" sem misturar fontes diferentes
+    # (ver `_get_ebitda`).
+    snap["ebit_cvm"] = snap.get("ebit")
+
     dre = _stmt("DRE", tipo)
     bpa = _stmt("BPA", tipo)
     bpp = _stmt("BPP", tipo)
@@ -1221,6 +1227,29 @@ def _render_reconciliation(notes: List[Dict]) -> None:
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 
+def _get_ebitda(m: Dict, snap_ext: Dict) -> Optional[float]:
+    """EBITDA consolidado e auditável — uma única base, sem misturar fontes.
+
+    Prioriza o EBITDA da BRAPI (`financialData.ebitda`, já líquido — ver
+    `_reconcile_cvm_brapi`), pois é uma cifra internamente consistente.
+
+    Na ausência, calcula a partir da CVM: EBIT original (3.05, capturado em
+    `snap_ext["ebit_cvm"]" antes de qualquer sobreposição da BRAPI) + D&A do
+    DFC. Não usa `m["ebit"]` aqui porque, após a reconciliação, esse campo
+    pode já ter sido sobrescrito pelo EBIT da BRAPI — somá-lo ao D&A da CVM
+    misturaria duas fontes/períodos diferentes e distorceria o índice
+    Dívida Líquida/EBITDA.
+    """
+    ebd = _f(m.get("ebitda"))
+    if ebd is not None:
+        return ebd
+    ebit_cvm = _f(snap_ext.get("ebit_cvm"))
+    da = _f(snap_ext.get("depreciacao"))
+    if ebit_cvm is not None and da is not None:
+        return ebit_cvm + abs(da)
+    return None
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _brapi_search(query: str) -> List[Dict]:
     """Busca tickers pelo nome da empresa, com cache de 1 hora."""
@@ -1347,25 +1376,32 @@ def _brapi_currency(pairs: str = "USD-BRL,EUR-BRL") -> List[Dict]:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def _brapi_options_expirations(underlying: str) -> List[str]:
-    """Vencimentos de opções disponíveis para um ativo-objeto (cache de 5 min)."""
+def _brapi_options_expirations(underlying: str) -> Tuple[List[str], Dict]:
+    """Vencimentos de opções disponíveis para um ativo-objeto (cache de 5 min).
+
+    Retorna `(vencimentos, debug)` — `debug` ajuda a diagnosticar respostas
+    inesperadas da BRAPI (endpoint não documentado oficialmente).
+    """
     if not underlying:
-        return []
+        return [], {}
     try:
         return BrapiClient().get_options_expirations(underlying)
-    except Exception:
-        return []
+    except Exception as exc:
+        return [], {"body": str(exc)}
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def _brapi_options_chain(underlying: str, expiration: Optional[str] = None) -> Optional[Dict]:
-    """Cadeia de opções (calls/puts) para um ativo-objeto e vencimento (cache de 2 min)."""
+def _brapi_options_chain(underlying: str, expiration: Optional[str] = None) -> Tuple[Optional[Dict], Dict]:
+    """Cadeia de opções (calls/puts) para um ativo-objeto e vencimento (cache de 2 min).
+
+    Retorna `(cadeia, debug)`.
+    """
     if not underlying:
-        return None
+        return None, {}
     try:
         return BrapiClient().get_options(underlying, expiration)
-    except Exception:
-        return None
+    except Exception as exc:
+        return None, {"body": str(exc)}
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -1533,8 +1569,7 @@ def _tab_health(snap_ext, m, hist):
 
     # ── Extrair campos ──────────────────────────────────────────────────────
     ebit   = _f(m.get("ebit"))
-    da     = _f(snap_ext.get("depreciacao"))
-    ebitda = (ebit + abs(da)) if ebit is not None and da is not None else None
+    ebitda = _get_ebitda(m, snap_ext)
     nd     = _f(snap_ext.get("divida_liquida"))
     divbruta = _f(snap_ext.get("divida_bruta"))
     pl     = _f(m.get("patrimonio_liquido"))
@@ -1602,6 +1637,16 @@ def _tab_health(snap_ext, m, hist):
             _lev_str = fmult(nd_ebitda)
         st.markdown(_trend_block(_lev_str, _lev_col, lev_series, True, lev_periods),
                     unsafe_allow_html=True)
+
+        if ebitda is not None:
+            _eb_src = ("BRAPI (financialData.ebitda)" if _f(m.get("ebitda")) is not None
+                       else "CVM: EBIT (3.05) + D&A (DFC)")
+            st.caption(
+                f"EBITDA usado: {fbrl(ebitda)}  ·  fonte: {_eb_src}. "
+                "Pode divergir do \"EBITDA ajustado\" de releases (que costuma "
+                "excluir itens não recorrentes/impairment e somar efeitos de "
+                "IFRS16 ou ajustes pro-forma de M&A — vide nota da empresa)."
+            )
 
         def _lev_bar(lbl, val, low_good, thr_ok, thr_warn, val_str, sfx="×"):
             if val is None:
@@ -1708,7 +1753,6 @@ def _tab_health(snap_ext, m, hist):
         box("Os indexadores (CDI, IPCA, prefixado, USD) constam nas notas explicativas. "
             "Informe abaixo para gerar o gráfico de composição.", "info")
 
-        tot = 100.0
         pct_cdi   = st.number_input("% CDI",        0.0, 100.0, 50.0, 5.0, key="idx_cdi")
         pct_ipca  = st.number_input("% IPCA",       0.0, 100.0, 20.0, 5.0, key="idx_ipca")
         pct_pre   = st.number_input("% Prefixado",  0.0, 100.0, 15.0, 5.0, key="idx_pre")
@@ -1759,8 +1803,7 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
     """Aba de Valuation: WACC + Múltiplos + EPV + DCF."""
 
     ebit   = _f(m.get("ebit"))
-    da     = _f(snap_ext.get("depreciacao"))
-    ebitda = (ebit + abs(da)) if ebit is not None and da is not None else None
+    ebitda = _get_ebitda(m, snap_ext)
     nd     = _f(snap_ext.get("divida_liquida"))
     pl     = _f(m.get("patrimonio_liquido"))
     receita= _f(m.get("receita_liquida"))
@@ -1936,7 +1979,7 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
         fonte_acoes = f"BRAPI: {brapi_acoes:,.0f}M ações"
 
     if brapi_preco or cvm_shares:
-        msg = f"✅ Dados preenchidos automaticamente —"
+        msg = "✅ Dados preenchidos automaticamente —"
         if brapi_preco:
             msg += f" Preço R$ {brapi_preco:.2f} (BRAPI)"
         if fonte_acoes:
@@ -2286,7 +2329,6 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
 
     # ── Painel de resumo no topo (preenchido após todos os cálculos) ─────────
     _preco    = preco   if preco  > 0  else None
-    _acoes_m  = acoes   if acoes  > 0  else None
     _epv_shr  = epv_res.get("epv_per_share") if epv_shr > 0 else None
     _epv_ev   = _f(epv_res.get("epv_enterprise"))
     _epv_eq   = _f(epv_res.get("epv_equity"))
@@ -2553,7 +2595,8 @@ def _welcome(avail):
 
 def _render_brapi_panel(q: Dict, ticker: str):
     """Painel completo de dados de mercado BRAPI."""
-    sec(f"📈 Dados de Mercado — {ticker}  (BRAPI.dev · cotação em tempo real)")
+    nome_c = q.get("shortName", ticker)
+    sec(f"📈 Dados de Mercado — {nome_c} ({ticker})  (BRAPI.dev · cotação em tempo real)")
 
     preco  = q.get("regularMarketPrice", 0)
     var_d  = q.get("regularMarketChangePercent", 0)
@@ -2569,7 +2612,6 @@ def _render_brapi_panel(q: Dict, ticker: str):
     dy     = q.get("dividendYield")
     hi52   = q.get("fiftyTwoWeekHigh")
     lo52   = q.get("fiftyTwoWeekLow")
-    nome_c = q.get("shortName", ticker)
 
     cor_v  = _cls(var_d)
     sinal  = "▲" if var_d >= 0 else "▼"
@@ -2636,24 +2678,28 @@ def _tab_options(ticker_input: str = ""):
         return
 
     with st.spinner(f"Buscando vencimentos de opções para {under}…"):
-        expirations = _brapi_options_expirations(under)
+        expirations, exp_debug = _brapi_options_expirations(under)
 
     if not expirations:
         box(f"Nenhum vencimento de opções encontrado para <b>{under}</b> via BRAPI "
             f"(<code>/v2/options/expirations</code>). Pode ser que este ativo não "
             f"tenha opções listadas no momento, ou que o endpoint não esteja "
             f"disponível para o seu plano/token.", "warn")
+        with st.expander("🔍 Diagnóstico BRAPI (/v2/options/expirations)"):
+            st.json(exp_debug or {"info": "sem resposta"})
         return
 
     st.caption(f"{len(expirations)} vencimento(s) disponível(is) para {under} (BRAPI)")
     exp_sel = st.selectbox("Vencimento", expirations, key="opt_expiration")
 
     with st.spinner(f"Buscando cadeia de opções de {under} — {exp_sel}…"):
-        chain = _brapi_options_chain(under, exp_sel)
+        chain, chain_debug = _brapi_options_chain(under, exp_sel)
 
     if not chain:
         box(f"BRAPI não retornou a cadeia de opções de <b>{under}</b> para o "
             f"vencimento <b>{exp_sel}</b> (<code>/v2/options/{under}</code>).", "warn")
+        with st.expander("🔍 Diagnóstico BRAPI (/v2/options/{ticker})"):
+            st.json(chain_debug or {"info": "sem resposta"})
         return
 
     # Confere se a BRAPI de fato respondeu para o ativo solicitado.
@@ -2705,8 +2751,12 @@ def _tab_options(ticker_input: str = ""):
     if not calls and not puts:
         box("BRAPI respondeu, mas o formato da cadeia de opções não é o esperado. "
             "Veja a resposta bruta abaixo para ajustar o parsing.", "warn")
-        with st.expander("🔍 Resposta bruta da BRAPI (debug)"):
-            st.json(chain)
+
+    with st.expander("🔍 Diagnóstico BRAPI (resposta bruta)"):
+        st.caption(f"Vencimentos: HTTP {exp_debug.get('status')} — {exp_debug.get('url')}")
+        st.json(exp_debug.get("body") if exp_debug else None)
+        st.caption(f"Cadeia: HTTP {chain_debug.get('status')} — {chain_debug.get('url')}")
+        st.json(chain)
 
 
 def _no_data():

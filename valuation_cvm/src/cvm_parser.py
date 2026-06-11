@@ -17,7 +17,6 @@ from .config import (
     CSV_SEP,
     CSV_ENCODING,
     COLUNAS_TEXTO,
-    RAW_DIR,
     get_zip_path,
 )
 from .logger import logger

@@ -4,7 +4,6 @@ Módulo de limpeza e padronização dos dados da CVM.
 
 import re
 import unicodedata
-from typing import Optional
 
 import numpy as np
 import pandas as pd

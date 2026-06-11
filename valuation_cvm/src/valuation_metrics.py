@@ -9,7 +9,6 @@ IMPORTANTE:
 
 from typing import Dict, Optional, Tuple
 import math
-import numpy as np
 
 from .logger import logger
 

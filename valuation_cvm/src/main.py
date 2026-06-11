@@ -9,8 +9,6 @@ Uso:
 """
 
 import argparse
-import sys
-from pathlib import Path
 from typing import List
 
 import pandas as pd
@@ -23,14 +21,14 @@ from .config import (
     get_processed_path,
 )
 from .cvm_cleaner import clean_cadastro, clean_statement
-from .cvm_downloader import download_all_cvm_data, download_cvm_cadastro
+from .cvm_downloader import download_all_cvm_data
 from .cvm_parser import load_statement
 from .company_mapper import (
     create_ticker_mapper_template,
     filter_company_by_name_or_cvm,
     load_company_registry,
 )
-from .financial_statements import build_company_snapshot, load_processed_statement
+from .financial_statements import build_company_snapshot
 from .logger import logger
 from .valuation_metrics import calculate_basic_metrics
 
@@ -74,7 +72,6 @@ def process_and_save_statements(years: List[int]) -> None:
 
 def process_and_save_cadastro() -> pd.DataFrame:
     """Processa e salva o cadastro de empresas."""
-    cadastro_csv = Path("data/raw/cad_cia_aberta.csv")
     from .config import RAW_DIR
     cadastro_path = RAW_DIR / "cad_cia_aberta.csv"
 

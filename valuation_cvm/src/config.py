@@ -2,7 +2,6 @@
 Configurações centrais do projeto: caminhos, URLs da CVM e constantes.
 """
 
-import os
 from pathlib import Path
 from dotenv import load_dotenv
 

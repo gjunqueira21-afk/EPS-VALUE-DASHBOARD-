@@ -12,7 +12,7 @@ Ou passe diretamente: BrapiClient(token="seu_token")
 
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import requests
 
@@ -265,16 +265,24 @@ class BrapiClient:
     # Opções B3 (mercado de derivativos)
     # ------------------------------------------------------------------
 
-    def get_options_expirations(self, underlying: str, include_expired: bool = False) -> List[str]:
+    def get_options_expirations(
+        self, underlying: str, include_expired: bool = False
+    ) -> Tuple[List[str], Dict]:
         """
         Datas de vencimento de opções disponíveis para um ativo-objeto B3
         via BRAPI /v2/options/expirations.
 
         `underlying`: ticker do ativo-objeto (ex.: 'PETR4').
-        Retorna lista de datas (strings, formato conforme BRAPI).
+
+        Retorna `(vencimentos, debug)`. `debug` traz `url`, `status` e
+        `body` (resposta crua/erro) para diagnóstico — este endpoint não
+        consta na documentação pública da BRAPI, então o formato exato da
+        resposta pode variar por plano/token.
         """
+        debug: Dict = {"url": f"{_BASE}/v2/options/expirations", "status": None, "body": None}
         if not self.token:
-            return []
+            debug["body"] = "BRAPI_TOKEN não configurado."
+            return [], debug
         underlying = underlying.upper().strip()
         try:
             resp = requests.get(
@@ -283,19 +291,26 @@ class BrapiClient:
                 headers=self._headers,
                 timeout=_TIMEOUT,
             )
+            debug["url"] = resp.url
+            debug["status"] = resp.status_code
             if resp.status_code == 200:
                 data = resp.json()
+                debug["body"] = data
                 exp = data.get("expirations") or data.get("dates") or data.get("data") or []
                 if isinstance(exp, dict):
                     exp = exp.get(underlying) or []
-                return [str(x) for x in exp] if isinstance(exp, list) else []
+                return ([str(x) for x in exp] if isinstance(exp, list) else []), debug
+            debug["body"] = resp.text[:500]
             logger.warning("BrapiClient.get_options_expirations: HTTP %d para %s",
                            resp.status_code, underlying)
         except Exception as exc:
+            debug["body"] = str(exc)
             logger.warning("BrapiClient.get_options_expirations: %s", exc)
-        return []
+        return [], debug
 
-    def get_options(self, underlying: str, expiration: Optional[str] = None) -> Optional[Dict]:
+    def get_options(
+        self, underlying: str, expiration: Optional[str] = None
+    ) -> Tuple[Optional[Dict], Dict]:
         """
         Cadeia de opções (calls/puts) de um ativo-objeto B3 via BRAPI
         /v2/options/{underlying}, opcionalmente filtrada por vencimento.
@@ -303,9 +318,14 @@ class BrapiClient:
         `underlying`: ticker do ativo-objeto (ex.: 'PETR4').
         `expiration`: data de vencimento (formato retornado por
         get_options_expirations), ou None para a próxima disponível.
+
+        Retorna `(cadeia, debug)`. `debug` traz `url`, `status` e `body`
+        (resposta crua/erro) para diagnóstico.
         """
+        debug: Dict = {"url": f"{_BASE}/v2/options/{underlying}", "status": None, "body": None}
         if not self.token:
-            return None
+            debug["body"] = "BRAPI_TOKEN não configurado."
+            return None, debug
         underlying = underlying.upper().strip()
         params: Dict[str, str] = {}
         if expiration:
@@ -317,12 +337,18 @@ class BrapiClient:
                 headers=self._headers,
                 timeout=_TIMEOUT,
             )
+            debug["url"] = resp.url
+            debug["status"] = resp.status_code
             if resp.status_code == 200:
-                return resp.json()
+                data = resp.json()
+                debug["body"] = data
+                return data, debug
+            debug["body"] = resp.text[:500]
             logger.warning("BrapiClient.get_options: HTTP %d para %s", resp.status_code, underlying)
         except Exception as exc:
+            debug["body"] = str(exc)
             logger.warning("BrapiClient.get_options: %s", exc)
-        return None
+        return None, debug
 
     # ------------------------------------------------------------------
     # Lista de tickers disponíveis

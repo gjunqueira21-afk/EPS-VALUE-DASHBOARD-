@@ -678,6 +678,14 @@ def _cls(v, pos_good=True):
     return "blu"
 
 
+def _mult_cls(v, good, warn):
+    """Classe de cor p/ múltiplos de valuation (menor = mais barato = verde).
+    v < good → pos | v < warn → yel | senão neg | None/≤0 → nd."""
+    x = _f(v)
+    if x is None or x <= 0: return "nd"
+    return "pos" if x < good else "yel" if x < warn else "neg"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # UI helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1651,6 +1659,23 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
     roe = _f(m.get("roe"))
     dy  = _f(brapi_data.get("dividendYield")) if brapi_data else None
 
+    # ── Múltiplos de EV e forward (projeção cenário-base) ───────────────────
+    # Forward usa o g de anos 1–2 já pré-calculado (mesma premissa do DCF),
+    # mantendo o múltiplo auditável. EBITDA/Lucro projetados 1 ano à frente.
+    g_fwd      = (g12_def or 0) / 100.0
+    ebitda_fwd = _f(ebitda) * (1 + g_fwd) if ebitda else None
+    lucro_fwd  = _f(lucro)  * (1 + g_fwd) if lucro else None
+    ev_ebitda_mult     = _f(ev_mkt)/_f(ebitda) if ev_mkt and ebitda and ebitda > 0 else None
+    ev_ebitda_fwd_mult = _f(ev_mkt)/ebitda_fwd if ev_mkt and ebitda_fwd and ebitda_fwd > 0 else None
+    ev_ebit_mult       = _f(ev_mkt)/_f(ebit)   if ev_mkt and ebit and ebit > 0 else None
+    ev_fcl_mult        = _f(ev_mkt)/_f(fcl)    if ev_mkt and fcl and fcl > 0 else None
+    ev_sales_mult      = _f(ev_mkt)/_f(receita) if ev_mkt and receita and receita > 0 else None
+    ps_mult            = _f(mktcap)/_f(receita) if mktcap and receita and receita > 0 else None
+    pfcl_mult          = _f(mktcap)/_f(fcl)    if mktcap and fcl and fcl > 0 else None
+    ple_fwd_mult       = _f(mktcap)/lucro_fwd  if mktcap and lucro_fwd and lucro_fwd > 0 else None
+    peg_mult           = (ple / g12_def) if ple and g12_def and g12_def > 0 else None
+    nd_eb_mult         = _f(nd)/_f(ebitda) if nd is not None and ebitda and ebitda > 0 else None
+
     if is_fin:
         # Bancos/seguradoras: P/VP é o múltiplo central; sem EV/EBITDA
         mult_rows = [
@@ -1671,20 +1696,26 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
         mult_rows = [
             ("Market Cap",   fbrl(mktcap), "–"),
             ("Enterprise Value (EV)", fbrl(ev_mkt), "EV = Mkt Cap + Dívida Líquida"),
+            ("EV / EBITDA",          fmult(ev_ebitda_mult),
+                                     "< 8× value | 8-15× neutro | > 15× caro"),
+            ("EV / EBITDA Forward",  fmult(ev_ebitda_fwd_mult),
+                                     f"EV ÷ EBITDA projetado +{g12_def:.1f}% (cenário-base)"),
             ("P / Lucro (P/L)",      fmult(ple),
                                      "< 15× barato | 15-25× justo | > 25× caro"),
+            ("P / Lucro Forward (P/L fwd)", fmult(ple_fwd_mult),
+                                     f"P ÷ lucro projetado +{g12_def:.1f}% (cenário-base)"),
+            ("PEG (P/L ÷ crescimento)", fmult(peg_mult, 2),
+                                     "< 1 atrativo p/ o crescimento | > 2 caro"),
+            ("Dívida Líquida / EBITDA", fmult(nd_eb_mult),
+                                     "< 2× confortável | 2-3,5× atenção | > 3,5× alto"),
+            ("EV / EBIT",            fmult(ev_ebit_mult), "EV ÷ EBIT (3.05 CVM)"),
+            ("EV / FCL",             fmult(ev_fcl_mult), "EV ÷ (FCOP − Capex)"),
+            ("EV / Receita (EV/Sales)", fmult(ev_sales_mult),
+                                     "Útil p/ empresas sem lucro / margem baixa"),
             ("P / Valor Patrimonial (P/VP)", fmult(pvp),
                                              "< 1× abaixo do book"),
-            ("P / Receita (P/S)",    fmult(_f(mktcap)/_f(receita) if mktcap and receita and receita>0 else None),
-                                     "Benchmarks por setor"),
-            ("P / FCL",              fmult(_f(mktcap)/_f(fcl) if mktcap and fcl and fcl>0 else None),
-                                     "< 15× interessante"),
-            ("EV / EBITDA",          fmult(_f(ev_mkt)/_f(ebitda) if ev_mkt and ebitda and ebitda>0 else None),
-                                     "< 8× value | 8-15× neutro | > 15× caro"),
-            ("EV / EBIT",            fmult(_f(ev_mkt)/_f(ebit) if ev_mkt and ebit and ebit>0 else None),
-                                     "–"),
-            ("EV / FCL",             fmult(_f(ev_mkt)/_f(fcl) if ev_mkt and fcl and fcl>0 else None),
-                                     "–"),
+            ("P / Receita (P/S)",    fmult(ps_mult), "Benchmarks por setor"),
+            ("P / FCL",              fmult(pfcl_mult), "< 15× interessante"),
         ]
 
     with mv2:
@@ -1695,6 +1726,22 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
             else:
                 st.markdown(mc("Market Cap", fbrl(mktcap), "blu"), unsafe_allow_html=True)
                 st.markdown(mc("EV",         fbrl(ev_mkt), "cyan"), unsafe_allow_html=True)
+
+    # Cards de destaque: os múltiplos mais acompanhados (não-financeiras)
+    if not is_fin and mktcap:
+        hc = st.columns(4)
+        hc[0].markdown(mc("EV / EBITDA", fmult(ev_ebitda_mult),
+                          _mult_cls(ev_ebitda_mult, 8, 15),
+                          f"fwd: {fmult(ev_ebitda_fwd_mult)}"), unsafe_allow_html=True)
+        hc[1].markdown(mc("P / L", fmult(ple),
+                          _mult_cls(ple, 15, 25),
+                          f"fwd: {fmult(ple_fwd_mult)}"), unsafe_allow_html=True)
+        hc[2].markdown(mc("Dív.Líq / EBITDA", fmult(nd_eb_mult),
+                          _mult_cls(nd_eb_mult, 2, 3.5) if (nd_eb_mult and nd_eb_mult > 0) else "pos",
+                          "alavancagem"), unsafe_allow_html=True)
+        hc[3].markdown(mc("PEG", fmult(peg_mult, 2),
+                          _mult_cls(peg_mult, 1, 2), "P/L ÷ crescimento"),
+                       unsafe_allow_html=True)
 
     sec("Tabela de Múltiplos")
     df_mult = pd.DataFrame(mult_rows, columns=["Múltiplo", "Valor", "Referência"])

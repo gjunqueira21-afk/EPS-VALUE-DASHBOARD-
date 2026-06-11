@@ -989,6 +989,41 @@ def _brapi_quote(ticker: str) -> Optional[Dict]:
     return client.get_quote(ticker)
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def _brapi_fundamentals(ticker: str) -> Optional[Dict]:
+    """Fundamentos completos BRAPI (módulos) — cache de 15 min."""
+    if not ticker:
+        return None
+    try:
+        return BrapiClient().get_fundamentals(ticker)
+    except Exception:
+        return None
+
+
+def _brapi_beta(fund: Optional[Dict]) -> Optional[float]:
+    """Extrai o beta dos módulos defaultKeyStatistics / financialData."""
+    if not fund:
+        return None
+    for mod in ("defaultKeyStatistics", "financialData"):
+        d = fund.get(mod) or {}
+        b = _f(d.get("beta"))
+        if b is not None:
+            return b
+    return None
+
+
+def _brapi_consensus(fund: Optional[Dict]) -> Dict:
+    """Preço-alvo e recomendação de analistas (módulo financialData)."""
+    fd = (fund or {}).get("financialData") or {}
+    return {
+        "target_mean": _f(fd.get("targetMeanPrice")),
+        "target_high": _f(fd.get("targetHighPrice")),
+        "target_low":  _f(fd.get("targetLowPrice")),
+        "rec":         fd.get("recommendationKey"),
+        "n":           _f(fd.get("numberOfAnalystOpinions")),
+    }
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _brapi_search(query: str) -> List[Dict]:
     """Busca tickers pelo nome da empresa, com cache de 1 hora."""
@@ -1568,6 +1603,12 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
     _embi_pct = _embi_brasil()
     crp_def = float(np.clip(round((_embi_pct or 2.5) * 4) / 4, 0.0, 6.0))
 
+    # Beta: defaultKeyStatistics da BRAPI (fallback 1.0) — completa o CAPM
+    _wacc_tkr = (brapi_data or {}).get("symbol")
+    _fund     = _brapi_fundamentals(_wacc_tkr) if _wacc_tkr else None
+    _beta_raw = _brapi_beta(_fund)
+    beta_def  = float(np.clip(round((_beta_raw if _beta_raw else 1.0) / 0.05) * 0.05, 0.3, 2.5))
+
     # Placeholder para o painel de resumo no topo (preenchido após cálculos)
     _top_summary = st.empty()
 
@@ -1592,8 +1633,10 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
                                key="w_rf", help="Pré-preenchido com a SELIC Meta atual (BCB SGS 432)")
             if not _selic_df.empty:
                 st.caption(f"⚡ Rf pré-preenchido com SELIC Meta vigente: **{_selic_df['valor'].iloc[-1]:.2f}% a.a.** (BCB)")
-            beta   = st.slider("Beta (β)",  0.3, 2.5, 1.0, 0.05, key="w_beta",
-                               help="Beta da empresa versus Ibovespa")
+            beta   = st.slider("Beta (β)",  0.3, 2.5, beta_def, 0.05, key="w_beta",
+                               help="Pré-preenchido com o beta da BRAPI (defaultKeyStatistics)")
+            if _beta_raw is not None:
+                st.caption(f"⚡ Beta pré-preenchido com BRAPI: **{_beta_raw:.2f}** (vs. Ibovespa)")
             erp    = st.slider("ERP — Prêmio de Risco de Mercado %", 3.0, 9.0, 5.5, 0.25,
                                key="w_erp", help="Damodaran: ~5.5% para Brasil")
             crp    = st.slider("CRP — Risco País %", 0.0, 6.0, crp_def, 0.25,
@@ -2316,6 +2359,26 @@ def _render_brapi_panel(q: Dict, ticker: str):
                           "pos" if pos_pct > 50 else "neg",
                           f"Posição atual: {pos_pct:.0f}%"), unsafe_allow_html=True)
 
+    # Row 3: consenso de analistas (módulo financialData da BRAPI)
+    _cons = _brapi_consensus(_brapi_fundamentals(ticker))
+    if _cons.get("target_mean"):
+        tm = _cons["target_mean"]
+        up = (tm / preco - 1) * 100 if preco else None
+        _rec = (_cons.get("rec") or "").replace("_", " ").title() or "–"
+        _n   = int(_cons["n"]) if _cons.get("n") else None
+        c3 = st.columns(5)
+        c3[0].markdown(mc("Preço-Alvo (consenso)", f"R$ {tm:.2f}",
+                          "pos" if (up or 0) > 0 else "neg",
+                          f"Upside: {up:+.1f}%" if up is not None else "analistas"),
+                       unsafe_allow_html=True)
+        if _cons.get("target_low") and _cons.get("target_high"):
+            c3[1].markdown(mc("Faixa de Alvos",
+                              f"R$ {_cons['target_low']:.2f} – R$ {_cons['target_high']:.2f}",
+                              "neu"), unsafe_allow_html=True)
+        c3[2].markdown(mc("Recomendação", _rec, "blu",
+                          f"{_n} analistas" if _n else "consenso"),
+                       unsafe_allow_html=True)
+
 
 def _no_data():
     box("""<b>⚠ Nenhum dado processado encontrado</b><br><br>
@@ -2479,7 +2542,7 @@ Para baixar dados:<br>
         for _k in ("epv_ebit", "epv_nd", "epv_shr", "epv_tax", "epv_wacc2",
                    "dcf_fcl", "dcf_nd2", "dcf_shr", "dg12", "dg34", "dg5", "dgt",
                    "dcf_wacc2", "mult_preco", "mult_acoes",
-                   "w_rf", "w_kd", "w_crp", "w_manual"):
+                   "w_rf", "w_beta", "w_kd", "w_crp", "w_manual"):
             st.session_state.pop(_k, None)
 
     # ── Auto-detect ticker quando empresa muda ───────────────────────────────

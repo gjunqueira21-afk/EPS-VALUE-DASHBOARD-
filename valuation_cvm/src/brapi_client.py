@@ -113,6 +113,52 @@ class BrapiClient:
             return None
 
     # ------------------------------------------------------------------
+    # Fundamentos completos (módulos: statements, key stats, financialData)
+    # ------------------------------------------------------------------
+
+    def get_fundamentals(
+        self,
+        ticker: str,
+        modules: Optional[str] = None,
+        dividends: bool = True,
+    ) -> Optional[Dict]:
+        """
+        Quote enriquecido com módulos fundamentais da BRAPI.
+
+        Inclui defaultKeyStatistics (beta, forwardPE, EV/EBITDA),
+        financialData (preço-alvo de analistas, recomendação, dívida, EBITDA),
+        summaryProfile (setor/indústria) e o histórico de demonstrações
+        (balanço, DRE, fluxo de caixa — anual e trimestral).
+        """
+        if not self.token:
+            return None
+        ticker = ticker.upper().strip()
+        mods = modules or (
+            "summaryProfile,defaultKeyStatistics,financialData,"
+            "balanceSheetHistory,incomeStatementHistory,cashflowHistory,"
+            "balanceSheetHistoryQuarterly,incomeStatementHistoryQuarterly,"
+            "cashflowHistoryQuarterly"
+        )
+        try:
+            resp = requests.get(
+                f"{_BASE}/quote/{ticker}",
+                params={"modules": mods, "dividends": str(dividends).lower()},
+                headers=self._headers,
+                timeout=_TIMEOUT,
+            )
+            if resp.status_code == 200:
+                results = resp.json().get("results", [])
+                if results:
+                    return results[0]
+                logger.warning("BrapiClient.get_fundamentals: sem resultados para %s", ticker)
+            else:
+                logger.warning("BrapiClient.get_fundamentals: HTTP %d para %s",
+                               resp.status_code, ticker)
+        except Exception as exc:
+            logger.warning("BrapiClient.get_fundamentals: %s", exc)
+        return None
+
+    # ------------------------------------------------------------------
     # Dados macro (fallback quando BCB/IPEA estiverem indisponíveis)
     # ------------------------------------------------------------------
 

@@ -108,6 +108,46 @@ class BrapiClient:
             return None
 
     # ------------------------------------------------------------------
+    # Dados macro (fallback quando BCB/IPEA estiverem indisponíveis)
+    # ------------------------------------------------------------------
+
+    def get_prime_rate(self) -> Optional[float]:
+        """Retorna a taxa SELIC mais recente (% a.a.) via BRAPI /v2/prime-rate."""
+        if not self.token:
+            return None
+        try:
+            resp = requests.get(
+                f"{_BASE}/v2/prime-rate",
+                params={"token": self.token, "country": "brazil", "historical": "false"},
+                timeout=_TIMEOUT,
+            )
+            if resp.status_code == 200:
+                data = resp.json().get("prime-rate", [])
+                if data:
+                    return float(data[0].get("value"))
+        except Exception as exc:
+            logger.warning("BrapiClient.get_prime_rate: %s", exc)
+        return None
+
+    def get_inflation(self) -> Optional[float]:
+        """Retorna o IPCA mais recente (% no período) via BRAPI /v2/inflation."""
+        if not self.token:
+            return None
+        try:
+            resp = requests.get(
+                f"{_BASE}/v2/inflation",
+                params={"token": self.token, "country": "brazil", "historical": "false"},
+                timeout=_TIMEOUT,
+            )
+            if resp.status_code == 200:
+                data = resp.json().get("inflation", [])
+                if data:
+                    return float(data[0].get("value"))
+        except Exception as exc:
+            logger.warning("BrapiClient.get_inflation: %s", exc)
+        return None
+
+    # ------------------------------------------------------------------
     # Lista de tickers disponíveis
     # ------------------------------------------------------------------
 

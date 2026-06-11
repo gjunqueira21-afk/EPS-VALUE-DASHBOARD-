@@ -532,8 +532,13 @@ def _lines(years, series, title=""):
     return fig
 
 
-def _gauge(value, max_val, title, invert=False):
-    """Gauge: invert=True → baixo é bom (dívida), False → alto é bom (liquidez)."""
+def _gauge(value, max_val, title, invert=False, show_number=True):
+    """Gauge: invert=True → baixo é bom (dívida), False → alto é bom (liquidez).
+
+    show_number=False oculta o número embutido do Plotly (que tende a ficar
+    descentralizado); nesse caso o valor é renderizado via _trend_block logo
+    abaixo, perfeitamente centralizado.
+    """
     val = min(max(value or 0, 0), max_val)
     thirds = max_val / 3
 
@@ -556,11 +561,11 @@ def _gauge(value, max_val, title, invert=False):
                else C["yellow"] if val < 2*thirds \
                else C["red"]
 
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number",
+    ind = dict(
+        mode="gauge+number" if show_number else "gauge",
         value=val,
-        title={"text": title, "font": {"color": C["t2"], "size": 11, "family": "Inter"}},
-        number={"font": {"color": C["t1"], "size": 22}, "suffix": "x"},
+        title={"text": title, "font": {"color": C["t2"], "size": 11, "family": "Inter"},
+               "align": "center"},
         gauge={
             "axis": {"range": [0, max_val], "tickcolor": C["t3"],
                      "tickfont": {"color": C["t3"], "size": 9}},
@@ -570,13 +575,68 @@ def _gauge(value, max_val, title, invert=False):
             "bordercolor": C["brd"],
             "steps": steps,
         },
-    ))
+    )
+    if show_number:
+        ind["number"] = {"font": {"color": C["t1"], "size": 22}, "suffix": "x"}
+    fig = go.Figure(go.Indicator(**ind))
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        height=200, margin=dict(l=15, r=15, t=40, b=10),
+        height=185 if not show_number else 200,
+        margin=dict(l=15, r=15, t=40, b=10),
         font=dict(color=C["t2"]),
     )
     return fig
+
+
+def _trend_block(value_str, color, values, lower_is_better, periods=None):
+    """
+    Renderiza, centralizado abaixo do gauge:
+      • o valor do múltiplo em destaque (grande, mono, centralizado)
+      • até 5 bolinhas de tendência período-a-período
+        verde = melhorou · amarelo = estável (±2%) · vermelho = piorou
+
+    `lower_is_better=True` → cair é bom (alavancagem).
+    """
+    pairs = [(p, v) for p, v in zip(periods or list(range(len(values))), values)
+             if v is not None]
+    dots_html = ""
+    legenda = ""
+    if len(pairs) >= 2:
+        pairs = pairs[-6:]  # 6 pontos → até 5 comparações
+        chips = []
+        for i in range(1, len(pairs)):
+            per, cur = pairs[i]
+            prev = pairs[i - 1][1]
+            if prev == 0:
+                col, tip = C["t3"], "n/d"
+            else:
+                chg = (cur - prev) / abs(prev)
+                if abs(chg) < 0.02:
+                    col, tip = C["yellow"], "estável"
+                elif (chg < 0) == lower_is_better:
+                    col, tip = C["green"], "melhorou"
+                else:
+                    col, tip = C["red"], "piorou"
+            chips.append(
+                f'<span title="{per}: {cur:.2f}× · {tip}" '
+                f'style="color:{col};font-size:17px;margin:0 4px;'
+                f'text-shadow:0 0 7px {col}99">●</span>'
+            )
+        dots_html = "".join(chips)
+        legenda = (f'<div style="font-size:9px;color:{C["t3"]};letter-spacing:1.4px;'
+                   f'margin-top:3px">TENDÊNCIA · ÚLTIMOS {len(chips)} PERÍODOS</div>')
+    else:
+        dots_html = f'<span style="color:{C["t3"]};font-size:11px">histórico insuficiente</span>'
+
+    return (
+        f'<div style="text-align:center;margin-top:-26px">'
+        f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:30px;'
+        f'font-weight:700;color:{color};line-height:1;'
+        f'text-shadow:0 0 14px {color}66">{value_str}</div>'
+        f'{legenda}'
+        f'<div style="margin-top:4px">{dots_html}</div>'
+        f'</div>'
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -904,6 +964,9 @@ def _history(cd, tipo):
             "capex":       pick(f, y, ["6.02.01"], "aquisições de ativos imobilizados e intangíveis"),
             "depamort":    da,
             "ativo":       pick(b, y, ["1"], "ativo total"),
+            "ativo_circ":  pick(b, y, ["1.01"], "ativo circulante"),
+            "passivo_circ":pick(p, y, ["2.01"], "passivo circulante"),
+            "caixa":       pick(b, y, ["1.01.01"], "caixa e equivalentes de caixa", "caixa e equivalentes"),
             "pl":          pick(p, y, None, "patrimônio líquido consolidado", "patrimônio líquido"),
             "divida_cp":   pick(p, y, ["2.01.04"]),
             "divida_lp":   pick(p, y, ["2.02.01"]),
@@ -911,9 +974,9 @@ def _history(cd, tipo):
     return pd.DataFrame(rows)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def _brapi_quote(ticker: str) -> Optional[Dict]:
-    """Cotação BRAPI com cache de 5 minutos."""
+    """Cotação BRAPI em tempo real (cache curto de 60s)."""
     client = BrapiClient()
     return client.get_quote(ticker)
 
@@ -993,6 +1056,19 @@ def _bcb_serie(code: int, n: int = 36) -> pd.DataFrame:
     except Exception:
         pass
     return pd.DataFrame()
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _brapi_macro(kind: str) -> Optional[float]:
+    """Fallback macro via BRAPI quando BCB/IPEA estiverem indisponíveis.
+
+    kind="selic" → taxa SELIC (% a.a.);  kind="ipca" → IPCA (% no período).
+    """
+    try:
+        c = BrapiClient()
+        return c.get_prime_rate() if kind == "selic" else c.get_inflation()
+    except Exception:
+        return None
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -1186,16 +1262,47 @@ def _tab_health(snap_ext, m, hist):
     if divcp is not None and divlp is not None and (divcp + divlp) > 0:
         duration_ap = (divcp * 0.5 + divlp * 3.0) / (divcp + divlp)
 
+    # ── Séries de tendência (período-a-período) para as bolinhas dos gauges ──
+    # Alavancagem: Dívida Líquida (CP+LP−Caixa) / EBITDA, por período da CVM
+    # Liquidez Corrente: Ativo Circulante / Passivo Circulante, por período
+    lev_series, lev_periods, liq_series, liq_periods = [], [], [], []
+    if hist is not None and not hist.empty and "ano" in hist.columns:
+        for _, r in hist.sort_values("ano").iterrows():
+            ebd = _f(r.get("ebitda"))
+            dcp = abs(_f(r.get("divida_cp")) or 0)
+            dlp = abs(_f(r.get("divida_lp")) or 0)
+            cx  = _f(r.get("caixa")) or 0
+            nd_r = (dcp + dlp) - cx
+            if ebd and ebd > 0:
+                lev_series.append(max(nd_r, 0.0) / ebd)
+            else:
+                lev_series.append(None)
+            lev_periods.append(int(r["ano"]))
+
+            acc = _f(r.get("ativo_circ")); pcc = _f(r.get("passivo_circ"))
+            liq_series.append((acc / pcc) if acc and pcc and pcc > 0 else None)
+            liq_periods.append(int(r["ano"]))
+
     # ── Layout ──────────────────────────────────────────────────────────────
     col_lev, col_liq = st.columns(2)
 
     with col_lev:
         sec("Alavancagem e Cobertura")
 
-        # Gauge ND/EBITDA
+        # Gauge ND/EBITDA (número centralizado + bolinhas de tendência abaixo)
         g1_val = nd_ebitda if nd_ebitda is not None and nd_ebitda > 0 else 0
-        st.plotly_chart(_gauge(g1_val, 10, "Dívida Líquida / EBITDA", invert=True),
+        st.plotly_chart(_gauge(g1_val, 10, "Dívida Líquida / EBITDA",
+                               invert=True, show_number=False),
                         use_container_width=True)
+        if nd_ebitda is None:
+            _lev_col, _lev_str = C["t3"], "N/D"
+        elif nd_ebitda <= 0:
+            _lev_col, _lev_str = C["green"], "Caixa líq."
+        else:
+            _lev_col = C["green"] if nd_ebitda < 2 else C["yellow"] if nd_ebitda < 4 else C["red"]
+            _lev_str = fmult(nd_ebitda)
+        st.markdown(_trend_block(_lev_str, _lev_col, lev_series, True, lev_periods),
+                    unsafe_allow_html=True)
 
         def _lev_bar(lbl, val, low_good, thr_ok, thr_warn, val_str, sfx="×"):
             if val is None:
@@ -1230,8 +1337,16 @@ def _tab_health(snap_ext, m, hist):
         sec("Liquidez")
 
         g2_val = liq_corrente if liq_corrente is not None else 0
-        st.plotly_chart(_gauge(min(g2_val, 4), 4, "Liquidez Corrente", invert=False),
+        st.plotly_chart(_gauge(min(g2_val, 4), 4, "Liquidez Corrente",
+                               invert=False, show_number=False),
                         use_container_width=True)
+        if liq_corrente is None:
+            _liq_col, _liq_str = C["t3"], "N/D"
+        else:
+            _liq_col = C["green"] if liq_corrente >= 2 else C["yellow"] if liq_corrente >= 1 else C["red"]
+            _liq_str = fmult(liq_corrente, 2)
+        st.markdown(_trend_block(_liq_str, _liq_col, liq_series, False, liq_periods),
+                    unsafe_allow_html=True)
 
         def _liq_bar(lbl, val, thr_ok, thr_warn, val_str):
             if val is None:
@@ -1881,15 +1996,15 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
                                f"R$ {_preco:,.2f}" if _preco else "Informe em Múltiplos ↓",
                                "blu" if _preco else "nd"), unsafe_allow_html=True)
 
-            # Card 4 — Upside
-            _ref_shr = _epv_shr or _dcf_shr
+            # Card 4 — Upside (referência: DCF; EPV como fallback)
+            _ref_shr = _dcf_shr or _epv_shr
             if _ref_shr and _preco:
-                _lbl_up = "Upside EPV" if _epv_shr else "Upside DCF"
+                _lbl_up = "Upside DCF" if _dcf_shr else "Upside EPV"
                 _up = (_ref_shr / _preco - 1) * 100
                 _sc[3].markdown(mc(_lbl_up, f"{_up:+.1f}%", "pos" if _up > 0 else "neg"), unsafe_allow_html=True)
-            elif _epv_ev and _dcf_ev:
-                _up_ev = (_epv_ev / _dcf_ev - 1) * 100
-                _sc[3].markdown(mc("EPV vs DCF Enterprise", f"{_up_ev:+.1f}%",
+            elif _dcf_ev and _epv_ev:
+                _up_ev = (_dcf_ev / _epv_ev - 1) * 100
+                _sc[3].markdown(mc("DCF vs EPV Enterprise", f"{_up_ev:+.1f}%",
                                    "pos" if _up_ev > 0 else "neg"), unsafe_allow_html=True)
             else:
                 _sc[3].markdown(mc("Upside", "Informe preço + ações ↓", "nd"), unsafe_allow_html=True)
@@ -1923,7 +2038,7 @@ def _tab_macro():
     cambio_d = _fetch(CAMBIO)
 
     # ── Helper: card com último valor ─────────────────────────────────────────
-    def _card(col, nome, df_s, unidade, is_cambio=False):
+    def _card(col, nome, df_s, unidade, is_cambio=False, fallback=None):
         with col:
             if not df_s.empty:
                 last_val  = df_s["valor"].iloc[-1]
@@ -1936,19 +2051,26 @@ def _tab_macro():
                       else f"{last_date}  ({unidade})"
                 col.markdown(mc(nome, f"{last_val:.2f}", cls_d, sub), unsafe_allow_html=True)
             else:
-                col.markdown(mc(nome, "Offline", "nd", "BCB API indisponível"),
-                             unsafe_allow_html=True)
+                fb = fallback() if fallback else None
+                if fb is not None:
+                    col.markdown(mc(nome, f"{fb:.2f}", "blu",
+                                    f"BRAPI (fallback)  ({unidade})"), unsafe_allow_html=True)
+                else:
+                    col.markdown(mc(nome, "Offline", "nd", "BCB API indisponível"),
+                                 unsafe_allow_html=True)
 
     # ── Cards ────────────────────────────────────────────────────────────────
     sec("Juros — Banco Central do Brasil (SGS)")
     cj = st.columns(3)
     for i, (nome, (df_s, cor, unid, _)) in enumerate(juros_d.items()):
-        _card(cj[i], nome, df_s, unid)
+        fb = (lambda: _brapi_macro("selic")) if nome == "SELIC Meta" else None
+        _card(cj[i], nome, df_s, unid, fallback=fb)
 
     sec("Inflação")
     ci = st.columns(3)
     for i, (nome, (df_s, cor, unid, _)) in enumerate(inf_d.items()):
-        _card(ci[i], nome, df_s, unid)
+        fb = (lambda: _brapi_macro("ipca")) if nome == "IPCA" else None
+        _card(ci[i], nome, df_s, unid, fallback=fb)
 
     sec("Câmbio")
     cc = st.columns(4)
@@ -2065,7 +2187,7 @@ def _welcome(avail):
 
 def _render_brapi_panel(q: Dict, ticker: str):
     """Painel completo de dados de mercado BRAPI."""
-    sec(f"📈 Dados de Mercado — {ticker}  (BRAPI.dev · atualizado a cada 5 min)")
+    sec(f"📈 Dados de Mercado — {ticker}  (BRAPI.dev · cotação em tempo real)")
 
     preco  = q.get("regularMarketPrice", 0)
     var_d  = q.get("regularMarketChangePercent", 0)

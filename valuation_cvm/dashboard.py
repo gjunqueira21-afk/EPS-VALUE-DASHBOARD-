@@ -15,6 +15,7 @@ Uso:
 
 import re
 import sys
+import unicodedata
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -1235,6 +1236,12 @@ _STOP_WORDS = {"SA", "S.A", "S.A.", "DO", "DA", "DE", "DOS", "DAS", "E",
                "GRUPO", "HOLDING", "PARTICIPACOES", "PARTICIPAÇÕES"}
 
 
+def _no_accents(s: str) -> str:
+    """Remove acentos para comparações tolerantes (ex.: 'ITAÚ' == 'ITAU')."""
+    return "".join(c for c in unicodedata.normalize("NFKD", s)
+                    if not unicodedata.combining(c))
+
+
 def _auto_ticker_from_name(company_name: str) -> str:
     """Tenta encontrar o ticker B3 mais relevante dado o nome da empresa CVM."""
     words = [w.rstrip(".,/") for w in company_name.upper().split()]
@@ -1244,6 +1251,17 @@ def _auto_ticker_from_name(company_name: str) -> str:
     results = _brapi_search(search_term)
     if not results:
         return ""
+
+    # A BRAPI às vezes ignora o filtro `search` e devolve a lista padrão de
+    # ativos (top do mercado) — sem este filtro, TODA empresa "herdaria" o
+    # ticker do topo dessa lista (ex.: PETR4). Só aceita resultados cujo
+    # nome realmente contenha o termo buscado.
+    term = _no_accents(search_term)
+    relevant = [r for r in results
+                if term in _no_accents(str(r.get("name", "")).upper())]
+    if not relevant:
+        return ""
+    results = relevant
 
     # Filtrar apenas ações (não FIIs/BDRs) e ordenar por volume
     stocks = [r for r in results
@@ -1266,12 +1284,13 @@ def _ticker_to_company_name(ticker: str) -> str:
     Usado para busca por ticker: ITUB4 → 'ITAU UNIBANCO HOLDING S.A.'
     """
     results = _brapi_search(ticker.upper())
-    if not results:
-        return ""
     for r in results:
         if str(r.get("stock", "")).upper() == ticker.upper():
             return str(r.get("name", ""))
-    return str(results[0].get("name", "")) if results else ""
+    # Sem correspondência exata: NÃO usa o primeiro resultado como fallback —
+    # se `/quote/list?search=` ignorar o filtro e devolver a lista padrão de
+    # ativos, qualquer ticker digitado "viraria" o #1 dessa lista (ex.: PETR4).
+    return ""
 
 
 def _is_ticker_like(s: str) -> bool:
@@ -1325,6 +1344,28 @@ def _brapi_currency(pairs: str = "USD-BRL,EUR-BRL") -> List[Dict]:
         return BrapiClient().get_currency(pairs)
     except Exception:
         return []
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _brapi_options_expirations(underlying: str) -> List[str]:
+    """Vencimentos de opções disponíveis para um ativo-objeto (cache de 5 min)."""
+    if not underlying:
+        return []
+    try:
+        return BrapiClient().get_options_expirations(underlying)
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _brapi_options_chain(underlying: str, expiration: Optional[str] = None) -> Optional[Dict]:
+    """Cadeia de opções (calls/puts) para um ativo-objeto e vencimento (cache de 2 min)."""
+    if not underlying:
+        return None
+    try:
+        return BrapiClient().get_options(underlying, expiration)
+    except Exception:
+        return None
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -2578,6 +2619,96 @@ def _render_brapi_panel(q: Dict, ticker: str):
                        unsafe_allow_html=True)
 
 
+def _tab_options(ticker_input: str = ""):
+    """Aba de Opções B3 (BRAPI /v2/options/expirations + /v2/options/{ticker})."""
+    sec("📑 Opções — Ativo-Objeto")
+
+    under = st.text_input(
+        "Ativo-objeto (ticker)",
+        value=(ticker_input or "").strip().upper(),
+        placeholder="Ex: PETR4, VALE3, ITUB4",
+        key="opt_underlying",
+        help="Ticker do ativo-objeto na B3. Pode ser diferente da ação selecionada acima.",
+    ).strip().upper()
+
+    if not under:
+        box("Informe um ticker (ex.: PETR4) para consultar a cadeia de opções via BRAPI.", "info")
+        return
+
+    with st.spinner(f"Buscando vencimentos de opções para {under}…"):
+        expirations = _brapi_options_expirations(under)
+
+    if not expirations:
+        box(f"Nenhum vencimento de opções encontrado para <b>{under}</b> via BRAPI "
+            f"(<code>/v2/options/expirations</code>). Pode ser que este ativo não "
+            f"tenha opções listadas no momento, ou que o endpoint não esteja "
+            f"disponível para o seu plano/token.", "warn")
+        return
+
+    st.caption(f"{len(expirations)} vencimento(s) disponível(is) para {under} (BRAPI)")
+    exp_sel = st.selectbox("Vencimento", expirations, key="opt_expiration")
+
+    with st.spinner(f"Buscando cadeia de opções de {under} — {exp_sel}…"):
+        chain = _brapi_options_chain(under, exp_sel)
+
+    if not chain:
+        box(f"BRAPI não retornou a cadeia de opções de <b>{under}</b> para o "
+            f"vencimento <b>{exp_sel}</b> (<code>/v2/options/{under}</code>).", "warn")
+        return
+
+    # Confere se a BRAPI de fato respondeu para o ativo solicitado.
+    _ret_under = str(chain.get("underlying") or chain.get("symbol")
+                     or chain.get("stock") or "").upper()
+    if _ret_under and _ret_under != under:
+        box(f"⚠ A BRAPI retornou dados para <b>{_ret_under}</b>, não para "
+            f"<b>{under}</b> — verifique se o endpoint "
+            f"<code>/v2/options/{{ticker}}</code> suporta este ativo no seu plano.",
+            "warn")
+
+    # Parsing tolerante: {"calls":[...], "puts":[...]} ou {"options":[...]}.
+    calls = chain.get("calls") or []
+    puts  = chain.get("puts") or []
+    if not calls and not puts:
+        for o in (chain.get("options") or chain.get("data") or []):
+            if not isinstance(o, dict):
+                continue
+            side = str(o.get("type") or o.get("side") or "").lower()
+            (puts if "put" in side else calls).append(o)
+
+    def _opt_row(o):
+        return {
+            "Ticker":    o.get("symbol") or o.get("ticker") or o.get("name") or "–",
+            "Strike":    fnum(o.get("strike") or o.get("strikePrice")),
+            "Último":    fnum(o.get("lastPrice") or o.get("regularMarketPrice") or o.get("close")),
+            "Compra":    fnum(o.get("bid")),
+            "Venda":     fnum(o.get("ask")),
+            "Volume":    fnum(o.get("volume") or o.get("regularMarketVolume"), 0),
+            "Em Aberto": fnum(o.get("openInterest"), 0),
+        }
+
+    c1, c2 = st.columns(2)
+    with c1:
+        sec(f"📈 CALLs ({len(calls)})")
+        if calls:
+            st.dataframe(pd.DataFrame([_opt_row(o) for o in calls]),
+                          use_container_width=True, hide_index=True)
+        else:
+            box("Sem calls para este vencimento.", "info")
+    with c2:
+        sec(f"📉 PUTs ({len(puts)})")
+        if puts:
+            st.dataframe(pd.DataFrame([_opt_row(o) for o in puts]),
+                          use_container_width=True, hide_index=True)
+        else:
+            box("Sem puts para este vencimento.", "info")
+
+    if not calls and not puts:
+        box("BRAPI respondeu, mas o formato da cadeia de opções não é o esperado. "
+            "Veja a resposta bruta abaixo para ajustar o parsing.", "warn")
+        with st.expander("🔍 Resposta bruta da BRAPI (debug)"):
+            st.json(chain)
+
+
 def _no_data():
     box("""<b>⚠ Nenhum dado processado encontrado</b><br><br>
 Execute o pipeline CVM no seu computador para baixar os dados:<br><br>
@@ -2744,11 +2875,12 @@ Para baixar dados:<br>
             st.session_state.pop(_k, None)
 
     # ── Auto-detect ticker quando empresa muda ───────────────────────────────
+    # Sempre atribui (mesmo "" quando nada é detectado) — caso contrário o
+    # ticker da empresa anterior ficaria "preso" no session_state e todo o
+    # painel BRAPI continuaria mostrando o ativo antigo (ex.: PETR4).
     if selected_cd and st.session_state.get("_last_cd_ticker") != selected_cd:
         st.session_state["_last_cd_ticker"] = selected_cd
-        detected = _auto_ticker_from_name(selected_name or "")
-        if detected:
-            st.session_state["ticker"] = detected
+        st.session_state["ticker"] = _auto_ticker_from_name(selected_name or "")
         st.rerun()
 
     # ── Busca cotação BRAPI antes de renderizar o cabeçalho ──────────────────
@@ -2807,7 +2939,7 @@ Para baixar dados:<br>
                         unsafe_allow_html=True)
 
     tabs = st.tabs(["VISÃO GERAL", "HISTÓRICO", "DEMONSTRATIVOS",
-                    "SAÚDE FINANCEIRA", "VALUATION", "MACRO BRASIL"])
+                    "SAÚDE FINANCEIRA", "VALUATION", "OPÇÕES", "MACRO BRASIL"])
 
     with tabs[0]: _tab_overview(m, snap_ext, brapi_data=brapi_data,
                                 ticker_input=ticker_input, recon=recon)
@@ -2815,7 +2947,8 @@ Para baixar dados:<br>
     with tabs[2]: _tab_statements(selected_cd, tipo_doc)
     with tabs[3]: _tab_health(snap_ext, m, hist)
     with tabs[4]: _tab_valuation(m, snap_ext, selected_cd, hist, brapi_data=brapi_data)
-    with tabs[5]: _tab_macro()
+    with tabs[5]: _tab_options(ticker_input)
+    with tabs[6]: _tab_macro()
 
 
 if __name__ == "__main__":

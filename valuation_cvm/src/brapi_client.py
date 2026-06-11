@@ -262,6 +262,69 @@ class BrapiClient:
         return out
 
     # ------------------------------------------------------------------
+    # Opções B3 (mercado de derivativos)
+    # ------------------------------------------------------------------
+
+    def get_options_expirations(self, underlying: str, include_expired: bool = False) -> List[str]:
+        """
+        Datas de vencimento de opções disponíveis para um ativo-objeto B3
+        via BRAPI /v2/options/expirations.
+
+        `underlying`: ticker do ativo-objeto (ex.: 'PETR4').
+        Retorna lista de datas (strings, formato conforme BRAPI).
+        """
+        if not self.token:
+            return []
+        underlying = underlying.upper().strip()
+        try:
+            resp = requests.get(
+                f"{_BASE}/v2/options/expirations",
+                params={"underlying": underlying, "includeExpired": str(include_expired).lower()},
+                headers=self._headers,
+                timeout=_TIMEOUT,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                exp = data.get("expirations") or data.get("dates") or data.get("data") or []
+                if isinstance(exp, dict):
+                    exp = exp.get(underlying) or []
+                return [str(x) for x in exp] if isinstance(exp, list) else []
+            logger.warning("BrapiClient.get_options_expirations: HTTP %d para %s",
+                           resp.status_code, underlying)
+        except Exception as exc:
+            logger.warning("BrapiClient.get_options_expirations: %s", exc)
+        return []
+
+    def get_options(self, underlying: str, expiration: Optional[str] = None) -> Optional[Dict]:
+        """
+        Cadeia de opções (calls/puts) de um ativo-objeto B3 via BRAPI
+        /v2/options/{underlying}, opcionalmente filtrada por vencimento.
+
+        `underlying`: ticker do ativo-objeto (ex.: 'PETR4').
+        `expiration`: data de vencimento (formato retornado por
+        get_options_expirations), ou None para a próxima disponível.
+        """
+        if not self.token:
+            return None
+        underlying = underlying.upper().strip()
+        params: Dict[str, str] = {}
+        if expiration:
+            params["expiration"] = expiration
+        try:
+            resp = requests.get(
+                f"{_BASE}/v2/options/{underlying}",
+                params=params,
+                headers=self._headers,
+                timeout=_TIMEOUT,
+            )
+            if resp.status_code == 200:
+                return resp.json()
+            logger.warning("BrapiClient.get_options: HTTP %d para %s", resp.status_code, underlying)
+        except Exception as exc:
+            logger.warning("BrapiClient.get_options: %s", exc)
+        return None
+
+    # ------------------------------------------------------------------
     # Lista de tickers disponíveis
     # ------------------------------------------------------------------
 

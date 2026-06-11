@@ -1024,6 +1024,202 @@ def _brapi_consensus(fund: Optional[Dict]) -> Dict:
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Reconciliação CVM × BRAPI
+#
+# Política (definida pelo usuário): a BRAPI.dev é a fonte de verdade.
+#   • Campo CVM ausente  → preenche com o valor da BRAPI.
+#   • Campos divergem    → usa o valor da BRAPI ("se não bater, usa o deles").
+#   • Campos conferem    → mantém (origem registrada como "confere").
+# Toda substituição/preenchimento fica VISÍVEL (filosofia do projeto: sem dados
+# ocultos), exibida num painel auditável na aba Visão Geral.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Tolerância relativa para considerar que CVM e BRAPI "batem".
+_RECON_TOL = 0.01
+
+
+def _bnum(d: Optional[Dict], *keys) -> Optional[float]:
+    """Extrai número de um dict BRAPI, tolerando formato Yahoo {'raw': x}."""
+    if not isinstance(d, dict):
+        return None
+    for k in keys:
+        v = d.get(k)
+        if isinstance(v, dict):
+            v = v.get("raw", v.get("value"))
+        v = _f(v)
+        if v is not None:
+            return v
+    return None
+
+
+def _brapi_stmt_latest(fund: Optional[Dict], module: str) -> Dict:
+    """Demonstração anual mais recente de um módulo *History da BRAPI."""
+    if not fund:
+        return {}
+    block = fund.get(module) or {}
+    # BRAPI/Yahoo aninham a lista em chaves como 'incomeStatementHistory'
+    rows = None
+    if isinstance(block, dict):
+        for v in block.values():
+            if isinstance(v, list):
+                rows = v
+                break
+    elif isinstance(block, list):
+        rows = block
+    if not rows:
+        return {}
+
+    def _end(r):
+        e = r.get("endDate")
+        if isinstance(e, dict):
+            e = e.get("raw") or e.get("fmt")
+        return str(e or "")
+
+    try:
+        rows = sorted(rows, key=_end, reverse=True)
+    except Exception:
+        pass
+    return rows[0] if isinstance(rows[0], dict) else {}
+
+
+def _brapi_figures(fund: Optional[Dict]) -> Dict[str, Optional[float]]:
+    """Mapeia os números da BRAPI para os mesmos campos usados a partir da CVM.
+
+    Prioriza `financialData` (dados consolidados/TTM) e usa o histórico de DRE
+    como complemento. Todos em reais absolutos (mesma escala da CVM ajustada).
+    """
+    fd  = (fund or {}).get("financialData") or {}
+    inc = _brapi_stmt_latest(fund, "incomeStatementHistory")
+    bal = _brapi_stmt_latest(fund, "balanceSheetHistory")
+    cfs = _brapi_stmt_latest(fund, "cashflowHistory")
+
+    receita = _bnum(fd, "totalRevenue") or _bnum(inc, "totalRevenue")
+    lucro_b = _bnum(fd, "grossProfits") or _bnum(inc, "grossProfit")
+    ebit    = _bnum(inc, "ebit", "operatingIncome")
+    lucro_l = _bnum(inc, "netIncome") or _bnum(cfs, "netIncome")
+    ebitda  = _bnum(fd, "ebitda")
+    div_br  = _bnum(fd, "totalDebt") or _bnum(bal, "totalDebt")
+    caixa   = _bnum(fd, "totalCash") or _bnum(bal, "cash", "cashAndCashEquivalents")
+    pl      = _bnum(bal, "totalStockholderEquity", "stockholdersEquity")
+    ativo   = _bnum(bal, "totalAssets")
+    fcop    = _bnum(fd, "operatingCashflow") or _bnum(cfs, "totalCashFromOperatingActivities")
+    fcl     = _bnum(fd, "freeCashflow")
+
+    nd = (div_br - caixa) if (div_br is not None and caixa is not None) else None
+
+    return {
+        "receita_liquida":        receita,
+        "lucro_bruto":            lucro_b,
+        "ebit":                   ebit,
+        "lucro_liquido":          lucro_l,
+        "ebitda":                 ebitda,
+        "divida_bruta":           div_br,
+        "caixa_total":            caixa,
+        "divida_liquida":         nd,
+        "patrimonio_liquido":     pl,
+        "ativo_total":            ativo,
+        "fluxo_caixa_operacional": fcop,
+        "fcl_aprox":              fcl,
+    }
+
+
+# Rótulos legíveis para o painel de reconciliação.
+_RECON_LABELS = {
+    "receita_liquida":         "Receita Líquida",
+    "lucro_bruto":             "Lucro Bruto",
+    "ebit":                    "EBIT",
+    "lucro_liquido":           "Lucro Líquido",
+    "ebitda":                  "EBITDA",
+    "divida_bruta":            "Dívida Bruta",
+    "caixa_total":             "Caixa + Aplicações",
+    "divida_liquida":          "Dívida Líquida",
+    "patrimonio_liquido":      "Patrimônio Líquido",
+    "ativo_total":             "Ativo Total",
+    "fluxo_caixa_operacional": "Fluxo de Caixa Operacional",
+    "fcl_aprox":               "Fluxo de Caixa Livre",
+}
+
+
+def _reconcile_cvm_brapi(m: Dict, snap_ext: Dict, fund: Optional[Dict]) -> List[Dict]:
+    """Confronta os números da CVM com os da BRAPI e aplica a política do usuário.
+
+    Trust = BRAPI: preenche ausências e sobrepõe divergências com o valor da
+    BRAPI. Muta `m` e `snap_ext` in-place e devolve as notas de auditoria.
+    """
+    if not fund:
+        return []
+
+    bvals = _brapi_figures(fund)
+    notes: List[Dict] = []
+
+    for key, bval in bvals.items():
+        if bval is None:
+            continue
+        cval = _f(m.get(key))
+
+        if cval is None:
+            origem, div_pct = "preenchido", None
+        else:
+            denom = max(abs(bval), abs(cval), 1.0)
+            div_pct = (cval - bval) / denom * 100.0
+            origem = "confere" if abs(div_pct) <= _RECON_TOL * 100 else "divergente"
+
+        # Política: BRAPI é a fonte de verdade → grava o valor da BRAPI
+        # (em "confere" o valor é praticamente o mesmo).
+        m[key] = bval
+        if key in snap_ext or key in (
+            "divida_bruta", "divida_liquida", "patrimonio_liquido",
+            "ativo_total", "fluxo_caixa_operacional",
+        ):
+            snap_ext[key] = bval
+
+        notes.append({
+            "campo":  _RECON_LABELS.get(key, key),
+            "cvm":    cval,
+            "brapi":  bval,
+            "origem": origem,
+            "div":    div_pct,
+        })
+
+    # Recalcula derivados coerentes com os valores adotados.
+    if bvals.get("caixa_total") is not None:
+        snap_ext["caixa_equivalentes"] = bvals["caixa_total"]
+        snap_ext["aplicacoes_financeiras"] = 0.0
+    if bvals.get("divida_liquida") is not None:
+        m["divida_liquida"] = bvals["divida_liquida"]
+        snap_ext["divida_liquida"] = bvals["divida_liquida"]
+
+    return notes
+
+
+def _render_reconciliation(notes: List[Dict]) -> None:
+    """Painel auditável: o que a BRAPI preencheu / sobrepôs sobre a CVM."""
+    if not notes:
+        return
+    n_div  = sum(1 for n in notes if n["origem"] == "divergente")
+    n_fill = sum(1 for n in notes if n["origem"] == "preenchido")
+    n_ok   = sum(1 for n in notes if n["origem"] == "confere")
+
+    resumo = (f"BRAPI conferiu {n_ok} · sobrepôs {n_div} divergente(s) · "
+              f"preencheu {n_fill} ausência(s)")
+    with st.expander(f"🔄 Reconciliação CVM × BRAPI — {resumo}", expanded=n_div > 0):
+        st.caption("Política: a BRAPI.dev é a fonte de verdade. Onde a CVM diverge "
+                   "ou está ausente, o valor da BRAPI é adotado. Tudo auditável abaixo.")
+        rows = []
+        for n in notes:
+            badge = {"confere": "✓ confere", "divergente": "⚠ BRAPI (divergia)",
+                     "preenchido": "＋ BRAPI (CVM ausente)"}[n["origem"]]
+            rows.append({
+                "Campo":     n["campo"],
+                "CVM":       fbrl(n["cvm"]) if n["cvm"] is not None else "–",
+                "BRAPI":     fbrl(n["brapi"]),
+                "Δ":         f"{n['div']:+.1f}%" if n["div"] is not None else "–",
+                "Adotado":   badge,
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _brapi_search(query: str) -> List[Dict]:
     """Busca tickers pelo nome da empresa, com cache de 1 hora."""
@@ -1164,10 +1360,12 @@ def _embi_brasil() -> Optional[float]:
 # Tab renderers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _tab_overview(m, snap, brapi_data=None, ticker_input=""):
+def _tab_overview(m, snap, brapi_data=None, ticker_input="", recon=None):
     if brapi_data and ticker_input:
         _render_brapi_panel(brapi_data, ticker_input.upper())
         st.markdown("---")
+    if recon:
+        _render_reconciliation(recon)
     sec("Resultado")
     c = st.columns(4)
     c[0].markdown(mc("Receita Líquida",  fbrl(m.get("receita_liquida")),  "blu"),  unsafe_allow_html=True)
@@ -2557,6 +2755,11 @@ Para baixar dados:<br>
     ticker_input = st.session_state.get("ticker", "").strip().upper()
     brapi_data = _brapi_quote(ticker_input) if ticker_input else None
 
+    # ── Reconciliação CVM × BRAPI (BRAPI = fonte de verdade) ─────────────────
+    # Preenche lacunas da CVM e sobrepõe divergências com os números da BRAPI.
+    _fund  = _brapi_fundamentals(ticker_input) if ticker_input else None
+    recon  = _reconcile_cvm_brapi(m, snap_ext, _fund)
+
     # ── Cabeçalho com nome + cotação ao lado ─────────────────────────────────
     co_strip(selected_name, selected_cd, tipo_doc, selected_setor,
              brapi_data=brapi_data, ticker=ticker_input)
@@ -2606,7 +2809,8 @@ Para baixar dados:<br>
     tabs = st.tabs(["VISÃO GERAL", "HISTÓRICO", "DEMONSTRATIVOS",
                     "SAÚDE FINANCEIRA", "VALUATION", "MACRO BRASIL"])
 
-    with tabs[0]: _tab_overview(m, snap_ext)
+    with tabs[0]: _tab_overview(m, snap_ext, brapi_data=brapi_data,
+                                ticker_input=ticker_input, recon=recon)
     with tabs[1]: _tab_history(selected_cd, tipo_doc, selected_name)
     with tabs[2]: _tab_statements(selected_cd, tipo_doc)
     with tabs[3]: _tab_health(snap_ext, m, hist)

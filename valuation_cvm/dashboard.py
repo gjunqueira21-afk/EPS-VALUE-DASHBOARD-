@@ -240,12 +240,17 @@ section[data-testid="stSidebar"] input:focus {{
     backdrop-filter: blur(6px);
     border: 1px solid {C['brd']};
     border-radius: 10px;
-    padding: 13px 16px;
-    margin-bottom: 8px;
+    padding: 14px 18px;
+    margin-bottom: 12px;
     min-height: 76px;
     overflow: hidden;
     transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.25s ease;
 }}
+/* ── Variante "hero" — cards de veredito, maiores e mais espaçados ───────── */
+.mc.hero {{ padding: 18px 20px; min-height: 92px; }}
+.mc.hero .mc-lbl {{ font-size: 11px; margin-bottom: 9px; }}
+.mc.hero .mc-val {{ font-size: 25px; }}
+.mc.hero .mc-val.nd {{ font-size: 15px; }}
 /* filete de energia no topo de cada card */
 .mc::before {{
     content: "";
@@ -290,19 +295,35 @@ section[data-testid="stSidebar"] input:focus {{
     letter-spacing: 1.8px;
     text-transform: uppercase;
     border-bottom: 1px solid {C['brd']};
-    padding-bottom: 6px;
+    padding-bottom: 8px;
     padding-left: 12px;
-    margin-top: 22px;
-    margin-bottom: 12px;
+    margin-top: 32px;
+    margin-bottom: 16px;
 }}
 /* marcador neon à esquerda do título */
 .sec::before {{
     content: "";
-    position: absolute; left: 0; top: 1px; bottom: 7px;
+    position: absolute; left: 0; top: 1px; bottom: 9px;
     width: 3px; border-radius: 2px;
     background: linear-gradient(180deg, {C['cyan']}, {C['blue']});
     box-shadow: 0 0 8px {rgba(C['cyan'], 0.6)};
 }}
+/* selo qualitativo (Barato / Justo / Caro) ao lado de um título .sec */
+.verdict-badge {{
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    padding: 3px 12px;
+    border-radius: 99px;
+    margin-left: 10px;
+    vertical-align: middle;
+    text-transform: uppercase;
+}}
+.verdict-badge.pos {{ background: {rgba(C['green'], 0.15)};  color: {C['green_l']}; border: 1px solid {rgba(C['green'], 0.4)}; }}
+.verdict-badge.neg {{ background: {rgba(C['red'], 0.15)};    color: {C['red_l']};   border: 1px solid {rgba(C['red'], 0.4)}; }}
+.verdict-badge.yel {{ background: {rgba(C['yellow'], 0.15)}; color: {C['yellow_l']};border: 1px solid {rgba(C['yellow'], 0.4)}; }}
+.verdict-badge.nd  {{ background: {rgba(C['t3'], 0.15)};     color: {C['t2']};      border: 1px solid {C['brd2']}; }}
 
 /* ── Alert boxes ────────────────────────────────────────────────────────── */
 .box-info {{
@@ -450,6 +471,14 @@ tbody tr:hover td {{ background: {C['surf2']} !important; }}
     font-size: 12px !important;
     font-weight: 600 !important;
 }}
+[data-testid="stExpander"] {{ margin: 14px 0 20px 0 !important; }}
+
+/* ── Sub-abas internas (ex.: Valuation) — leve recuo visual ───────────────── */
+.stTabs .stTabs [data-baseweb="tab-list"] {{
+    border-bottom: 1px solid {C['brd']} !important;
+    margin-top: 4px !important;
+}}
+.stTabs .stTabs [data-baseweb="tab-panel"] {{ padding-top: 18px !important; }}
 
 /* ── Health score bars ──────────────────────────────────────────────────── */
 .score-row {{
@@ -687,15 +716,29 @@ def _mult_cls(v, good, warn):
     return "pos" if x < good else "yel" if x < warn else "neg"
 
 
+def _selo_valuation(upside_pct):
+    """Selo qualitativo Barato/Justo/Caro a partir do upside (%) vs. preço de mercado."""
+    if upside_pct is None:
+        return "–", "nd"
+    if upside_pct > 15:
+        return "BARATO", "pos"
+    if upside_pct < -15:
+        return "CARO", "neg"
+    return "JUSTO", "yel"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # UI helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
 def mc(label, val, cls="", sub=""):
+    tokens = cls.split()
+    card_cls = "mc hero" if "hero" in tokens else "mc"
+    val_cls = " ".join(t for t in tokens if t != "hero")
     sub_html = f'<div class="mc-sub">{sub}</div>' if sub else ""
-    return f"""<div class="mc">
+    return f"""<div class="{card_cls}">
   <div class="mc-lbl">{label}</div>
-  <div class="mc-val {cls}">{val}</div>
+  <div class="mc-val {val_cls}">{val}</div>
   {sub_html}
 </div>"""
 
@@ -1514,28 +1557,28 @@ def _tab_overview(m, snap, brapi_data=None, ticker_input="", recon=None):
     if recon:
         _render_reconciliation(recon)
     sec("Resultado")
-    c = st.columns(4)
+    c = st.columns(4, gap="medium")
     c[0].markdown(mc("Receita Líquida",  fbrl(m.get("receita_liquida")),  "blu"),  unsafe_allow_html=True)
     c[1].markdown(mc("Lucro Bruto",      fbrl(m.get("lucro_bruto")),      _cls(m.get("lucro_bruto"))),  unsafe_allow_html=True)
     c[2].markdown(mc("EBIT",             fbrl(m.get("ebit")),             _cls(m.get("ebit"))),  unsafe_allow_html=True)
     c[3].markdown(mc("Lucro Líquido",    fbrl(m.get("lucro_liquido")),    _cls(m.get("lucro_liquido"))), unsafe_allow_html=True)
 
     sec("Balanço")
-    c2 = st.columns(4)
+    c2 = st.columns(4, gap="medium")
     c2[0].markdown(mc("Caixa + Aplicações", fbrl(m.get("caixa_total")),     "pos"),  unsafe_allow_html=True)
     c2[1].markdown(mc("Dívida Bruta",       fbrl(m.get("divida_bruta")),    _cls(m.get("divida_bruta"), False)), unsafe_allow_html=True)
     c2[2].markdown(mc("Dívida Líquida",     fbrl(m.get("divida_liquida")),  _cls(m.get("divida_liquida"), False)), unsafe_allow_html=True)
     c2[3].markdown(mc("Patrimônio Líquido", fbrl(m.get("patrimonio_liquido")), _cls(m.get("patrimonio_liquido"))), unsafe_allow_html=True)
 
     sec("Margens")
-    c3 = st.columns(4)
+    c3 = st.columns(4, gap="medium")
     c3[0].markdown(mc("Margem Bruta",   fpct(m.get("margem_bruta")),   _cls(m.get("margem_bruta"))),  unsafe_allow_html=True)
     c3[1].markdown(mc("Margem EBIT",    fpct(m.get("margem_ebit")),    _cls(m.get("margem_ebit"))),   unsafe_allow_html=True)
     c3[2].markdown(mc("Margem Líquida", fpct(m.get("margem_liquida")), _cls(m.get("margem_liquida"))), unsafe_allow_html=True)
     c3[3].markdown(mc("Ativo Total",    fbrl(m.get("ativo_total")),    "blu"),  unsafe_allow_html=True)
 
     sec("Retornos & Fluxo de Caixa")
-    c4 = st.columns(4)
+    c4 = st.columns(4, gap="medium")
     c4[0].markdown(mc("ROE",          fpct(m.get("roe")),       _cls(m.get("roe"))),  unsafe_allow_html=True)
     c4[1].markdown(mc("ROA",          fpct(m.get("roa")),       _cls(m.get("roa"))),  unsafe_allow_html=True)
     c4[2].markdown(mc("ROIC (aprox)", fpct(m.get("roic_aprox")),_cls(m.get("roic_aprox"))), unsafe_allow_html=True)
@@ -1688,7 +1731,7 @@ def _tab_health(snap_ext, m, hist):
             liq_periods.append(int(r["ano"]))
 
     # ── Layout ──────────────────────────────────────────────────────────────
-    col_lev, col_liq = st.columns(2)
+    col_lev, col_liq = st.columns(2, gap="medium")
 
     with col_lev:
         sec("Alavancagem e Cobertura")
@@ -1739,7 +1782,7 @@ def _tab_health(snap_ext, m, hist):
                  fmult(cob_juros))
 
         sec("Métricas de Dívida")
-        dm1, dm2, dm3 = st.columns(3)
+        dm1, dm2, dm3 = st.columns(3, gap="medium")
         dm1.markdown(mc("Dívida Líq./EBITDA", fmult(nd_ebitda),   _cls(nd_ebitda, False) if nd_ebitda else "nd"), unsafe_allow_html=True)
         dm2.markdown(mc("Duration (aprox)",   f"{duration_ap:.1f} anos" if duration_ap else "–", "blu"), unsafe_allow_html=True)
         dm3.markdown(mc("Anos p/ Quitar¹",    f"{anos_pagar:.1f} anos" if anos_pagar else "–",
@@ -1775,7 +1818,7 @@ def _tab_health(snap_ext, m, hist):
         _liq_bar("Liquidez Imediata  Caixa/PC",       liq_imediata, 0.5, 0.2, fmult(liq_imediata, 2))
 
         sec("Capital de Giro & Dados")
-        cg1, cg2, cg3 = st.columns(3)
+        cg1, cg2, cg3 = st.columns(3, gap="medium")
         ncg = (ac - pc) if ac and pc else None
         cg1.markdown(mc("Ativo Circulante",  fbrl(ac), "blu"), unsafe_allow_html=True)
         cg2.markdown(mc("Passivo Circulante",fbrl(pc), _cls(pc, False) if pc else "nd"), unsafe_allow_html=True)
@@ -1783,7 +1826,7 @@ def _tab_health(snap_ext, m, hist):
 
     # ── Estrutura da dívida ─────────────────────────────────────────────────
     sec("Estrutura da Dívida")
-    col_struct, col_idx = st.columns(2)
+    col_struct, col_idx = st.columns(2, gap="medium")
 
     with col_struct:
         if divcp is not None or divlp is not None:
@@ -1961,8 +2004,8 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
     _beta_raw = _brapi_beta(_fund)
     beta_def  = float(np.clip(round((_beta_raw if _beta_raw else 1.0) / 0.05) * 0.05, 0.3, 2.5))
 
-    # Placeholder para o painel de resumo no topo (preenchido após cálculos)
-    _top_summary = st.empty()
+    # Placeholder para a faixa de veredito no topo (preenchida após os cálculos)
+    _verdict = st.empty()
 
     if is_fin:
         box("🏦 <b>Empresa do setor financeiro (banco/seguradora).</b> "
@@ -1972,262 +2015,274 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
             "<b>P/VP (Preço/Valor Patrimonial)</b>, complementado por P/L, ROE e "
             "Dividend Yield.", "warn")
 
-    st.markdown("---")
+    sub_tabs = st.tabs(["💰 DCF", "⚖️ EPV", "🧮 WACC & Premissas", "📋 Múltiplos completos"])
 
-    # ── SEÇÃO 1: WACC Calculator ────────────────────────────────────────────
-    with st.expander("🧮  WACC — Custo Médio Ponderado de Capital (CAPM)", expanded=True):
-        box("O WACC é a taxa de desconto usada no DCF. Ajuste os parâmetros abaixo para o contexto brasileiro.", "info")
-        w1, w2 = st.columns(2)
+    # ── SUB-ABA: WACC & Premissas ────────────────────────────────────────────
+    # Calculado primeiro pois EPV e DCF usam wacc_final como premissa.
+    with sub_tabs[2]:
+        box("O WACC é a taxa de desconto usada no DCF e no EPV. Os valores abaixo já "
+            "vêm pré-preenchidos com dados de mercado (SELIC, CDI, EMBI+, beta) — "
+            "abra o detalhamento para ajustar.", "info")
 
-        with w1:
-            st.markdown("**Custo do Capital Próprio (Ke) — CAPM**")
-            rf     = st.slider("Rf — Risk-free (SELIC/CDI) %", 5.0, 18.0, rf_def, 0.25,
-                               key="w_rf", help="Pré-preenchido com a SELIC Meta atual (BCB SGS 432)")
-            if not _selic_df.empty:
-                st.caption(f"⚡ Rf pré-preenchido com SELIC Meta vigente: **{_selic_df['valor'].iloc[-1]:.2f}% a.a.** (BCB)")
-            beta   = st.slider("Beta (β)",  0.3, 2.5, beta_def, 0.05, key="w_beta",
-                               help="Pré-preenchido com o beta da BRAPI (defaultKeyStatistics)")
-            if _beta_raw is not None:
-                st.caption(f"⚡ Beta pré-preenchido com BRAPI: **{_beta_raw:.2f}** (vs. Ibovespa)")
-            erp    = st.slider("ERP — Prêmio de Risco de Mercado %", 3.0, 9.0, 5.5, 0.25,
-                               key="w_erp", help="Damodaran: ~5.5% para Brasil")
-            crp    = st.slider("CRP — Risco País %", 0.0, 6.0, crp_def, 0.25,
-                               key="w_crp", help="Pré-preenchido com EMBI+ Brasil (IPEA, em pb / 100)")
-            if _embi_pct is not None:
-                st.caption(f"⚡ CRP pré-preenchido com EMBI+ Brasil vigente: **{_embi_pct*100:,.0f} pb** ≈ **{_embi_pct:.2f}%** (IPEA)")
-            else:
-                st.caption("ℹ️ EMBI+ Brasil indisponível — CRP usando padrão de **2,5%**.")
-            ke_pct = rf + beta * (erp + crp)
-            st.markdown(f"**Ke = {rf:.2f}% + {beta:.2f}×({erp:.2f}%+{crp:.2f}%) = `{ke_pct:.2f}%`**")
+        with st.expander("🧮  Detalhamento do cálculo — CAPM, custo da dívida e estrutura de capital", expanded=False):
+            w1, w2 = st.columns(2, gap="medium")
 
-        with w2:
-            st.markdown("**Custo da Dívida (Kd) e Estrutura de Capital**")
-            kd_pct = st.slider("Kd — Custo da dívida bruta %", 5.0, 22.0, kd_def, 0.25, key="w_kd",
-                               help="Pré-preenchido com CDI atual + spread de crédito (BCB SGS 4392)")
-            if not _cdi_df.empty:
-                st.caption(f"⚡ Kd pré-preenchido com CDI vigente (**{_cdi_df['valor'].iloc[-1]:.2f}% a.a.**) "
-                           f"+ spread de crédito de **{_kd_spread:.1f}pp** (BCB)")
-            t_rate = st.slider("Alíquota efetiva (IR + CSLL) %", 15.0, 40.0, 34.0, 1.0, key="w_t")
-            e_pct  = st.slider("% Equity (E/(E+D))", 10.0, 95.0, 60.0, 5.0, key="w_e",
-                               help="Participação do capital próprio no capital total")
-            d_pct  = 100.0 - e_pct
-            kd_at  = kd_pct * (1 - t_rate / 100)
-            wacc_pct = ke_pct * (e_pct / 100) + kd_at * (d_pct / 100)
+            with w1:
+                st.markdown("**Custo do Capital Próprio (Ke) — CAPM**")
+                rf     = st.slider("Rf — Risk-free (SELIC/CDI) %", 5.0, 18.0, rf_def, 0.25,
+                                   key="w_rf", help="Pré-preenchido com a SELIC Meta atual (BCB SGS 432)")
+                if not _selic_df.empty:
+                    st.caption(f"⚡ Rf pré-preenchido com SELIC Meta vigente: **{_selic_df['valor'].iloc[-1]:.2f}% a.a.** (BCB)")
+                beta   = st.slider("Beta (β)",  0.3, 2.5, beta_def, 0.05, key="w_beta",
+                                   help="Pré-preenchido com o beta da BRAPI (defaultKeyStatistics)")
+                if _beta_raw is not None:
+                    st.caption(f"⚡ Beta pré-preenchido com BRAPI: **{_beta_raw:.2f}** (vs. Ibovespa)")
+                erp    = st.slider("ERP — Prêmio de Risco de Mercado %", 3.0, 9.0, 5.5, 0.25,
+                                   key="w_erp", help="Damodaran: ~5.5% para Brasil")
+                crp    = st.slider("CRP — Risco País %", 0.0, 6.0, crp_def, 0.25,
+                                   key="w_crp", help="Pré-preenchido com EMBI+ Brasil (IPEA, em pb / 100)")
+                if _embi_pct is not None:
+                    st.caption(f"⚡ CRP pré-preenchido com EMBI+ Brasil vigente: **{_embi_pct*100:,.0f} pb** ≈ **{_embi_pct:.2f}%** (IPEA)")
+                else:
+                    st.caption("ℹ️ EMBI+ Brasil indisponível — CRP usando padrão de **2,5%**.")
+                ke_pct = rf + beta * (erp + crp)
+                st.markdown(f"**Ke = {rf:.2f}% + {beta:.2f}×({erp:.2f}%+{crp:.2f}%) = `{ke_pct:.2f}%`**")
 
-            st.markdown(f"**Kd após IR = {kd_pct:.2f}%×(1−{t_rate:.0f}%) = `{kd_at:.2f}%`**")
-            st.markdown(f"**WACC = {ke_pct:.2f}%×{e_pct:.0f}% + {kd_at:.2f}%×{d_pct:.0f}% = `{wacc_pct:.2f}%`**")
+            with w2:
+                st.markdown("**Custo da Dívida (Kd) e Estrutura de Capital**")
+                kd_pct = st.slider("Kd — Custo da dívida bruta %", 5.0, 22.0, kd_def, 0.25, key="w_kd",
+                                   help="Pré-preenchido com CDI atual + spread de crédito (BCB SGS 4392)")
+                if not _cdi_df.empty:
+                    st.caption(f"⚡ Kd pré-preenchido com CDI vigente (**{_cdi_df['valor'].iloc[-1]:.2f}% a.a.**) "
+                               f"+ spread de crédito de **{_kd_spread:.1f}pp** (BCB)")
+                t_rate = st.slider("Alíquota efetiva (IR + CSLL) %", 15.0, 40.0, 34.0, 1.0, key="w_t")
+                e_pct  = st.slider("% Equity (E/(E+D))", 10.0, 95.0, 60.0, 5.0, key="w_e",
+                                   help="Participação do capital próprio no capital total")
+                d_pct  = 100.0 - e_pct
+                kd_at  = kd_pct * (1 - t_rate / 100)
+                wacc_pct = ke_pct * (e_pct / 100) + kd_at * (d_pct / 100)
+
+                st.markdown(f"**Kd após IR = {kd_pct:.2f}%×(1−{t_rate:.0f}%) = `{kd_at:.2f}%`**")
+                st.markdown(f"**WACC = {ke_pct:.2f}%×{e_pct:.0f}% + {kd_at:.2f}%×{d_pct:.0f}% = `{wacc_pct:.2f}%`**")
 
         wacc = wacc_pct / 100.0
 
-        w_cols = st.columns(4)
+        sec("WACC Resultante")
+        w_cols = st.columns(4, gap="medium")
         w_cols[0].markdown(mc("Ke (Custo Equity)",   f"{ke_pct:.2f}%",   "blu"), unsafe_allow_html=True)
         w_cols[1].markdown(mc("Kd (após IR)",         f"{kd_at:.2f}%",   "yel"), unsafe_allow_html=True)
         w_cols[2].markdown(mc("WACC Calculado",       f"{wacc_pct:.2f}%","pos"), unsafe_allow_html=True)
-        w_cols[3].markdown(mc("WACC Manual (override)", "ver abaixo",    "nd"),  unsafe_allow_html=True)
 
-        wacc_manual = st.number_input("Ou informe WACC diretamente (%)  — sobrescreve o calculado",
+        wacc_manual = st.number_input("Ou informe o WACC diretamente (%) — sobrescreve o calculado acima",
                                       0.0, 30.0, round(wacc_pct, 2), 0.25, key="w_manual") / 100.0
         wacc_final = wacc_manual if wacc_manual > 0 else wacc
+        w_cols[3].markdown(mc("WACC Final (usado no DCF/EPV)", f"{wacc_final*100:.2f}%", "pos"), unsafe_allow_html=True)
 
-    st.markdown("---")
+    # ── SUB-ABA: Múltiplos completos (parte 1 — entrada de preço e tabela) ──
+    with sub_tabs[3]:
+        # Ações: prioridade CSV capital_social > BRAPI > 0
+        cvm_shares  = _shares_for_cvm(cd)
+        brapi_preco = _f(brapi_data.get("regularMarketPrice")) if brapi_data else 0.0
+        brapi_acoes = (_f(brapi_data.get("sharesOutstanding")) or 0) / 1e6 if brapi_data else 0.0
+        acoes_default = cvm_shares or brapi_acoes or 0.0
 
-    # ── SEÇÃO 2: Múltiplos de Mercado ───────────────────────────────────────
-    sec("Múltiplos de Mercado — Entrada de Preço e Ações")
-    box("Informe o preço atual da ação e o total de ações para calcular os múltiplos. "
-        "Fonte: B3, brapi.dev ou Yahoo Finance.", "info")
+        fonte_acoes = ""
+        if cvm_shares:
+            fonte_acoes = f"FRE CVM 2026: {cvm_shares:,.0f}M ações"
+        elif brapi_acoes:
+            fonte_acoes = f"BRAPI: {brapi_acoes:,.0f}M ações"
 
-    # Ações: prioridade CSV capital_social > BRAPI > 0
-    cvm_shares  = _shares_for_cvm(cd)
-    brapi_preco = _f(brapi_data.get("regularMarketPrice")) if brapi_data else 0.0
-    brapi_acoes = (_f(brapi_data.get("sharesOutstanding")) or 0) / 1e6 if brapi_data else 0.0
-    acoes_default = cvm_shares or brapi_acoes or 0.0
+        if brapi_preco or cvm_shares:
+            msg = "✅ Preço e ações preenchidos automaticamente —"
+            if brapi_preco:
+                msg += f" Preço R$ {brapi_preco:.2f} (BRAPI)"
+            if fonte_acoes:
+                msg += f"  |  {fonte_acoes}"
+            box(msg, "ok")
+        else:
+            box("Informe o preço atual da ação e o total de ações para calcular os múltiplos "
+                "no expansor abaixo. Fonte: B3, brapi.dev ou Yahoo Finance.", "info")
 
-    fonte_acoes = ""
-    if cvm_shares:
-        fonte_acoes = f"FRE CVM 2026: {cvm_shares:,.0f}M ações"
-    elif brapi_acoes:
-        fonte_acoes = f"BRAPI: {brapi_acoes:,.0f}M ações"
+        with st.expander("✏️  Ajustar preço da ação e ações em circulação", expanded=False):
+            mv1, mv2 = st.columns(2, gap="medium")
+            with mv1:
+                preco  = st.number_input("Preço da ação (R$)", 0.0, 99999.0, brapi_preco, 0.01,
+                                          key="mult_preco", format="%.2f")
+                acoes  = st.number_input("Total de ações (milhões)", 0.0, 9999999.0, acoes_default, 10.0,
+                                          key="mult_acoes")
 
-    if brapi_preco or cvm_shares:
-        msg = "✅ Dados preenchidos automaticamente —"
-        if brapi_preco:
-            msg += f" Preço R$ {brapi_preco:.2f} (BRAPI)"
-        if fonte_acoes:
-            msg += f"  |  {fonte_acoes}"
-        box(msg, "ok")
+            mktcap = preco * acoes * 1e6 if preco > 0 and acoes > 0 else None
+            ev_mkt = (mktcap + (nd or 0)) if mktcap is not None else None
 
-    mv1, mv2 = st.columns(2)
-    with mv1:
-        preco  = st.number_input("Preço da ação (R$)", 0.0, 99999.0, brapi_preco, 0.01,
-                                  key="mult_preco", format="%.2f")
-        acoes  = st.number_input("Total de ações (milhões)", 0.0, 9999999.0, acoes_default, 10.0,
-                                  key="mult_acoes")
+            with mv2:
+                if mktcap:
+                    st.markdown(mc("Market Cap", fbrl(mktcap), "blu"), unsafe_allow_html=True)
+                    if is_fin:
+                        st.markdown(mc("P/VP", fmult(_f(mktcap)/_f(pl) if pl and pl > 0 else None),
+                                       "pos" if (pl and pl > 0 and mktcap/pl < 1.5) else "neu"), unsafe_allow_html=True)
+                    else:
+                        st.markdown(mc("EV", fbrl(ev_mkt), "cyan"), unsafe_allow_html=True)
 
-    mktcap = preco * acoes * 1e6 if preco > 0 and acoes > 0 else None
-    ev_mkt = (mktcap + (nd or 0)) if mktcap is not None else None
+        pvp = _f(mktcap)/_f(pl)     if mktcap and pl and pl > 0 else None
+        ple = _f(mktcap)/_f(lucro)  if mktcap and lucro and lucro > 0 else None
+        roe = _f(m.get("roe"))
+        dy  = _f(brapi_data.get("dividendYield")) if brapi_data else None
 
-    pvp = _f(mktcap)/_f(pl)     if mktcap and pl and pl > 0 else None
-    ple = _f(mktcap)/_f(lucro)  if mktcap and lucro and lucro > 0 else None
-    roe = _f(m.get("roe"))
-    dy  = _f(brapi_data.get("dividendYield")) if brapi_data else None
+        # ── Múltiplos de EV e forward (projeção cenário-base) ───────────────
+        # Forward usa o g de anos 1–2 já pré-calculado (mesma premissa do DCF),
+        # mantendo o múltiplo auditável. EBITDA/Lucro projetados 1 ano à frente.
+        g_fwd      = (g12_def or 0) / 100.0
+        ebitda_fwd = _f(ebitda) * (1 + g_fwd) if ebitda else None
+        lucro_fwd  = _f(lucro)  * (1 + g_fwd) if lucro else None
+        ev_ebitda_mult     = _f(ev_mkt)/_f(ebitda) if ev_mkt and ebitda and ebitda > 0 else None
+        ev_ebitda_fwd_mult = _f(ev_mkt)/ebitda_fwd if ev_mkt and ebitda_fwd and ebitda_fwd > 0 else None
+        ev_ebit_mult       = _f(ev_mkt)/_f(ebit)   if ev_mkt and ebit and ebit > 0 else None
+        ev_fcl_mult        = _f(ev_mkt)/_f(fcl)    if ev_mkt and fcl and fcl > 0 else None
+        ev_sales_mult      = _f(ev_mkt)/_f(receita) if ev_mkt and receita and receita > 0 else None
+        ps_mult            = _f(mktcap)/_f(receita) if mktcap and receita and receita > 0 else None
+        pfcl_mult          = _f(mktcap)/_f(fcl)    if mktcap and fcl and fcl > 0 else None
+        ple_fwd_mult       = _f(mktcap)/lucro_fwd  if mktcap and lucro_fwd and lucro_fwd > 0 else None
+        peg_mult           = (ple / g12_def) if ple and g12_def and g12_def > 0 else None
+        nd_eb_mult         = _f(nd)/_f(ebitda) if nd is not None and ebitda and ebitda > 0 else None
 
-    # ── Múltiplos de EV e forward (projeção cenário-base) ───────────────────
-    # Forward usa o g de anos 1–2 já pré-calculado (mesma premissa do DCF),
-    # mantendo o múltiplo auditável. EBITDA/Lucro projetados 1 ano à frente.
-    g_fwd      = (g12_def or 0) / 100.0
-    ebitda_fwd = _f(ebitda) * (1 + g_fwd) if ebitda else None
-    lucro_fwd  = _f(lucro)  * (1 + g_fwd) if lucro else None
-    ev_ebitda_mult     = _f(ev_mkt)/_f(ebitda) if ev_mkt and ebitda and ebitda > 0 else None
-    ev_ebitda_fwd_mult = _f(ev_mkt)/ebitda_fwd if ev_mkt and ebitda_fwd and ebitda_fwd > 0 else None
-    ev_ebit_mult       = _f(ev_mkt)/_f(ebit)   if ev_mkt and ebit and ebit > 0 else None
-    ev_fcl_mult        = _f(ev_mkt)/_f(fcl)    if ev_mkt and fcl and fcl > 0 else None
-    ev_sales_mult      = _f(ev_mkt)/_f(receita) if ev_mkt and receita and receita > 0 else None
-    ps_mult            = _f(mktcap)/_f(receita) if mktcap and receita and receita > 0 else None
-    pfcl_mult          = _f(mktcap)/_f(fcl)    if mktcap and fcl and fcl > 0 else None
-    ple_fwd_mult       = _f(mktcap)/lucro_fwd  if mktcap and lucro_fwd and lucro_fwd > 0 else None
-    peg_mult           = (ple / g12_def) if ple and g12_def and g12_def > 0 else None
-    nd_eb_mult         = _f(nd)/_f(ebitda) if nd is not None and ebitda and ebitda > 0 else None
+        if is_fin:
+            # Bancos/seguradoras: P/VP é o múltiplo central; sem EV/EBITDA
+            mult_rows = [
+                ("P / Valor Patrimonial (P/VP) ⭐", fmult(pvp),
+                 "PRINCIPAL p/ bancos: < 1× desconto | 1,5–2,5× típico bancões"),
+                ("P / Lucro (P/L)", fmult(ple),
+                 "Bancos BR: ~5–10× histórico"),
+                ("ROE", fpct(roe),
+                 "Driver do P/VP justo: P/VP ≈ ROE / Custo de Capital"),
+                ("Dividend Yield", f"{dy:.2f}%" if dy else "–",
+                 "Bancos pagam JCP + dividendos"),
+                ("P / Receita Interm. Financeira", fmult(_f(mktcap)/_f(receita) if mktcap and receita and receita>0 else None),
+                 "Receita = intermediação financeira"),
+                ("Market Cap", fbrl(mktcap), "Preço × ações"),
+                ("Patrimônio Líquido (book)", fbrl(pl), "Valor patrimonial contábil"),
+            ]
+        else:
+            mult_rows = [
+                ("Market Cap",   fbrl(mktcap), "–"),
+                ("Enterprise Value (EV)", fbrl(ev_mkt), "EV = Mkt Cap + Dívida Líquida"),
+                ("EV / EBITDA",          fmult(ev_ebitda_mult),
+                                         "< 8× value | 8-15× neutro | > 15× caro"),
+                ("EV / EBITDA Forward",  fmult(ev_ebitda_fwd_mult),
+                                         f"EV ÷ EBITDA projetado +{g12_def:.1f}% (cenário-base)"),
+                ("P / Lucro (P/L)",      fmult(ple),
+                                         "< 15× barato | 15-25× justo | > 25× caro"),
+                ("P / Lucro Forward (P/L fwd)", fmult(ple_fwd_mult),
+                                         f"P ÷ lucro projetado +{g12_def:.1f}% (cenário-base)"),
+                ("PEG (P/L ÷ crescimento)", fmult(peg_mult, 2),
+                                         "< 1 atrativo p/ o crescimento | > 2 caro"),
+                ("Dívida Líquida / EBITDA", fmult(nd_eb_mult),
+                                         "< 2× confortável | 2-3,5× atenção | > 3,5× alto"),
+                ("EV / EBIT",            fmult(ev_ebit_mult), "EV ÷ EBIT (3.05 CVM)"),
+                ("EV / FCL",             fmult(ev_fcl_mult), "EV ÷ (FCOP − Capex)"),
+                ("EV / Receita (EV/Sales)", fmult(ev_sales_mult),
+                                         "Útil p/ empresas sem lucro / margem baixa"),
+                ("P / Valor Patrimonial (P/VP)", fmult(pvp),
+                                                 "< 1× abaixo do book"),
+                ("P / Receita (P/S)",    fmult(ps_mult), "Benchmarks por setor"),
+                ("P / FCL",              fmult(pfcl_mult), "< 15× interessante"),
+            ]
+
+        # Cards de destaque: os múltiplos mais acompanhados (não-financeiras)
+        if not is_fin and mktcap:
+            sec("Leitura Rápida")
+            hc = st.columns(4, gap="medium")
+            hc[0].markdown(mc("EV / EBITDA", fmult(ev_ebitda_mult),
+                              _mult_cls(ev_ebitda_mult, 8, 15),
+                              f"fwd: {fmult(ev_ebitda_fwd_mult)}"), unsafe_allow_html=True)
+            hc[1].markdown(mc("P / L", fmult(ple),
+                              _mult_cls(ple, 15, 25),
+                              f"fwd: {fmult(ple_fwd_mult)}"), unsafe_allow_html=True)
+            hc[2].markdown(mc("Dív.Líq / EBITDA", fmult(nd_eb_mult),
+                              _mult_cls(nd_eb_mult, 2, 3.5) if (nd_eb_mult and nd_eb_mult > 0) else "pos",
+                              "alavancagem"), unsafe_allow_html=True)
+            hc[3].markdown(mc("PEG", fmult(peg_mult, 2),
+                              _mult_cls(peg_mult, 1, 2), "P/L ÷ crescimento"),
+                           unsafe_allow_html=True)
+
+        sec("Tabela Completa de Múltiplos")
+        df_mult = pd.DataFrame(mult_rows, columns=["Múltiplo", "Valor", "Referência"])
+        st.dataframe(df_mult, use_container_width=True, hide_index=True)
+
+        # Histórico: P/VP para financeiras, EV/EBITDA para demais
+        if mktcap and not hist.empty:
+            if is_fin and "pl" in hist.columns:
+                with st.expander("📈  Histórico P/VP Implícito (PL histórico × Market Cap atual)", expanded=False):
+                    anos_h = hist["ano"].tolist()
+                    pvp_hist = [
+                        _f(mktcap) / _f(r.get("pl")) if _f(r.get("pl")) and _f(r.get("pl")) > 0 else None
+                        for _, r in hist.iterrows()
+                    ]
+                    fig_mult = _lines(anos_h, [("P/VP implícito", pvp_hist, C["blue"])],
+                                      title="P/VP usando PL histórico e Market Cap atual")
+                    st.plotly_chart(fig_mult, use_container_width=True)
+            elif not is_fin and "ebitda" in hist.columns:
+                with st.expander("📈  Histórico EV/EBITDA Implícito (EBITDA real × EV atual)", expanded=False):
+                    anos_h = hist["ano"].tolist()
+                    ev_eb_hist = [
+                        _f(ev_mkt) / _f(r.get("ebitda")) if _f(r.get("ebitda")) and _f(r.get("ebitda")) > 0 else None
+                        for _, r in hist.iterrows()
+                    ]
+                    fig_mult = _lines(anos_h, [("EV/EBITDA implícito", ev_eb_hist, C["cyan"])],
+                                      title="EV/EBITDA usando EBITDA histórico e EV atual")
+                    st.plotly_chart(fig_mult, use_container_width=True)
 
     if is_fin:
-        # Bancos/seguradoras: P/VP é o múltiplo central; sem EV/EBITDA
-        mult_rows = [
-            ("P / Valor Patrimonial (P/VP) ⭐", fmult(pvp),
-             "PRINCIPAL p/ bancos: < 1× desconto | 1,5–2,5× típico bancões"),
-            ("P / Lucro (P/L)", fmult(ple),
-             "Bancos BR: ~5–10× histórico"),
-            ("ROE", fpct(roe),
-             "Driver do P/VP justo: P/VP ≈ ROE / Custo de Capital"),
-            ("Dividend Yield", f"{dy:.2f}%" if dy else "–",
-             "Bancos pagam JCP + dividendos"),
-            ("P / Receita Interm. Financeira", fmult(_f(mktcap)/_f(receita) if mktcap and receita and receita>0 else None),
-             "Receita = intermediação financeira"),
-            ("Market Cap", fbrl(mktcap), "Preço × ações"),
-            ("Patrimônio Líquido (book)", fbrl(pl), "Valor patrimonial contábil"),
-        ]
-    else:
-        mult_rows = [
-            ("Market Cap",   fbrl(mktcap), "–"),
-            ("Enterprise Value (EV)", fbrl(ev_mkt), "EV = Mkt Cap + Dívida Líquida"),
-            ("EV / EBITDA",          fmult(ev_ebitda_mult),
-                                     "< 8× value | 8-15× neutro | > 15× caro"),
-            ("EV / EBITDA Forward",  fmult(ev_ebitda_fwd_mult),
-                                     f"EV ÷ EBITDA projetado +{g12_def:.1f}% (cenário-base)"),
-            ("P / Lucro (P/L)",      fmult(ple),
-                                     "< 15× barato | 15-25× justo | > 25× caro"),
-            ("P / Lucro Forward (P/L fwd)", fmult(ple_fwd_mult),
-                                     f"P ÷ lucro projetado +{g12_def:.1f}% (cenário-base)"),
-            ("PEG (P/L ÷ crescimento)", fmult(peg_mult, 2),
-                                     "< 1 atrativo p/ o crescimento | > 2 caro"),
-            ("Dívida Líquida / EBITDA", fmult(nd_eb_mult),
-                                     "< 2× confortável | 2-3,5× atenção | > 3,5× alto"),
-            ("EV / EBIT",            fmult(ev_ebit_mult), "EV ÷ EBIT (3.05 CVM)"),
-            ("EV / FCL",             fmult(ev_fcl_mult), "EV ÷ (FCOP − Capex)"),
-            ("EV / Receita (EV/Sales)", fmult(ev_sales_mult),
-                                     "Útil p/ empresas sem lucro / margem baixa"),
-            ("P / Valor Patrimonial (P/VP)", fmult(pvp),
-                                             "< 1× abaixo do book"),
-            ("P / Receita (P/S)",    fmult(ps_mult), "Benchmarks por setor"),
-            ("P / FCL",              fmult(pfcl_mult), "< 15× interessante"),
-        ]
+        with sub_tabs[1]:
+            box("⚠️ <b>EPV não se aplica a bancos/seguradoras.</b> O EPV usa EBIT, que não "
+                "existe para bancos (a dívida é insumo operacional, não estrutura de capital). "
+                "Para financeiras, use o <b>P/VP</b> e o <b>P/L</b> na aba Múltiplos, e avalie a "
+                "sustentabilidade do <b>ROE</b>. A seção abaixo fica disponível apenas para "
+                "entrada manual.", "warn")
+        with sub_tabs[0]:
+            box("⚠️ <b>DCF não se aplica a bancos/seguradoras.</b> O DCF usa FCOP−Capex, e o "
+                "fluxo de caixa de bancos segue outra lógica. Para financeiras, use o "
+                "<b>P/VP</b> e o <b>P/L</b> na aba Múltiplos. A seção abaixo fica disponível "
+                "apenas para entrada manual.", "warn")
 
-    with mv2:
-        if mktcap:
-            if is_fin:
-                st.markdown(mc("Market Cap", fbrl(mktcap), "blu"), unsafe_allow_html=True)
-                st.markdown(mc("P/VP", fmult(pvp), "pos" if (pvp and pvp < 1.5) else "neu"), unsafe_allow_html=True)
-            else:
-                st.markdown(mc("Market Cap", fbrl(mktcap), "blu"), unsafe_allow_html=True)
-                st.markdown(mc("EV",         fbrl(ev_mkt), "cyan"), unsafe_allow_html=True)
+    # ── SUB-ABA: EPV ──────────────────────────────────────────────────────────
+    with sub_tabs[1]:
+        box("EPV = NOPAT / WACC  |  NOPAT = EBIT normalizado × (1 − alíquota)  |  "
+            "EPV Equity = EPV − Dívida Líquida", "info")
 
-    # Cards de destaque: os múltiplos mais acompanhados (não-financeiras)
-    if not is_fin and mktcap:
-        hc = st.columns(4)
-        hc[0].markdown(mc("EV / EBITDA", fmult(ev_ebitda_mult),
-                          _mult_cls(ev_ebitda_mult, 8, 15),
-                          f"fwd: {fmult(ev_ebitda_fwd_mult)}"), unsafe_allow_html=True)
-        hc[1].markdown(mc("P / L", fmult(ple),
-                          _mult_cls(ple, 15, 25),
-                          f"fwd: {fmult(ple_fwd_mult)}"), unsafe_allow_html=True)
-        hc[2].markdown(mc("Dív.Líq / EBITDA", fmult(nd_eb_mult),
-                          _mult_cls(nd_eb_mult, 2, 3.5) if (nd_eb_mult and nd_eb_mult > 0) else "pos",
-                          "alavancagem"), unsafe_allow_html=True)
-        hc[3].markdown(mc("PEG", fmult(peg_mult, 2),
-                          _mult_cls(peg_mult, 1, 2), "P/L ÷ crescimento"),
-                       unsafe_allow_html=True)
+        with st.expander("⚙️  Premissas — EBIT normalizado, alíquota, WACC e dívida", expanded=False):
+            if ebit_norm_detail:
+                box(f"⚡ <b>EBIT normalizado (média 3 anos):</b> {ebit_norm_detail}  "
+                    f"→  <b>média = R$ {ebit_norm/1e6:,.0f}M</b>", "ok")
 
-    sec("Tabela de Múltiplos")
-    df_mult = pd.DataFrame(mult_rows, columns=["Múltiplo", "Valor", "Referência"])
-    st.dataframe(df_mult, use_container_width=True, hide_index=True)
+            epv_ebit  = st.number_input("EBIT normalizado (R$ M) — média 3 anos, auditável",
+                                        value=round(_f(ebit_norm)/1e6, 1) if ebit_norm else 0.0,
+                                        step=100.0, key="epv_ebit",
+                                        help="Média dos últimos 3 EBITs anuais (CVM). Edite se quiser outra normalização.")
+            epv_tax   = st.slider("Alíquota efetiva", 0.15, 0.45, t_rate/100, 0.01, key="epv_tax")
+            epv_wacc  = st.number_input("WACC (%)", 0.0, 30.0, round(wacc_final*100, 2), 0.25, key="epv_wacc2") / 100
+            epv_nd    = st.number_input("Dívida Líquida (R$ M)",
+                                        value=round(_f(nd)/1e6, 1) if nd else 0.0,
+                                        step=100.0, key="epv_nd")
+            epv_shr   = st.number_input("Ações em circulação (M) — para EPV/ação",
+                                        value=acoes, step=10.0, key="epv_shr",
+                                        help="Deixe 0 para não calcular por ação")
 
-    # Histórico: P/VP para financeiras, EV/EBITDA para demais
-    if mktcap and not hist.empty:
-        if is_fin and "pl" in hist.columns:
-            sec("Histórico P/VP Implícito (PL histórico × Market Cap atual)")
-            anos_h = hist["ano"].tolist()
-            pvp_hist = [
-                _f(mktcap) / _f(r.get("pl")) if _f(r.get("pl")) and _f(r.get("pl")) > 0 else None
-                for _, r in hist.iterrows()
-            ]
-            fig_mult = _lines(anos_h, [("P/VP implícito", pvp_hist, C["blue"])],
-                              title="P/VP usando PL histórico e Market Cap atual")
-            st.plotly_chart(fig_mult, use_container_width=True)
-        elif not is_fin and "ebitda" in hist.columns:
-            sec("Histórico EV/EBITDA Implícito (EBITDA real × EV atual)")
-            anos_h = hist["ano"].tolist()
-            ev_eb_hist = [
-                _f(ev_mkt) / _f(r.get("ebitda")) if _f(r.get("ebitda")) and _f(r.get("ebitda")) > 0 else None
-                for _, r in hist.iterrows()
-            ]
-            fig_mult = _lines(anos_h, [("EV/EBITDA implícito", ev_eb_hist, C["cyan"])],
-                              title="EV/EBITDA usando EBITDA histórico e EV atual")
-            st.plotly_chart(fig_mult, use_container_width=True)
-
-    st.markdown("---")
-
-    if is_fin:
-        box("⚠️ <b>EPV e DCF abaixo não se aplicam a bancos/seguradoras.</b> "
-            "O EPV usa EBIT (que não existe para bancos) e o DCF usa FCOP−Capex "
-            "(fluxo de caixa de bancos tem outra lógica). Para financeiras, use o "
-            "<b>P/VP</b> e o <b>P/L</b> acima, e avalie a sustentabilidade do <b>ROE</b>. "
-            "As seções abaixo ficam disponíveis apenas para entrada manual.", "warn")
-
-    # ── SEÇÃO 3: EPV ─────────────────────────────────────────────────────────
-    sec("EPV — Earnings Power Value  (Greenwald)")
-    box("EPV = NOPAT / WACC  |  NOPAT = EBIT normalizado × (1 − alíquota)  |  "
-        "EPV Equity = EPV − Dívida Líquida  |  "
-        "<b>EBIT normalizado = média dos últimos 3 EBITs anuais</b> (suaviza ciclo)", "info")
-
-    if ebit_norm_detail:
-        box(f"⚡ <b>EBIT normalizado (média 3 anos):</b> {ebit_norm_detail}  "
-            f"→  <b>média = R$ {ebit_norm/1e6:,.0f}M</b>", "ok")
-
-    e1, e2 = st.columns(2)
-    with e1:
-        epv_ebit  = st.number_input("EBIT normalizado (R$ M) — média 3 anos, auditável",
-                                    value=round(_f(ebit_norm)/1e6, 1) if ebit_norm else 0.0,
-                                    step=100.0, key="epv_ebit",
-                                    help="Média dos últimos 3 EBITs anuais (CVM). Edite se quiser outra normalização.")
-        epv_tax   = st.slider("Alíquota efetiva", 0.15, 0.45, t_rate/100, 0.01, key="epv_tax")
-        epv_wacc  = st.number_input("WACC (%)", 0.0, 30.0, round(wacc_final*100, 2), 0.25, key="epv_wacc2") / 100
-        epv_nd    = st.number_input("Dívida Líquida (R$ M)",
-                                    value=round(_f(nd)/1e6, 1) if nd else 0.0,
-                                    step=100.0, key="epv_nd")
-        epv_shr   = st.number_input("Ações em circulação (M) — para EPV/ação",
-                                    value=acoes, step=10.0, key="epv_shr",
-                                    help="Deixe 0 para não calcular por ação")
-
-    with e2:
         epv_res = calculate_epv(epv_ebit * 1e6, tax_rate=epv_tax,
                                 wacc=epv_wacc or 0.01, net_debt=epv_nd * 1e6)
         if epv_shr > 0 and epv_res.get("epv_equity"):
             epv_res["epv_per_share"] = epv_res["epv_equity"] / (epv_shr * 1e6)
 
-        st.markdown(mc("NOPAT",          fbrl(epv_res.get("nopat")),          _cls(epv_res.get("nopat"))), unsafe_allow_html=True)
-        st.markdown(mc("EPV Enterprise", fbrl(epv_res.get("epv_enterprise")), _cls(epv_res.get("epv_enterprise"))), unsafe_allow_html=True)
-        st.markdown(mc("EPV Equity",     fbrl(epv_res.get("epv_equity")),     _cls(epv_res.get("epv_equity"))), unsafe_allow_html=True)
+        sec("Resultado EPV")
+        ec = st.columns(4, gap="medium")
+        ec[0].markdown(mc("NOPAT",          fbrl(epv_res.get("nopat")),          _cls(epv_res.get("nopat"))), unsafe_allow_html=True)
+        ec[1].markdown(mc("EPV Enterprise", fbrl(epv_res.get("epv_enterprise")), _cls(epv_res.get("epv_enterprise"))), unsafe_allow_html=True)
+        ec[2].markdown(mc("EPV Equity",     fbrl(epv_res.get("epv_equity")),     _cls(epv_res.get("epv_equity"))), unsafe_allow_html=True)
         if epv_res.get("epv_per_share"):
-            st.markdown(mc("EPV por Ação", f"R$ {epv_res['epv_per_share']:,.2f}",
+            ec[3].markdown(mc("EPV por Ação", f"R$ {epv_res['epv_per_share']:,.2f}",
                            _cls(epv_res.get("epv_per_share"))), unsafe_allow_html=True)
+        else:
+            ec[3].markdown(mc("EPV por Ação", "Informe ações ↑", "nd"), unsafe_allow_html=True)
+
         fl = "  ·  ".join(epv_res.get("flags", []))
         st.caption(f"Status: `{fl}`")
 
@@ -2237,74 +2292,69 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
             box(f"NOPAT = R$ {epv_nopat/1e6:,.0f}M  ÷  WACC {epv_wacc*100:.2f}%  =  "
                 f"EPV Enterprise R$ {epv_ev/1e6:,.0f}M", "ok")
 
-    st.markdown("---")
-
-    # ── SEÇÃO 4: DCF Completo ─────────────────────────────────────────────
-    sec("DCF — Discounted Cash Flow Completo")
-    box("EV = Σ FCL/(1+WACC)ᵗ + TV/(1+WACC)ⁿ  |  TV = FCL_n×(1+g)/(WACC−g)  |  "
-        "Equity = EV − Dívida Líquida  |  "
-        "FCL = Caixa Operacional − CAPEX (dados CVM)", "info")
-
-    eq_shr  = None  # preenchido pelo bloco DCF abaixo
+    # ── SUB-ABA: DCF ──────────────────────────────────────────────────────────
+    eq_shr  = None  # preenchido abaixo
     dcf_res = None  # idem
 
-    # FCL base: média 3 anos de FCOP−|CAPEX| (normalizado) > último ano > snapshot
-    fcop_cvm  = _f(snap_ext.get("fluxo_caixa_operacional"))
-    capex_cvm = _f(snap_ext.get("capex"))
-    fcl_cvm   = None
-    if fcop_cvm is not None:
-        fcl_cvm = fcop_cvm - abs(capex_cvm or 0)
-    fcl_base = fcl_norm if fcl_norm is not None else (fcl_cvm if fcl_cvm is not None else fcl)
-    fcl_default = round(fcl_base / 1e6, 1) if fcl_base else 0.0
+    with sub_tabs[0]:
+        box("EV = Σ FCL/(1+WACC)ᵗ + TV/(1+WACC)ⁿ  |  TV = FCL_n×(1+g)/(WACC−g)  |  "
+            "Equity = EV − Dívida Líquida  |  "
+            "FCL = Caixa Operacional − CAPEX (dados CVM)", "info")
 
-    d1, d2 = st.columns([1, 1])
-    with d1:
-        st.markdown("**Premissas — FCL e Capital (dados CVM como base)**")
-        if fcl_norm_detail:
+        # FCL base: média 3 anos de FCOP−|CAPEX| (normalizado) > último ano > snapshot
+        fcop_cvm  = _f(snap_ext.get("fluxo_caixa_operacional"))
+        capex_cvm = _f(snap_ext.get("capex"))
+        fcl_cvm   = None
+        if fcop_cvm is not None:
+            fcl_cvm = fcop_cvm - abs(capex_cvm or 0)
+        fcl_base = fcl_norm if fcl_norm is not None else (fcl_cvm if fcl_cvm is not None else fcl)
+        fcl_default = round(fcl_base / 1e6, 1) if fcl_base else 0.0
+
+        with st.expander("⚙️  Premissas — FCL, crescimento e WACC", expanded=False):
+            st.markdown("**FCL e Capital (dados CVM como base)**")
+            if fcl_norm_detail:
+                st.caption(
+                    f"⚡ FCL normalizado (média 3 anos, FCOP−CAPEX): {fcl_norm_detail}  "
+                    f"→  **média = {fbrl(fcl_norm)}**"
+                )
+            elif fcl_cvm is not None:
+                st.caption(
+                    f"CVM (último ano): FCOP = {fbrl(fcop_cvm)}  |  CAPEX = {fbrl(capex_cvm)}  "
+                    f"→  **FCL = {fbrl(fcl_cvm)}**"
+                )
+            dcf_fcl = st.number_input("FCL Base (R$ M) — média 3 anos, auditável",
+                                      value=fcl_default, step=100.0, key="dcf_fcl",
+                                      help="Pré-preenchido com a média de 3 anos de FCOP−CAPEX da CVM. Edite se necessário.")
+            dcf_nd  = st.number_input("Dívida Líquida (R$ M) — auditável",
+                                      value=round(_f(nd)/1e6, 1) if nd else 0.0,
+                                      step=100.0, key="dcf_nd2",
+                                      help="Dívida Bruta − Caixa (dados CVM)")
+            dcf_shr = st.number_input("Ações (M) — para Equity/ação",
+                                      value=acoes, step=10.0, key="dcf_shr")
+
+            st.markdown("**Premissas de Crescimento — auditáveis**")
+            st.caption(f"⚡ Pré-preenchido pelo cenário-base: {g_src}. "
+                       f"g terminal 4,5% ≈ inflação meta + crescimento real de longo prazo do PIB.")
+            cg1, cg2 = st.columns(2, gap="medium")
+            with cg1:
+                g12 = st.slider("Anos 1–2 (%)",  0.0, 35.0, g12_def, 0.5, key="dg12") / 100
+                g34 = st.slider("Anos 3–4 (%)",  0.0, 25.0, g34_def, 0.5, key="dg34") / 100
+            with cg2:
+                g5  = st.slider("Ano 5 (%)",      0.0, 20.0, g5_def, 0.5, key="dg5")  / 100
+                g_t = st.slider("g terminal (%)", 0.0,  7.0,  4.5, 0.25, key="dgt") / 100
+
+            dcf_wacc = st.number_input("WACC (%) — preenche com o calculado na aba WACC",
+                                       0.0, 30.0, round(wacc_final*100, 2), 0.25, key="dcf_wacc2") / 100
+
             st.caption(
-                f"⚡ FCL normalizado (média 3 anos, FCOP−CAPEX): {fcl_norm_detail}  "
-                f"→  **média = {fbrl(fcl_norm)}**"
+                f"Premissas: FCL R$ {dcf_fcl:,.0f}M | g12={g12:.1%} | g34={g34:.1%} | "
+                f"g5={g5:.1%} | g_terminal={g_t:.2%} | WACC={dcf_wacc:.2%} | "
+                f"Dívida Líq R$ {dcf_nd:,.0f}M | Ações {dcf_shr:,.0f}M"
             )
-        elif fcl_cvm is not None:
-            st.caption(
-                f"CVM (último ano): FCOP = {fbrl(fcop_cvm)}  |  CAPEX = {fbrl(capex_cvm)}  "
-                f"→  **FCL = {fbrl(fcl_cvm)}**"
-            )
-        dcf_fcl = st.number_input("FCL Base (R$ M) — média 3 anos, auditável",
-                                  value=fcl_default, step=100.0, key="dcf_fcl",
-                                  help="Pré-preenchido com a média de 3 anos de FCOP−CAPEX da CVM. Edite se necessário.")
-        dcf_nd  = st.number_input("Dívida Líquida (R$ M) — auditável",
-                                  value=round(_f(nd)/1e6, 1) if nd else 0.0,
-                                  step=100.0, key="dcf_nd2",
-                                  help="Dívida Bruta − Caixa (dados CVM)")
-        dcf_shr = st.number_input("Ações (M) — para Equity/ação",
-                                  value=acoes, step=10.0, key="dcf_shr")
-
-        st.markdown("**Premissas de Crescimento — auditáveis**")
-        st.caption(f"⚡ Pré-preenchido pelo cenário-base: {g_src}. "
-                   f"g terminal 4,5% ≈ inflação meta + crescimento real de longo prazo do PIB.")
-        cg1, cg2 = st.columns(2)
-        with cg1:
-            g12 = st.slider("Anos 1–2 (%)",  0.0, 35.0, g12_def, 0.5, key="dg12") / 100
-            g34 = st.slider("Anos 3–4 (%)",  0.0, 25.0, g34_def, 0.5, key="dg34") / 100
-        with cg2:
-            g5  = st.slider("Ano 5 (%)",      0.0, 20.0, g5_def, 0.5, key="dg5")  / 100
-            g_t = st.slider("g terminal (%)", 0.0,  7.0,  4.5, 0.25, key="dgt") / 100
-
-        dcf_wacc = st.number_input("WACC (%) — preenche com o calculado acima",
-                                   0.0, 30.0, round(wacc_final*100, 2), 0.25, key="dcf_wacc2") / 100
-
-        st.caption(
-            f"Premissas: FCL R$ {dcf_fcl:,.0f}M | g12={g12:.1%} | g34={g34:.1%} | "
-            f"g5={g5:.1%} | g_terminal={g_t:.2%} | WACC={dcf_wacc:.2%} | "
-            f"Dívida Líq R$ {dcf_nd:,.0f}M | Ações {dcf_shr:,.0f}M"
-        )
 
         growth_rates = [g12, g12, g34, g34, g5]
 
-    with d2:
-        st.markdown("**Resultado DCF**")
-
+        sec("Resultado DCF")
         if dcf_wacc <= g_t:
             box(f"WACC ({dcf_wacc:.3f}) deve ser maior que g terminal ({g_t:.3f})!", "err")
         elif dcf_fcl == 0:
@@ -2325,79 +2375,82 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
 
             eq_shr = eq_dcf / (dcf_shr * 1e6) if dcf_shr > 0 and eq_dcf else None
 
-            st.markdown(mc("Enterprise Value (EV)",  fbrl(ev_dcf),  _cls(ev_dcf)),  unsafe_allow_html=True)
-            st.markdown(mc("Equity Value",           fbrl(eq_dcf),  _cls(eq_dcf)),  unsafe_allow_html=True)
-            st.markdown(mc("VP do Valor Terminal",   fbrl(vp_tv),   "blu"),          unsafe_allow_html=True)
+            dc = st.columns(5, gap="medium")
+            dc[0].markdown(mc("Enterprise Value (EV)",  fbrl(ev_dcf),  _cls(ev_dcf)),  unsafe_allow_html=True)
+            dc[1].markdown(mc("Equity Value",           fbrl(eq_dcf),  _cls(eq_dcf)),  unsafe_allow_html=True)
+            dc[2].markdown(mc("VP do Valor Terminal",   fbrl(vp_tv),   "blu"),          unsafe_allow_html=True)
             if pct_tv:
                 cls_tv = "pos" if pct_tv < 75 else "neg"
-                st.markdown(mc("% EV do Valor Terminal", f"{pct_tv:.1f}%", cls_tv), unsafe_allow_html=True)
+                dc[3].markdown(mc("% EV do Valor Terminal", f"{pct_tv:.1f}%", cls_tv), unsafe_allow_html=True)
             if eq_shr:
-                st.markdown(mc("Equity por Ação", f"R$ {eq_shr:,.2f}", _cls(eq_shr)), unsafe_allow_html=True)
+                dc[4].markdown(mc("Equity por Ação", f"R$ {eq_shr:,.2f}", _cls(eq_shr)), unsafe_allow_html=True)
+            else:
+                dc[4].markdown(mc("Equity por Ação", "Informe ações ↑", "nd"), unsafe_allow_html=True)
 
             st.caption(f"Status: `{fl_dcf}`")
 
-            # Projeção detalhada
             fcfs = dcf_res.get("fcfs_projetados", [])
             vps  = dcf_res.get("vp_fcfs", [])
             if fcfs:
-                df_proj = pd.DataFrame({
-                    "Ano":          list(range(1, len(fcfs)+1)),
-                    "g Aplicada":   [f"{r:.1%}" for r in growth_rates],
-                    "FCL Projetado":  [f"R$ {v/1e6:,.1f}M" for v in fcfs],
-                    "VP do FCL":      [f"R$ {v/1e6:,.1f}M" for v in vps],
-                })
-                st.dataframe(df_proj, use_container_width=True, hide_index=True)
+                with st.expander("📐  Projeção detalhada (ano a ano)", expanded=False):
+                    df_proj = pd.DataFrame({
+                        "Ano":          list(range(1, len(fcfs)+1)),
+                        "g Aplicada":   [f"{r:.1%}" for r in growth_rates],
+                        "FCL Projetado":  [f"R$ {v/1e6:,.1f}M" for v in fcfs],
+                        "VP do FCL":      [f"R$ {v/1e6:,.1f}M" for v in vps],
+                    })
+                    st.dataframe(df_proj, use_container_width=True, hide_index=True)
 
-    # Sensibilidade
-    if dcf_fcl != 0 and dcf_wacc > g_t:
-        sec("Análise de Sensibilidade — EV (R$ Bilhões)")
-        waccs = [max(0.07, dcf_wacc + dw) for dw in [-0.02, -0.01, 0, +0.01, +0.02]]
-        gs    = sorted({max(0.01, g_t - 0.01), g_t, min(0.07, g_t + 0.01)})
-        gs    = [g for g in gs if g < dcf_wacc - 0.005]
+            if dcf_fcl != 0 and dcf_wacc > g_t:
+                waccs = [max(0.07, dcf_wacc + dw) for dw in [-0.02, -0.01, 0, +0.01, +0.02]]
+                gs    = sorted({max(0.01, g_t - 0.01), g_t, min(0.07, g_t + 0.01)})
+                gs    = [g for g in gs if g < dcf_wacc - 0.005]
 
-        if gs:
-            sens = []
-            for w in waccs:
-                row = {"WACC \\ g": f"{w:.2%}"}
-                for g in gs:
-                    if w > g + 0.005:
-                        d = calculate_dcf(dcf_fcl*1e6, growth_rates, g, w, dcf_nd*1e6)
-                        ev_s = _f(d.get("enterprise_value"))
-                        row[f"g={g:.1%}"] = f"R$ {ev_s/1e6:,.0f}M" if ev_s else "N/D"
-                    else:
-                        row[f"g={g:.1%}"] = "—"
-                sens.append(row)
-            st.dataframe(pd.DataFrame(sens), use_container_width=True, hide_index=True)
+                if gs:
+                    with st.expander("📊  Análise de sensibilidade — EV por WACC × g", expanded=False):
+                        sens = []
+                        for w in waccs:
+                            row = {"WACC \\ g": f"{w:.2%}"}
+                            for g in gs:
+                                if w > g + 0.005:
+                                    d = calculate_dcf(dcf_fcl*1e6, growth_rates, g, w, dcf_nd*1e6)
+                                    ev_s = _f(d.get("enterprise_value"))
+                                    row[f"g={g:.1%}"] = f"R$ {ev_s/1e6:,.0f}M" if ev_s else "N/D"
+                                else:
+                                    row[f"g={g:.1%}"] = "—"
+                            sens.append(row)
+                        st.dataframe(pd.DataFrame(sens), use_container_width=True, hide_index=True)
 
-    # ── Gráfico comparativo de valores (não se aplica a financeiras) ────────
+    # ── Gráfico comparativo de valores — encerra a aba Múltiplos completos ──
     if not is_fin:
-        sec("Comparativo de Valuation")
-        val_labels = []
-        val_values = []
+        with sub_tabs[3]:
+            val_labels = []
+            val_values = []
 
-        if mktcap:
-            val_labels.append("Market Cap (mercado)"); val_values.append(_f(mktcap) / 1e6)
-        if pl:
-            val_labels.append("Valor Patrimonial (PL)"); val_values.append(_f(pl) / 1e6)
-        epv_ev2 = _f(epv_res.get("epv_enterprise"))
-        if epv_ev2:
-            val_labels.append("EPV Enterprise"); val_values.append(epv_ev2 / 1e6)
-        if dcf_res and _f(dcf_res.get("enterprise_value")):
-            val_labels.append("DCF Enterprise"); val_values.append(_f(dcf_res.get("enterprise_value")) / 1e6)
+            if mktcap:
+                val_labels.append("Market Cap (mercado)"); val_values.append(_f(mktcap) / 1e6)
+            if pl:
+                val_labels.append("Valor Patrimonial (PL)"); val_values.append(_f(pl) / 1e6)
+            epv_ev2 = _f(epv_res.get("epv_enterprise"))
+            if epv_ev2:
+                val_labels.append("EPV Enterprise"); val_values.append(epv_ev2 / 1e6)
+            if dcf_res and _f(dcf_res.get("enterprise_value")):
+                val_labels.append("DCF Enterprise"); val_values.append(_f(dcf_res.get("enterprise_value")) / 1e6)
 
-        if len(val_labels) >= 2:
-            bar_colors = [C["blue"], C["purple"], C["teal"], C["green"]][:len(val_labels)]
-            fig_comp = go.Figure(go.Bar(
-                x=val_values, y=val_labels, orientation="h",
-                marker_color=bar_colors,
-                text=[f"R$ {v:,.0f}M" for v in val_values],
-                textposition="outside", textfont=dict(color=C["t2"], size=11),
-            ))
-            fig_comp.update_layout(**_PL, title="Comparativo de Valores (R$ Milhões)",
-                                   showlegend=False)
-            st.plotly_chart(fig_comp, use_container_width=True)
+            if len(val_labels) >= 2:
+                sec("Comparativo de Valores")
+                bar_colors = [C["blue"], C["purple"], C["teal"], C["green"]][:len(val_labels)]
+                fig_comp = go.Figure(go.Bar(
+                    x=val_values, y=val_labels, orientation="h",
+                    marker_color=bar_colors,
+                    text=[f"R$ {v:,.0f}M" for v in val_values],
+                    textposition="outside", textfont=dict(color=C["t2"], size=11),
+                ))
+                fig_comp.update_layout(**_PL, title="Comparativo de Valores (R$ Milhões)",
+                                       showlegend=False)
+                st.plotly_chart(fig_comp, use_container_width=True)
 
-    # ── Painel de resumo no topo (preenchido após todos os cálculos) ─────────
+    # ── Faixa de veredito no topo (preenchida após todos os cálculos) ───────
     _preco    = preco   if preco  > 0  else None
     _epv_shr  = epv_res.get("epv_per_share") if epv_shr > 0 else None
     _epv_ev   = _f(epv_res.get("epv_enterprise"))
@@ -2406,66 +2459,75 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
     _dcf_eq   = _f(dcf_res.get("equity_value"))     if dcf_res else None
     _dcf_shr  = eq_shr
 
-    with _top_summary.container():
+    with _verdict.container():
         if is_fin:
-            # Resumo para bancos/seguradoras: P/VP, P/L, ROE, Dividend Yield
-            sec("Resumo — Banco/Seguradora (P/VP é o múltiplo central)")
-            _sc = st.columns(4)
+            # Veredito para bancos/seguradoras: P/VP, P/L, ROE, Dividend Yield
+            sec("Veredito — Banco/Seguradora (P/VP é o múltiplo central)")
+            _sc = st.columns(4, gap="medium")
             _sc[0].markdown(mc("P/VP ⭐", fmult(pvp) if pvp else "Informe preço ↓",
-                               ("pos" if pvp < 1.0 else "neu" if pvp < 2.0 else "neg") if pvp else "nd"),
+                               ("pos hero" if pvp and pvp < 1.0 else "neu hero" if pvp and pvp < 2.0 else "neg hero" if pvp else "nd hero")),
                             unsafe_allow_html=True)
             _sc[1].markdown(mc("P/L", fmult(ple) if ple else "–",
-                               _cls(ple) if ple else "nd"), unsafe_allow_html=True)
+                               (_cls(ple) + " hero") if ple else "nd hero"), unsafe_allow_html=True)
             _sc[2].markdown(mc("ROE", fpct(roe) if roe is not None else "–",
-                               ("pos" if roe and roe > 0.15 else "neu") if roe is not None else "nd"),
+                               ("pos hero" if roe and roe > 0.15 else "neu hero") if roe is not None else "nd hero"),
                             unsafe_allow_html=True)
             if dy:
-                _sc[3].markdown(mc("Dividend Yield", f"{dy:.2f}%", "pos"), unsafe_allow_html=True)
+                _sc[3].markdown(mc("Dividend Yield", f"{dy:.2f}%", "pos hero"), unsafe_allow_html=True)
             else:
                 _sc[3].markdown(mc("Preço de Mercado",
                                    f"R$ {_preco:,.2f}" if _preco else "Informe ↓",
-                                   "blu" if _preco else "nd"), unsafe_allow_html=True)
+                                   "blu hero" if _preco else "nd hero"), unsafe_allow_html=True)
         else:
-            sec("Resumo — Valuation")
-            _sc = st.columns(4)
-
-            # Card 1 — EPV
-            if _epv_shr:
-                _sc[0].markdown(mc("EPV / Ação", f"R$ {_epv_shr:,.2f}", _cls(_epv_shr)), unsafe_allow_html=True)
-            elif _epv_eq:
-                _sc[0].markdown(mc("EPV Equity", fbrl(_epv_eq), _cls(_epv_eq)), unsafe_allow_html=True)
-            elif _epv_ev:
-                _sc[0].markdown(mc("EPV Enterprise", fbrl(_epv_ev), _cls(_epv_ev)), unsafe_allow_html=True)
-            else:
-                _sc[0].markdown(mc("EPV", "Preencha EBIT abaixo", "nd"), unsafe_allow_html=True)
-
-            # Card 2 — DCF
+            # Valor Justo único: prioriza DCF/ação, depois EPV/ação, depois
+            # totais de equity/EV — preserva os dois métodos completos nas
+            # sub-abas, mas resume num só número no topo (5-second rule).
+            _vj_val, _vj_lbl, _vj_src = None, "Preencha as premissas →", None
             if _dcf_shr:
-                _sc[1].markdown(mc("DCF / Ação", f"R$ {_dcf_shr:,.2f}", _cls(_dcf_shr)), unsafe_allow_html=True)
+                _vj_val, _vj_lbl, _vj_src = _dcf_shr, f"R$ {_dcf_shr:,.2f}", "DCF / ação"
+            elif _epv_shr:
+                _vj_val, _vj_lbl, _vj_src = _epv_shr, f"R$ {_epv_shr:,.2f}", "EPV / ação"
             elif _dcf_eq:
-                _sc[1].markdown(mc("DCF Equity", fbrl(_dcf_eq), _cls(_dcf_eq)), unsafe_allow_html=True)
+                _vj_lbl, _vj_src = fbrl(_dcf_eq), "DCF Equity (total)"
+            elif _epv_eq:
+                _vj_lbl, _vj_src = fbrl(_epv_eq), "EPV Equity (total)"
             elif _dcf_ev:
-                _sc[1].markdown(mc("DCF Enterprise", fbrl(_dcf_ev), _cls(_dcf_ev)), unsafe_allow_html=True)
-            else:
-                _sc[1].markdown(mc("DCF", "Preencha FCL abaixo", "nd"), unsafe_allow_html=True)
+                _vj_lbl, _vj_src = fbrl(_dcf_ev), "DCF Enterprise (total)"
+            elif _epv_ev:
+                _vj_lbl, _vj_src = fbrl(_epv_ev), "EPV Enterprise (total)"
 
-            # Card 3 — Preço de mercado
-            _sc[2].markdown(mc("Preço de Mercado",
-                               f"R$ {_preco:,.2f}" if _preco else "Informe em Múltiplos ↓",
-                               "blu" if _preco else "nd"), unsafe_allow_html=True)
+            _up = (_vj_val / _preco - 1) * 100 if (_vj_val and _preco) else None
+            _selo_txt, _selo_cls = _selo_valuation(_up)
 
-            # Card 4 — Upside (referência: DCF; EPV como fallback)
-            _ref_shr = _dcf_shr or _epv_shr
-            if _ref_shr and _preco:
-                _lbl_up = "Upside DCF" if _dcf_shr else "Upside EPV"
-                _up = (_ref_shr / _preco - 1) * 100
-                _sc[3].markdown(mc(_lbl_up, f"{_up:+.1f}%", "pos" if _up > 0 else "neg"), unsafe_allow_html=True)
+            sec(f"Veredito — Valuation  <span class='verdict-badge {_selo_cls}'>{_selo_txt}</span>")
+            _sc = st.columns(4, gap="medium")
+            _sc[0].markdown(mc("Preço de Mercado",
+                               f"R$ {_preco:,.2f}" if _preco else "Informe em Múltiplos →",
+                               "blu hero" if _preco else "nd hero"), unsafe_allow_html=True)
+            _sc[1].markdown(mc("Valor Justo", _vj_lbl,
+                               (_cls(_vj_val) + " hero") if _vj_val else "nd hero",
+                               _vj_src or ""), unsafe_allow_html=True)
+            if _up is not None:
+                _sc[2].markdown(mc("Upside", f"{_up:+.1f}%", ("pos hero" if _up > 0 else "neg hero")), unsafe_allow_html=True)
             elif _dcf_ev and _epv_ev:
                 _up_ev = (_dcf_ev / _epv_ev - 1) * 100
-                _sc[3].markdown(mc("DCF vs EPV Enterprise", f"{_up_ev:+.1f}%",
-                                   "pos" if _up_ev > 0 else "neg"), unsafe_allow_html=True)
+                _sc[2].markdown(mc("DCF vs EPV (EV)", f"{_up_ev:+.1f}%",
+                                   "pos hero" if _up_ev > 0 else "neg hero"), unsafe_allow_html=True)
             else:
-                _sc[3].markdown(mc("Upside", "Informe preço + ações ↓", "nd"), unsafe_allow_html=True)
+                _sc[2].markdown(mc("Upside", "Informe preço + ações →", "nd hero"), unsafe_allow_html=True)
+            _sc[3].markdown(mc("Classificação", _selo_txt, f"{_selo_cls} hero",
+                               "DCF/EPV vs. preço atual"), unsafe_allow_html=True)
+
+            if mktcap:
+                sec("5 Múltiplos-Chave")
+                _mc5 = st.columns(5, gap="medium")
+                _mc5[0].markdown(mc("P / L", fmult(ple), _mult_cls(ple, 15, 25)), unsafe_allow_html=True)
+                _mc5[1].markdown(mc("P / VP", fmult(pvp), _mult_cls(pvp, 1, 2)), unsafe_allow_html=True)
+                _mc5[2].markdown(mc("EV / EBITDA", fmult(ev_ebitda_mult), _mult_cls(ev_ebitda_mult, 8, 15)), unsafe_allow_html=True)
+                _mc5[3].markdown(mc("Dividend Yield", f"{dy:.2f}%" if dy else "–",
+                                    "pos" if dy and dy > 0 else "nd"), unsafe_allow_html=True)
+                _mc5[4].markdown(mc("ROE", fpct(roe) if roe is not None else "–",
+                                    "pos" if roe and roe > 0.15 else "neu" if roe is not None else "nd"), unsafe_allow_html=True)
 
 
 def _tab_macro():
@@ -2546,7 +2608,7 @@ def _tab_macro():
 
     # ── Cards ────────────────────────────────────────────────────────────────
     sec("Juros — Banco Central do Brasil (SGS)")
-    cj = st.columns(3)
+    cj = st.columns(3, gap="medium")
     _juros_fb = {"SELIC Meta": "selic", "CDI": "cdi"}
     for i, (nome, (df_s, cor, unid, _)) in enumerate(juros_d.items()):
         _sym = _juros_fb.get(nome)
@@ -2554,13 +2616,13 @@ def _tab_macro():
         _card(cj[i], nome, df_s, unid, fallback=fb)
 
     sec("Inflação")
-    ci = st.columns(3)
+    ci = st.columns(3, gap="medium")
     for i, (nome, (df_s, cor, unid, _)) in enumerate(inf_d.items()):
         fb = (lambda: _brapi_macro("ipca")) if nome == "IPCA" else None
         _card(ci[i], nome, df_s, unid, fallback=fb)
 
     sec("Câmbio")
-    cc = st.columns(4)
+    cc = st.columns(4, gap="medium")
     for i, (nome, (df_s, cor, unid, _)) in enumerate(cambio_d.items()):
         _card(cc[i], nome, df_s, unid, is_cambio=True)
 
@@ -2668,7 +2730,7 @@ def _welcome(avail):
 
     sec("Dados em Cache Local")
     for tipo in TIPOS_DOC:
-        row = st.columns(len(DEMONSTRATIVOS))
+        row = st.columns(len(DEMONSTRATIVOS), gap="medium")
         for i, stmt in enumerate(DEMONSTRATIVOS):
             ok = avail.get(f"{tipo}_{stmt}", False)
             with row[i]:
@@ -2752,7 +2814,7 @@ def _render_brapi_panel(q: Dict, ticker: str):
     sinal  = "▲" if var_d >= 0 else "▼"
 
     # Row 1: preço e variação
-    c = st.columns(5)
+    c = st.columns(5, gap="medium")
     c[0].markdown(mc("Preço Atual", f"R$ {preco:.2f}", cor_v,
                      f"{sinal} R$ {abs(var_r):.2f} ({var_d:+.2f}%)"), unsafe_allow_html=True)
     c[1].markdown(mc("Market Cap",  fbrl(mktcap), "blu"), unsafe_allow_html=True)
@@ -2763,7 +2825,7 @@ def _render_brapi_panel(q: Dict, ticker: str):
                      "pos" if dy and dy > 0 else "nd", dy_sub), unsafe_allow_html=True)
 
     # Row 2: múltiplos de mercado (BRAPI)
-    c2 = st.columns(5)
+    c2 = st.columns(5, gap="medium")
     c2[0].markdown(mc("P/L (mercado)",      fmult(pl, 1)   if pl   else "–", "neu"), unsafe_allow_html=True)
     c2[1].markdown(mc("P/VP (mercado)",     fmult(pvp, 2)  if pvp  else "–", "neu"), unsafe_allow_html=True)
     c2[2].markdown(mc("EV/EBITDA (mercado)",fmult(ev_ebd,1)if ev_ebd else "–", "neu"), unsafe_allow_html=True)
@@ -2789,7 +2851,7 @@ def _render_brapi_panel(q: Dict, ticker: str):
         up = (tm / preco - 1) * 100 if preco else None
         _rec = (_cons.get("rec") or "").replace("_", " ").title() or "–"
         _n   = int(_cons["n"]) if _cons.get("n") else None
-        c3 = st.columns(5)
+        c3 = st.columns(5, gap="medium")
         c3[0].markdown(mc("Preço-Alvo (consenso)", f"R$ {tm:.2f}",
                           "pos" if (up or 0) > 0 else "neg",
                           f"Upside: {up:+.1f}%" if up is not None else "analistas"),
@@ -2884,7 +2946,7 @@ def _tab_options(ticker_input: str = ""):
             "Em Aberto": fnum(o.get("openInterest"), 0),
         }
 
-    c1, c2 = st.columns(2)
+    c1, c2 = st.columns(2, gap="medium")
     with c1:
         sec(f"📈 CALLs ({len(calls)})")
         if calls:

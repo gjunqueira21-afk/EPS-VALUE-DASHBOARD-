@@ -2103,6 +2103,18 @@ def _tab_valuation(m, snap_ext, cd, hist, brapi_data=None):
             box("Informe o preço atual da ação e o total de ações para calcular os múltiplos "
                 "no expansor abaixo. Fonte: B3, brapi.dev ou Yahoo Finance.", "info")
 
+        # Mantém os campos sincronizados com a cotação/ações ao vivo enquanto o
+        # usuário não editar manualmente — sem isso, o widget (com key fixa)
+        # trava no valor da primeira execução e nunca acompanha a cotação atual.
+        if brapi_preco:
+            if st.session_state.get("mult_preco") in (None, st.session_state.get("_mult_preco_auto")):
+                st.session_state["mult_preco"] = brapi_preco
+            st.session_state["_mult_preco_auto"] = brapi_preco
+        if acoes_default:
+            if st.session_state.get("mult_acoes") in (None, st.session_state.get("_mult_acoes_auto")):
+                st.session_state["mult_acoes"] = acoes_default
+            st.session_state["_mult_acoes_auto"] = acoes_default
+
         with st.expander("✏️  Ajustar preço da ação e ações em circulação", expanded=False):
             mv1, mv2 = st.columns(2, gap="medium")
             with mv1:
@@ -3135,6 +3147,7 @@ Para baixar dados:<br>
         for _k in ("epv_ebit", "epv_nd", "epv_shr", "epv_tax", "epv_wacc2",
                    "dcf_fcl", "dcf_nd2", "dcf_shr", "dg12", "dg34", "dg5", "dgt",
                    "dcf_wacc2", "mult_preco", "mult_acoes",
+                   "_mult_preco_auto", "_mult_acoes_auto",
                    "w_rf", "w_beta", "w_kd", "w_crp", "w_manual"):
             st.session_state.pop(_k, None)
 

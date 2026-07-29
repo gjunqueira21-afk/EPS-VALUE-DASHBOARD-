@@ -4,11 +4,25 @@ Monitor fundamentalista e valuation interativo de ações da B3, sobre as demons
 da CVM.
 
 ```bash
-./finlab/iniciar.sh          # Linux/macOS
-finlab\iniciar.bat           # Windows
+git clone https://github.com/gjunqueira21-afk/EPS-VALUE-DASHBOARD-.git
+cd EPS-VALUE-DASHBOARD-
+```
+
+**Windows** (PowerShell ou Prompt de Comando):
+
+```powershell
+.\finlab\iniciar.bat
+```
+
+**Linux / macOS:**
+
+```bash
+./finlab/iniciar.sh
 ```
 
 Abre em <http://127.0.0.1:8777>. Funciona sem nenhuma chave de API.
+Requer Python 3.10+ no PATH — no Windows, marque *"Add python.exe to PATH"* na
+instalação, senão o script avisa e para.
 
 - **Tela principal** — 90 ações em 11 setores: cotação do dia, performance de semana,
   3 meses, 12 meses e YTD, os múltiplos que fazem sentido para cada setor e dívida

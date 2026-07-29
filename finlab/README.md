@@ -11,11 +11,16 @@ demonstrações da CVM. Duas telas:
    comparação com pares e uma **mesa de IA** com quatro analistas comentando os números.
 
 ```bash
-./finlab/iniciar.sh          # Linux/macOS
-finlab\iniciar.bat           # Windows
+git clone https://github.com/gjunqueira21-afk/EPS-VALUE-DASHBOARD-.git
+cd EPS-VALUE-DASHBOARD-
+
+.\finlab\iniciar.bat         # Windows (PowerShell ou cmd)
+./finlab/iniciar.sh          # Linux / macOS
 ```
 
 Abre em <http://127.0.0.1:8777>. **Funciona sem nenhuma chave de API.**
+Requer Python 3.10+ no PATH — no Windows, marque *"Add python.exe to PATH"* na
+instalação, senão o script avisa e para.
 
 ---
 

@@ -1,0 +1,214 @@
+"""Premissas iniciais de valuation, derivadas dos dados — não chutadas.
+
+O cálculo do DCF/EPV roda no navegador (finlab/web/assets/js/engine.js) para
+que os sliders respondam instantaneamente. Aqui montamos apenas o ponto de
+partida: custo de capital, crescimento e fluxo-base coerentes com o
+histórico da empresa e com o macro do dia.
+
+Convenção de custo de capital (BRL nominal):
+    Ke   = Rf + β × ERP + prêmio adicional
+    Rf   = Selic corrente (já embute o risco soberano brasileiro, por isso
+           não somamos prêmio-país de novo)
+    Kd   = CDI + spread de crédito, depois de imposto
+    WACC = We·Ke + Wd·Kd·(1 − t)
+"""
+
+from __future__ import annotations
+
+from typing import Optional
+
+from .metrics import TAX_RATE, div
+
+# Beta setorial de referência, usado quando a BRAPI não fornece o beta.
+SECTOR_BETA = {
+    "BANCOS": 1.05, "SEGUROS": 0.85, "PETROLEO": 1.15, "MINERACAO": 1.20,
+    "PAPEL_AGRO": 0.95, "UTILITIES": 0.70, "VAREJO": 1.25, "ALIMENTOS": 0.90,
+    "SAUDE": 1.00, "IMOBILIARIO": 1.15, "INDUSTRIA_TECH": 1.05,
+}
+
+# Spread de crédito sobre o CDI por setor (a.a.), ponto de partida editável.
+SECTOR_SPREAD = {
+    "UTILITIES": 0.015, "BANCOS": 0.010, "SEGUROS": 0.010, "ALIMENTOS": 0.022,
+    "PETROLEO": 0.020, "MINERACAO": 0.020, "PAPEL_AGRO": 0.022,
+    "SAUDE": 0.028, "VAREJO": 0.030, "IMOBILIARIO": 0.032, "INDUSTRIA_TECH": 0.025,
+}
+
+
+def _clamp(v: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, v))
+
+
+def _mean(values: list[Optional[float]]) -> Optional[float]:
+    vals = [v for v in values if v is not None]
+    return sum(vals) / len(vals) if vals else None
+
+
+def base_fcf(fund: dict) -> dict:
+    """Fluxo de caixa livre base: último exercício e média de 3 anos.
+
+    A média suaviza capital de giro e capex lumpy — é o default do painel.
+    """
+    series = fund.get("series", {})
+    fcl = [v for v in (series.get("fcl") or []) if v is not None]
+    ultimo = fcl[-1] if fcl else None
+    media3 = _mean(fcl[-3:]) if len(fcl) >= 2 else ultimo
+    return {"ultimo": ultimo, "media3": media3, "historico": fcl[-5:]}
+
+
+def assumptions(fund: dict, snap: dict, macro: dict, brapi: Optional[dict] = None) -> dict:
+    """Monta o conjunto de premissas iniciais para o motor de valuation."""
+    sector = fund.get("sector") or ""
+    base = fund.get("base", {})
+    ind = fund.get("indicadores", {})
+
+    def mv(chave):
+        item = macro.get(chave) or {}
+        v = item.get("value")
+        return (v / 100.0) if isinstance(v, (int, float)) else None
+
+    selic = mv("selic")
+    ipca = mv("ipca")
+    cdi = mv("cdi")
+    pre10 = mv("prefixado_10a")
+    ntnb10 = mv("ntnb_10a")
+    implicita = mv("inflacao_implicita")
+
+    inflacao = ipca if ipca is not None else 0.0450
+    cdi_dec = cdi if cdi is not None else (selic or 0.1400)
+
+    # Taxa livre de risco: para um modelo com perpetuidade, a âncora certa é
+    # o juro nominal LONGO, não a Selic overnight — que é cíclica. Usamos o
+    # prefixado ~10 anos quando disponível e deixamos as alternativas
+    # explícitas para o usuário trocar com um clique.
+    opcoes = {}
+    if pre10 is not None:
+        opcoes["pre10"] = {"valor": round(pre10, 4), "label": "Prefixado ~10a (NTN-F)",
+                           "nota": "juro nominal longo — coerente com fluxo nominal e perpetuidade"}
+    if ntnb10 is not None:
+        # Compomos o juro real com o IPCA corrente, e não com a inflação
+        # implícita: usar a implícita reproduziria exatamente o prefixado,
+        # já que ela é definida por essa mesma identidade. Esta opção existe
+        # justamente para quem projeta inflação diferente da do mercado.
+        composta = (1 + ntnb10) * (1 + inflacao) - 1
+        opcoes["ntnb"] = {
+            "valor": round(composta, 4),
+            "label": "NTN-B ~10a + IPCA 12m",
+            "nota": (f"juro real de {ntnb10 * 100:.2f}% composto com IPCA de {inflacao * 100:.2f}%"
+                     + (f"; a inflação implícita do mercado é {implicita * 100:.2f}%"
+                        if implicita is not None else "")),
+        }
+    if selic is not None:
+        opcoes["selic"] = {"valor": round(selic, 4), "label": "Selic à vista",
+                           "nota": "taxa de curtíssimo prazo; sobe e desce com o ciclo"}
+
+    if pre10 is not None:
+        rf, rf_fonte, rf_modo = pre10, "ANBIMA · prefixado ~10 anos", "pre10"
+    elif selic is not None:
+        rf, rf_fonte, rf_modo = selic, "Selic à vista", "selic"
+    else:
+        rf, rf_fonte, rf_modo = 0.1400, "referência fixa", "selic"
+
+    beta = None
+    if brapi:
+        raw = ((brapi.get("defaultKeyStatistics") or {}).get("beta")
+               if isinstance(brapi.get("defaultKeyStatistics"), dict) else None)
+        if raw:
+            try:
+                beta = _clamp(float(raw), 0.3, 2.5)
+            except (TypeError, ValueError):
+                beta = None
+    beta_source = "BRAPI" if beta else "referência setorial"
+    if beta is None:
+        beta = SECTOR_BETA.get(sector, 1.0)
+
+    erp = 0.050
+    spread_credito = SECTOR_SPREAD.get(sector, 0.025)
+    kd = cdi_dec + spread_credito
+
+    # Estrutura de capital a valor de mercado; sem dado, cai para 25% dívida.
+    cap = snap.get("market_cap")
+    divida = base.get("divida_bruta")
+    if cap and divida is not None and cap > 0:
+        wd = _clamp(divida / (divida + cap), 0.0, 0.80)
+        wd_source = "mercado (dívida bruta / (dívida + market cap))"
+    else:
+        wd = 0.25
+        wd_source = "padrão (25%)"
+    we = 1 - wd
+
+    ke = rf + beta * erp
+    wacc = we * ke + wd * kd * (1 - TAX_RATE)
+
+    # Crescimento: ancorado no CAGR de receita, limitado e convergindo
+    # para a inflação de longo prazo.
+    cagr_rec = ind.get("cagr_receita_3a")
+    g0 = _clamp(cagr_rec if cagr_rec is not None else inflacao, -0.05, 0.20)
+    g_terminal = _clamp(inflacao, 0.0, max(0.0, wacc - 0.020))
+    growth = [round(g0 + (g_terminal - g0) * (i / 4), 4) for i in range(5)]
+
+    fcf = base_fcf(fund)
+    fcf_base = fcf["media3"] if fcf["media3"] is not None else fcf["ultimo"]
+
+    ebit_hist = [v for v in (fund.get("series", {}).get("ebit") or []) if v is not None]
+    ebit_norm = _mean(ebit_hist[-3:]) if ebit_hist else None
+
+    # FCL sustentadamente acima do EBITDA é sinal de que o caixa do período
+    # veio de capital de giro (tipicamente alongamento de fornecedores), não
+    # da operação. Extrapolar isso num DCF projeta algo que não se repete.
+    ebitda_hist = [v for v in (fund.get("series", {}).get("ebitda") or []) if v is not None]
+    ebitda_norm = _mean(ebitda_hist[-3:]) if ebitda_hist else None
+    fcl_sobre_ebitda = None
+    if fcf_base is not None and ebitda_norm and ebitda_norm > 0:
+        fcl_sobre_ebitda = round(fcf_base / ebitda_norm, 3)
+
+    return {
+        "rf": round(rf, 4),
+        "rf_fonte": rf_fonte,
+        "rf_modo": rf_modo,
+        "rf_opcoes": opcoes,
+        "erp": erp,
+        "beta": round(beta, 3),
+        "beta_source": beta_source,
+        "premio_extra": 0.0,
+        "ke": round(ke, 4),
+        "cdi": round(cdi_dec, 4),
+        "spread_credito": spread_credito,
+        "kd": round(kd, 4),
+        "tax": TAX_RATE,
+        "wd": round(wd, 4),
+        "we": round(we, 4),
+        "wd_source": wd_source,
+        "wacc": round(wacc, 4),
+        "inflacao": round(inflacao, 4),
+        "growth": growth,
+        "g_terminal": round(g_terminal, 4),
+        "anos": 5,
+        "fcf_base": fcf_base,
+        "fcf_ultimo": fcf["ultimo"],
+        "fcf_media3": fcf["media3"],
+        "fcf_historico": fcf["historico"],
+        "fcf_modo": "media3" if fcf["media3"] is not None else "ultimo",
+        "ebit_normalizado": ebit_norm,
+        "ebitda_normalizado": ebitda_norm,
+        "fcl_sobre_ebitda": fcl_sobre_ebitda,
+        "divida_liquida": base.get("divida_liquida"),
+        "caixa": base.get("caixa"),
+        "shares": snap.get("shares_quote"),
+        "shares_emitidas": snap.get("shares"),
+        "unit_ratio": snap.get("unit_ratio", 1),
+        "preco": snap.get("price"),
+        "aplicavel": not fund.get("financial") and fcf_base is not None,
+        "motivo_nao_aplicavel": _motivo(fund, fcf_base, snap),
+        "fcl_negativo": bool(fcf_base is not None and fcf_base <= 0),
+    }
+
+
+def _motivo(fund: dict, fcf_base: Optional[float], snap: dict) -> Optional[str]:
+    if fund.get("financial"):
+        return ("Instituição financeira: DCF por fluxo de caixa livre da firma não se "
+                "aplica. Use múltiplos (P/L, P/VP) e o modelo de dividendos.")
+    if fcf_base is None:
+        return "Sem fluxo de caixa livre na base da CVM (FCO e/ou capex ausentes)."
+    if not snap.get("shares_quote"):
+        return "Quantidade de ações indisponível — o preço-alvo por ação não pode ser calculado."
+    return None

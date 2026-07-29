@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gab's FinLab · Valuation</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='78' font-size='78'>🧠</text></svg>">
+<link rel="stylesheet" href="/assets/css/finlab.css">
+</head>
+<body>
+<div class="wrap">
+
+  <header class="topbar">
+    <div id="brand"></div>
+    <div class="topbar-spacer"></div>
+    <div class="topbar-actions">
+      <div class="search-box" style="min-width:230px">
+        <span class="ico">🔎</span>
+        <input type="text" id="tickerSearch" placeholder="Trocar de empresa…" autocomplete="off" spellcheck="false">
+        <div id="tickerList"></div>
+      </div>
+      <a class="btn ghost" href="/">← Tela principal</a>
+      <button class="btn" id="btnLLM">⚙ Modelos de IA</button>
+    </div>
+  </header>
+
+  <div id="companyStrip"></div>
+  <div id="alertZone"></div>
+
+  <section class="panel" id="heroPanel">
+    <div class="panel-h">
+      <div class="ptitle"><b>Régua de valuation</b> · preço justo por ação conforme o crescimento dos fluxos</div>
+      <div class="legend">
+        <span><i style="background:#34D399"></i>upside &gt; 30%</span>
+        <span><i style="background:#67E8F9"></i>upside 0 a 30%</span>
+        <span><i style="background:#F5B841"></i>downside até 20%</span>
+        <span><i style="background:#F87171"></i>downside &gt; 20%</span>
+      </div>
+    </div>
+    <div class="chartbox" id="chartRegua" style="height:290px"></div>
+
+    <div style="margin-top:14px;border-top:1px dashed var(--line);padding-top:14px">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <div>
+          <div style="font:600 13.5px var(--sans)">Crescimento do fluxo de caixa livre</div>
+          <small style="display:block;font:400 11px var(--mono);color:var(--dim);margin-top:3px"
+                 id="heroHint">taxa aplicada aos anos explícitos da projeção</small>
+        </div>
+        <div style="font:700 30px/1 var(--mono);color:var(--brand)" id="heroVal">—</div>
+      </div>
+      <input type="range" id="heroGrowth" min="-0.15" max="0.30" step="0.002" value="0.05"
+             aria-label="Crescimento do fluxo de caixa livre">
+      <div style="display:flex;justify-content:space-between;font:400 10px var(--mono);color:var(--dim2)">
+        <span>-15%</span><span>-5%</span><span>+5%</span><span>+15%</span><span>+30%</span>
+      </div>
+      <div id="heroMarks" style="display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;
+           font:500 11.5px/1.6 var(--mono);color:var(--dim)"></div>
+    </div>
+
+    <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:14px;border-top:1px dashed var(--line);padding-top:13px"
+         id="scenarioRow"></div>
+  </section>
+
+  <section class="kpis k6" id="kpis"></section>
+
+  <div class="layout">
+    <aside class="side" id="controls" aria-label="Premissas do modelo"></aside>
+
+    <main>
+      <div class="tabs" id="tabs">
+        <button class="tab on" data-tab="valuation">Valuation</button>
+        <button class="tab" data-tab="fundamentos">Fundamentos</button>
+        <button class="tab" data-tab="saude">Nota de saúde</button>
+        <button class="tab" data-tab="pares">Múltiplos &amp; pares</button>
+        <button class="tab" data-tab="ia">🧠 Mesa de IA</button>
+      </div>
+
+      <section data-panel="valuation"></section>
+      <section data-panel="fundamentos" hidden></section>
+      <section data-panel="saude" hidden></section>
+      <section data-panel="pares" hidden></section>
+      <section data-panel="ia" hidden></section>
+    </main>
+  </div>
+
+  <div class="foot" id="foot"></div>
+</div>
+
+<script src="/assets/js/core.js"></script>
+<script src="/assets/js/charts.js"></script>
+<script src="/assets/js/engine.js"></script>
+<script src="/assets/js/settings.js"></script>
+<script src="/assets/js/agents.js"></script>
+<script src="/assets/js/company.js"></script>
+</body>
+</html>

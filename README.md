@@ -24,12 +24,16 @@ Abre em <http://127.0.0.1:8777>. Funciona sem nenhuma chave de API.
 Requer Python 3.10+ no PATH — no Windows, marque *"Add python.exe to PATH"* na
 instalação, senão o script avisa e para.
 
-- **Tela principal** — 90 ações em 11 setores: cotação do dia, performance de semana,
+- **Ações** — 90 ações em 11 setores: cotação do dia, performance de semana,
   3 meses, 12 meses e YTD, os múltiplos que fazem sentido para cada setor e dívida
   líquida/EBITDA, ordenadas da empresa financeiramente mais sólida para a mais frágil.
 - **Painel da empresa** — DCF e EPV recalculando ao vivo nos sliders, régua de
   sensibilidade, matriz WACC × perpetuidade, 10 anos de demonstrações, comparação com
   pares e uma mesa de quatro analistas de IA.
+- **ETFs** — todos os fundos de índice da B3, por categoria: tese, taxa de administração
+  e liquidez real (volume do boletim da B3), com painel próprio por fundo.
+- **BDRs** — empresas globais na B3, separadas pelos setores GICS em inglês; clicou,
+  abre o painel de valuation completo (fundamentos em USD via BRAPI).
 
 📖 **Documentação completa: [`finlab/README.md`](finlab/README.md)** — metodologia do
 score, convenções do modelo de valuation, fontes de dados e limites conhecidos.

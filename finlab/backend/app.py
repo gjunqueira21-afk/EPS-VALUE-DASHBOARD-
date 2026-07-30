@@ -14,7 +14,8 @@ from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import agents, cache, cvm, market, metrics, scoring, universe, valuation
+from . import (agents, b3data, bdrs, cache, cvm, etfs, market, metrics,
+               scoring, universe, valuation)
 from .settings import DEMO_MODE, TTL_CVM, TTL_QUOTE, WEB_DIR
 
 app = FastAPI(title="Gab's FinLab", version="2.0", docs_url="/api/docs")
@@ -111,7 +112,11 @@ def _sector_stats(rows: list[dict]) -> dict:
 
 @app.get("/api/universe")
 def api_universe():
-    return universe.as_payload()
+    payload = universe.as_payload()
+    payload["bdrs"] = [{"ticker": b.ticker, "name": b.name, "sector": b.sector}
+                       for b in bdrs.UNIVERSE]
+    payload["bdr_sectors"] = bdrs.SECTORS
+    return payload
 
 
 @app.get("/api/overview")
@@ -140,6 +145,8 @@ def api_company(ticker: str):
     ticker = ticker.upper().strip()
     comp = universe.get(ticker)
     if comp is None:
+        if bdrs.get(ticker):
+            return _bdr_payload(ticker)
         raise HTTPException(status_code=404, detail=f"Ticker fora do universo coberto: {ticker}")
 
     fund = _fundamentals(ticker)
@@ -193,6 +200,207 @@ def _consenso(brapi: Optional[dict]) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# ETFs
+# ---------------------------------------------------------------------------
+
+def _etf_rows() -> dict:
+    def build():
+        uni = etfs.universe()
+        tickers = [e["ticker"] for e in uni]
+        series = market.asset_series(tickers)
+        boletim = b3data.bdi()
+
+        rows = []
+        for etf in uni:
+            tk = etf["ticker"]
+            perf = market.performance(series.get(tk, []))
+            liq = (boletim.get(tk) or {}).get("avg_vol")
+            rows.append({
+                **etf,
+                "price": perf.get("price"),
+                "price_date": perf.get("date"),
+                "perf": {k: perf.get(k) for k in ("day", "week", "m3", "m12", "ytd")},
+                "liquidez": liq,
+                "liquidez_faixa": etfs.liquidity_band(liq),
+                "pregoes": (boletim.get(tk) or {}).get("days", 0),
+            })
+        # Mais líquidos primeiro dentro de cada categoria.
+        rows.sort(key=lambda r: -(r["liquidez"] or 0))
+        return {"rows": rows,
+                "categories": etfs.CATEGORIES,
+                "source": market.source_label()}
+    return cache.memoize("etfs:rows:v1", TTL_QUOTE, build) or {"rows": []}
+
+
+@app.get("/api/etfs")
+def api_etfs():
+    return _etf_rows()
+
+
+@app.get("/api/etf/{ticker}")
+def api_etf(ticker: str):
+    ticker = ticker.upper().strip()
+    etf = etfs.get(ticker)
+    if etf is None:
+        raise HTTPException(status_code=404, detail=f"ETF fora da lista B3: {ticker}")
+
+    series = market.asset_series([ticker]).get(ticker, [])
+    perf = market.performance(series)
+    boletim = b3data.bdi()
+    liq = (boletim.get(ticker) or {}).get("avg_vol")
+
+    todos = _etf_rows().get("rows", [])
+    pares = [r for r in todos if r["categoria"] == etf["categoria"] and r["ticker"] != ticker]
+
+    return {
+        **etf,
+        "price": perf.get("price"),
+        "price_date": perf.get("date"),
+        "perf": {k: perf.get(k) for k in ("day", "week", "m3", "m12", "ytd")},
+        "liquidez": liq,
+        "liquidez_faixa": etfs.liquidity_band(liq),
+        "pregoes": (boletim.get(ticker) or {}).get("days", 0),
+        "price_series": [{"d": d, "p": p} for d, p in series[-500:]],
+        "peers": [{k: p[k] for k in ("ticker", "nome", "taxa_adm", "liquidez",
+                                     "price", "perf", "pl", "curado")}
+                  for p in pares[:15]],
+        "categoria_meta": etfs.CATEGORIES.get(etf["categoria"], {}),
+        "source": market.source_label(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# BDRs
+# ---------------------------------------------------------------------------
+
+def _bdr_rows() -> dict:
+    def build():
+        tickers = bdrs.TICKERS
+        series = market.asset_series(tickers)
+        quotes = market.brapi_quotes(tickers)
+        boletim = b3data.bdi()
+
+        rows = []
+        for bdr in bdrs.UNIVERSE:
+            tk = bdr.ticker
+            perf = market.performance(series.get(tk, []))
+            price = perf.get("price")
+            quote = quotes.get(tk)
+            if quote and quote.get("regularMarketPrice"):
+                price = float(quote["regularMarketPrice"])
+                chg = quote.get("regularMarketChangePercent")
+                if chg is not None:
+                    perf["day"] = float(chg) / 100.0
+            liq = (boletim.get(tk) or {}).get("avg_vol")
+            dy = quote.get("dividendYield") if quote else None
+            rows.append({
+                "ticker": tk, "name": bdr.name, "us_ticker": bdr.us_ticker,
+                "sector": bdr.sector, "bank": bdr.bank,
+                "price": price,
+                "price_date": perf.get("date"),
+                "perf": {k: perf.get(k) for k in ("day", "week", "m3", "m12", "ytd")},
+                "liquidez": liq,
+                "liquidez_faixa": etfs.liquidity_band(liq),
+                "dy": (float(dy) / 100.0) if dy is not None else None,
+            })
+        rows.sort(key=lambda r: -(r["liquidez"] or 0))
+        return {"rows": rows,
+                "sectors": {k: v for k, v in bdrs.SECTORS.items()},
+                "source": market.source_label(),
+                "brapi": bool(market.BRAPI_TOKEN)}
+    return cache.memoize("bdrs:rows:v1", TTL_QUOTE, build) or {"rows": []}
+
+
+@app.get("/api/bdrs")
+def api_bdrs():
+    return _bdr_rows()
+
+
+def _bdr_payload(ticker: str) -> dict:
+    """Payload no formato de /api/company, para o painel reusar a tela."""
+    bdr = bdrs.get(ticker)
+    if bdr is None:
+        raise HTTPException(status_code=404, detail=f"BDR fora do universo: {ticker}")
+
+    mod = bdrs.raw_modules(ticker)
+    fund = cache.memoize(f"bdr:fund:v1:{ticker}", TTL_CVM,
+                         lambda: bdrs.fundamentals_from_modules(bdr, mod)) or {}
+
+    series = market.asset_series([ticker]).get(ticker, [])
+    quote = market.brapi_quotes([ticker]).get(ticker) or (mod or {})
+    perf = market.performance(series)
+    price = perf.get("price")
+    source = market.source_label()
+    if quote and quote.get("regularMarketPrice"):
+        price = float(quote["regularMarketPrice"])
+        source = "BRAPI"
+        chg = quote.get("regularMarketChangePercent")
+        if chg is not None:
+            perf["day"] = float(chg) / 100.0
+
+    macro_data = market.macro()
+    prem = valuation.bdr_assumptions(fund, {"price": price}, macro_data, quote)
+
+    snap = {
+        "price": price,
+        "price_date": perf.get("date"),
+        "price_source": source,
+        "perf": {k: perf.get(k) for k in ("day", "week", "m3", "m12", "ytd")},
+        "shares": prem.get("shares"),
+        "shares_quote": prem.get("shares"),
+        "unit_ratio": 1,
+        "shares_source": "sintético: mcap USD ÷ preço do BDR",
+        "market_cap": prem.get("mcap_usd"),
+        "market_cap_source": "BRAPI (convertido a USD pela PTAX)" if prem.get("mcap_usd") else None,
+        "points": len(series or []),
+    }
+
+    base = fund.get("base", {})
+    mcap_usd = prem.get("mcap_usd")
+    dl = base.get("divida_liquida")
+    ev = (mcap_usd + dl) if (mcap_usd is not None and dl is not None
+                             and not fund.get("financial")) else None
+    dy = quote.get("dividendYield") if quote else None
+    mult = {
+        "pl": metrics.div(mcap_usd, base.get("lucro_liquido")),
+        "pvp": metrics.div(mcap_usd, base.get("patrimonio_liquido")),
+        "ev_ebitda": metrics.div(ev, base.get("ebitda")),
+        "ev_ebit": metrics.div(ev, base.get("ebit")),
+        "psr": metrics.div(mcap_usd, base.get("receita")),
+        "dy": (float(dy) / 100.0) if dy is not None else None,
+        "roe": fund.get("indicadores", {}).get("roe"),
+        "mg_ebitda": fund.get("indicadores", {}).get("mg_ebitda"),
+        "nd_ebitda": fund.get("indicadores", {}).get("nd_ebitda"),
+        "ev": ev, "lpa": None, "vpa": None,
+        "fcf_yield": metrics.div(base.get("fcl"), mcap_usd),
+    }
+
+    sc = scoring.score(fund.get("indicadores", {}), fund.get("financial", False))
+
+    todos = _bdr_rows().get("rows", [])
+    pares = [r for r in todos if r["sector"] == bdr.sector]
+
+    return {
+        "fundamentals": fund,
+        "market": snap,
+        "multiples": mult,
+        "score": sc,
+        "assumptions": prem,
+        "macro": macro_data,
+        "sector_stats": {},
+        "sector_label": bdrs.SECTORS[bdr.sector]["label"],
+        "peers": [{"ticker": p["ticker"], "name": p["name"], "score": None,
+                   "multiples": {"dy": p.get("dy")}, "price": p["price"],
+                   "perf": p["perf"]}
+                  for p in pares if p["ticker"] != ticker],
+        "price_series": [{"d": d, "p": p} for d, p in series[-500:]],
+        "consenso": _consenso(quote if isinstance(quote, dict) else None),
+        "source": source,
+        "bdr": True,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Agentes
 # ---------------------------------------------------------------------------
 
@@ -213,7 +421,7 @@ def api_agent_run(body: dict = Body(...)):
         raise HTTPException(status_code=400, detail="Slot sem modelo definido.")
 
     ticker = (body.get("ticker") or "").upper().strip()
-    if not universe.get(ticker):
+    if not universe.get(ticker) and not bdrs.get(ticker):
         raise HTTPException(status_code=400, detail=f"Ticker inválido: {ticker}")
 
     payload = api_company(ticker)
@@ -273,6 +481,21 @@ def index():
 @app.get("/empresa")
 def empresa():
     return FileResponse(WEB_DIR / "empresa.html")
+
+
+@app.get("/etfs")
+def etfs_page():
+    return FileResponse(WEB_DIR / "etfs.html")
+
+
+@app.get("/etf")
+def etf_page():
+    return FileResponse(WEB_DIR / "etf.html")
+
+
+@app.get("/bdrs")
+def bdrs_page():
+    return FileResponse(WEB_DIR / "bdrs.html")
 
 
 @app.exception_handler(404)

@@ -371,29 +371,44 @@
 
   /* =========================================================== controles */
 
-  const GRUPOS = [
-    {
-      titulo: 'Custo de capital', aberto: true, itens: [
-        { k: 'rf', l: 'Taxa livre de risco', min: 0.04, max: 0.25, step: 0.0005, f: 'pct2', hint: 'juro nominal brasileiro; já embute o risco soberano, por isso não somamos prêmio-país' },
-        { k: 'erp', l: 'Prêmio de risco de mercado', min: 0.02, max: 0.12, step: 0.0005, f: 'pct2', hint: 'prêmio de ações sobre o livre de risco' },
-        { k: 'beta', l: 'Beta', min: 0.3, max: 2.5, step: 0.01, f: 'num2', hint: 'sensibilidade ao mercado' },
-        { k: 'premio_extra', l: 'Prêmio adicional', min: -0.03, max: 0.12, step: 0.0025, f: 'pct2', hint: 'risco de tamanho, governança ou execução' },
-        { k: 'spread_credito', l: 'Spread de crédito sobre o CDI', min: 0, max: 0.09, step: 0.0025, f: 'pct2' },
-        { k: 'wd', l: 'Dívida / (dívida + equity)', min: 0, max: 0.80, step: 0.01, f: 'pct0' },
-        { k: 'tax', l: 'Alíquota efetiva', min: 0, max: 0.40, step: 0.005, f: 'pct1' }
-      ]
-    },
-    {
-      titulo: 'Crescimento do FCL', aberto: true, itens: [
-        { k: 'g0', l: 'Ano 1', min: -0.30, max: 0.50, step: 0.005, f: 'pct1' },
-        { k: 'g1', l: 'Ano 2', min: -0.30, max: 0.50, step: 0.005, f: 'pct1' },
-        { k: 'g2', l: 'Ano 3', min: -0.30, max: 0.50, step: 0.005, f: 'pct1' },
-        { k: 'g3', l: 'Ano 4', min: -0.30, max: 0.50, step: 0.005, f: 'pct1' },
-        { k: 'g4', l: 'Ano 5', min: -0.30, max: 0.50, step: 0.005, f: 'pct1' },
-        { k: 'g_terminal', l: 'Perpetuidade (g)', min: 0, max: 0.09, step: 0.0025, f: 'pct2', hint: 'no longo prazo, dificilmente supera a inflação + PIB' }
-      ]
-    }
-  ];
+  /** Os rótulos do custo de capital mudam entre ação brasileira (curva BR,
+   *  CDI) e BDR (curva americana, dólar). */
+  function gruposControles() {
+    const bdr = !!(state.data && state.data.fundamentals && state.data.fundamentals.bdr);
+    return [
+      {
+        titulo: 'Custo de capital', aberto: true, itens: [
+          {
+            k: 'rf', l: 'Taxa livre de risco',
+            min: bdr ? 0.01 : 0.04, max: bdr ? 0.12 : 0.25, step: 0.0005, f: 'pct2',
+            hint: bdr
+              ? 'juro do Tesouro americano (~10 anos): o modelo desconta fluxos em dólar'
+              : 'juro nominal brasileiro; já embute o risco soberano, por isso não somamos prêmio-país'
+          },
+          { k: 'erp', l: 'Prêmio de risco de mercado', min: 0.02, max: 0.12, step: 0.0005, f: 'pct2', hint: 'prêmio de ações sobre o livre de risco' },
+          { k: 'beta', l: 'Beta', min: 0.3, max: 2.5, step: 0.01, f: 'num2', hint: 'sensibilidade ao mercado' },
+          { k: 'premio_extra', l: 'Prêmio adicional', min: -0.03, max: 0.12, step: 0.0025, f: 'pct2', hint: 'risco de tamanho, governança ou execução' },
+          {
+            k: 'spread_credito',
+            l: bdr ? 'Spread de crédito sobre o Tesouro' : 'Spread de crédito sobre o CDI',
+            min: 0, max: 0.09, step: 0.0025, f: 'pct2'
+          },
+          { k: 'wd', l: 'Dívida / (dívida + equity)', min: 0, max: 0.80, step: 0.01, f: 'pct0' },
+          { k: 'tax', l: 'Alíquota efetiva', min: 0, max: 0.40, step: 0.005, f: 'pct1' }
+        ]
+      },
+      {
+        titulo: 'Crescimento do FCL', aberto: true, itens: [
+          { k: 'g0', l: 'Ano 1', min: -0.30, max: 0.50, step: 0.005, f: 'pct1' },
+          { k: 'g1', l: 'Ano 2', min: -0.30, max: 0.50, step: 0.005, f: 'pct1' },
+          { k: 'g2', l: 'Ano 3', min: -0.30, max: 0.50, step: 0.005, f: 'pct1' },
+          { k: 'g3', l: 'Ano 4', min: -0.30, max: 0.50, step: 0.005, f: 'pct1' },
+          { k: 'g4', l: 'Ano 5', min: -0.30, max: 0.50, step: 0.005, f: 'pct1' },
+          { k: 'g_terminal', l: 'Perpetuidade (g)', min: 0, max: 0.09, step: 0.0025, f: 'pct2', hint: 'no longo prazo, dificilmente supera a inflação + PIB' }
+        ]
+      }
+    ];
+  }
 
   const FMT = {
     pct2: (v) => fmt.pct(v, 2), pct1: (v) => fmt.pct(v, 1), pct0: (v) => fmt.pct(v, 0),
@@ -477,9 +492,13 @@
     fcfBox.appendChild(h('div', {
       style: 'font:700 18px var(--mono);color:var(--brand);margin:6px 0 2px'
     }, fmt.big(fcfBase(), 2)));
+    const fonteFcl = state.data.fundamentals.bdr
+      ? 'FCL = caixa das operações − capex, do demonstrativo do papel de origem ('
+        + esc(state.data.fundamentals.fonte || 'Yahoo Finance') + ').'
+      : 'FCL = caixa das operações − capex, direto do DFC da CVM.';
     fcfBox.appendChild(h('div', {
       class: 'note', style: 'margin-top:4px',
-      html: 'FCL = caixa das operações − capex, direto do DFC da CVM.<br>'
+      html: fonteFcl + '<br>'
         + 'Último: <b>' + esc(fmt.big(state.a.fcf_ultimo, 2)) + '</b> · '
         + 'Média 3a: <b>' + esc(fmt.big(state.a.fcf_media3, 2)) + '</b>'
     }));
@@ -508,7 +527,7 @@
     ]));
 
     // Demais grupos ----------------------------------------------------
-    GRUPOS.forEach((grupo) => {
+    gruposControles().forEach((grupo) => {
       const body = h('div', { class: 'ctrl-body' });
 
       if (grupo.titulo === 'Custo de capital') body.appendChild(ancoraRf());
@@ -1048,17 +1067,29 @@
     // com os múltiplos já recalculados nesta tela.
     const pares = (d.peers || []).filter((p) => p.ticker !== d.fundamentals.ticker).concat([{
       ticker: d.fundamentals.ticker, name: d.fundamentals.name,
-      score: d.score.total, multiples: mine, price: d.market.price, perf: d.market.perf
+      score: d.score.total, multiples: mine, price: d.market.price, perf: d.market.perf,
+      liquidez: null, eu: true
     }]).sort((a, b) => (b.score || -1) - (a.score || -1));
 
+    // Nos BDRs, o backend só carrega fundamentos da empresa aberta — puxar os
+    // demonstrativos de todo o setor custaria dezenas de chamadas ao Yahoo por
+    // página. A tabela mostra então o que existe para todos: mercado e liquidez.
+    const colunas = d.bdr
+      ? [['dy', 'DY', 'pct'], ['__liq', 'Liquidez/dia', null]]
+      : keys.map((k) => [k, labels[k] || k, fmts[k]]);
+
     host.appendChild(h('section', { class: 'panel' }, [
-      h('div', { class: 'panel-h' }, h('div', { class: 'ptitle' },
-        [h('b', {}, 'Pares do setor'), ' · ordenados por saúde financeira'])),
+      h('div', { class: 'panel-h' }, [
+        h('div', { class: 'ptitle' }, [h('b', {}, 'Pares do setor'),
+          d.bdr ? ' · mercado e liquidez na B3' : ' · ordenados por saúde financeira']),
+        d.bdr ? h('div', { class: 'psub' }, 'clique para abrir os fundamentos de cada um') : null
+      ]),
       h('div', { class: 'table-wrap' }, h('table', {}, [
         h('thead', {}, h('tr', {}, [
-          h('th', { class: 'left' }, 'Empresa'), h('th', {}, 'Saúde'), h('th', {}, 'Cotação'),
-          h('th', {}, '12m')
-        ].concat(keys.map((k) => h('th', {}, labels[k] || k))))),
+          h('th', { class: 'left' }, 'Empresa'),
+          d.bdr ? null : h('th', {}, 'Saúde'),
+          h('th', {}, 'Cotação'), h('th', {}, '12m')
+        ].filter(Boolean).concat(colunas.map(([, rot]) => h('th', {}, rot))))),
         h('tbody', {}, pares.map((p) => {
           const eu = p.ticker === d.fundamentals.ticker;
           const tr = h('tr', {
@@ -1066,12 +1097,18 @@
             style: eu ? 'background:rgba(103,232,249,.08);font-weight:700' : ''
           }, [
             h('td', { class: 'left' }, p.ticker + (eu ? ' ←' : '')),
-            h('td', { class: 'num' }, isNum(p.score) ? fmt.num(p.score, 1) : '—'),
+            d.bdr ? null : h('td', { class: 'num' }, isNum(p.score) ? fmt.num(p.score, 1) : '—'),
             h('td', { class: 'num' }, isNum(p.price) ? fmt.money(p.price) : '—'),
             h('td', { class: 'num ' + signClass(p.perf && p.perf.m12) },
               fmt.pctSigned(p.perf && p.perf.m12))
-          ].concat(keys.map((k) => h('td', { class: 'num' },
-            fmt.byType(p.multiples ? p.multiples[k] : null, fmts[k])))));
+          ].filter(Boolean).concat(colunas.map(([k, , tipo]) => {
+            if (k === '__liq') {
+              return h('td', { class: 'num' },
+                isNum(p.liquidez) && p.liquidez > 0 ? fmt.bigShort(p.liquidez, 1) : '—');
+            }
+            return h('td', { class: 'num' },
+              fmt.byType(p.multiples ? p.multiples[k] : null, tipo));
+          })));
           if (!eu) {
             tr.addEventListener('click', () => {
               window.location.href = '/empresa?ticker=' + encodeURIComponent(p.ticker);
@@ -1201,7 +1238,8 @@
       el('foot').innerHTML =
         '<b>Fontes (BDR).</b> Preço e volume do BDR na B3 ('
         + esc(state.data.market.price_source || '—') + '); demonstrações da companhia via '
-        + 'módulos da BRAPI (dados Yahoo), na moeda de reporte ('
+        + esc(f.fonte || 'Yahoo Finance') + ', pelo papel de origem '
+        + esc(f.us_ticker || '') + ', na moeda de reporte ('
         + esc(f.currency || 'USD') + '), com histórico de até 4 exercícios.<br><br>'
         + '<b>Método.</b> O DCF roda inteiro na moeda de reporte; o upside compara o equity '
         + 'value com o market cap convertido pela PTAX, e o preço justo por BDR é o preço de '
@@ -1257,6 +1295,16 @@
       bindSearch();
       renderAll();
       renderFooter();
+
+      // A caixa de conversa lê as premissas na hora do envio, não na montagem:
+      // o que o usuário mexeu nos sliders vai junto da pergunta.
+      window.FLChat.init({
+        ticker: state.ticker,
+        rotulo: 'sobre ' + state.ticker + ' · ' + (data.fundamentals.name || ''),
+        ctx: () => (state.a && state.a.aplicavel
+          ? { assumptions: params(), resultado: E.resumo(params()) }
+          : {})
+      });
 
       el('heroGrowth').addEventListener('input', (ev) => {
         const alvo = parseFloat(ev.target.value);

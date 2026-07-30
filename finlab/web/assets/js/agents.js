@@ -214,10 +214,15 @@
       host.appendChild(card);
     });
 
+    const f = (state.data && state.data.fundamentals) || {};
+    const origem = f.bdr
+      ? `demonstrações anuais do papel de origem via ${esc(f.fonte || 'Yahoo Finance')}, `
+        + `em ${esc(f.currency || 'USD')}`
+      : 'demonstrações anuais da CVM (com a defasagem natural)';
     host.appendChild(h('div', {
       class: 'note warn',
       html: '<b>Limites do que você lê aqui.</b> Os agentes só enxergam o contexto desta tela: '
-        + 'demonstrações anuais da CVM (com a defasagem natural), preço, múltiplos e macro do dia. '
+        + origem + ', preço, múltiplos e macro do dia. '
         + 'Não têm acesso a resultado trimestral, guidance, fato relevante nem notícia. '
         + 'Trate as respostas como leitura crítica dos números — nunca como recomendação.'
     }));

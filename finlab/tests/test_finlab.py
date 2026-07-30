@@ -337,6 +337,41 @@ class _MockHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def _responde(self, payload, codigo=200):
+        data = json.dumps(payload).encode()
+        self.send_response(codigo)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        self.server.recebido[self.path.split("?")[0]] = {"headers": dict(self.headers)}
+
+        if self.path.startswith("/models/openai"):
+            self._responde({"data": [{"id": "gpt-teste"}, {"id": "text-embedding-3"},
+                                     {"id": "whisper-1"}, {"id": "gpt-teste"}]})
+        elif self.path.startswith("/models/anthropic"):
+            self._responde({"data": [{"id": "claude-teste", "display_name": "Claude Teste"}]})
+        elif self.path.startswith("/models/google"):
+            self._responde({"models": [
+                {"name": "models/gemini-teste", "supportedGenerationMethods": ["generateContent"]},
+                {"name": "models/embedding-001", "supportedGenerationMethods": ["embedContent"]},
+            ]})
+        elif self.path.startswith("/models/vazio"):
+            self._responde({"data": []})
+        elif self.path.startswith("/models/quebrado"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b"nao sou json")
+        elif self.path.startswith("/models/status/"):
+            self.send_response(int(self.path.rsplit("/", 1)[-1]))
+            self.end_headers()
+            self.wfile.write(b"erro simulado")
+        else:
+            self._responde({"erro": "rota desconhecida"}, 404)
+
     def do_POST(self):
         tamanho = int(self.headers.get("Content-Length", 0))
         corpo = json.loads(self.rfile.read(tamanho) or b"{}")
@@ -410,6 +445,97 @@ def test_proxy_llm_exige_chave_e_provedor_valido():
         agents.chat("openrouter", "", "m", "s", "u")
     with pytest.raises(agents.LLMError, match="desconhecido"):
         agents.chat("nao-existe", "k", "m", "s", "u")
+
+
+def test_lista_de_modelos_le_a_api_do_provedor(mock_llm, monkeypatch):
+    servidor, base = mock_llm
+    monkeypatch.setitem(agents._MODEL_ENDPOINTS, "openrouter",
+                        (base + "/models/openai", "bearer"))
+    monkeypatch.setitem(agents._MODEL_ENDPOINTS, "anthropic",
+                        (base + "/models/anthropic", "anthropic"))
+    monkeypatch.setitem(agents._MODEL_ENDPOINTS, "google",
+                        (base + "/models/google", "google"))
+
+    r = agents.list_models("openrouter", "sk-x")
+    assert r["fonte"] == "api" and r["aviso"] is None
+    # embedding e whisper não servem para chat; duplicata some
+    assert r["models"] == ["gpt-teste"]
+    assert servidor.recebido["/models/openai"]["headers"]["Authorization"] == "Bearer sk-x"
+
+    r = agents.list_models("anthropic", "sk-x")
+    assert r["models"] == ["claude-teste"]
+    assert servidor.recebido["/models/anthropic"]["headers"]["x-api-key"] == "sk-x"
+
+    r = agents.list_models("google", "sk-x")
+    # o prefixo "models/" some e o que só faz embedding fica de fora
+    assert r["models"] == ["gemini-teste"]
+    assert servidor.recebido["/models/google"]["headers"]["x-goog-api-key"] == "sk-x"
+
+
+def test_lista_de_modelos_cai_no_catalogo_local_sem_quebrar(mock_llm, monkeypatch):
+    _, base = mock_llm
+    catalogo = agents.PROVIDERS["openrouter"]["models"]
+
+    sem_chave = agents.list_models("openrouter", "")
+    assert sem_chave["models"] == catalogo
+    assert sem_chave["fonte"] == "catálogo local" and "Sem chave" in sem_chave["aviso"]
+
+    casos = [("/models/status/401", "401"), ("/models/status/500", "HTTP 500"),
+             ("/models/quebrado", "inesperada"), ("/models/vazio", "não listou")]
+    for rota, trecho in casos:
+        monkeypatch.setitem(agents._MODEL_ENDPOINTS, "openrouter", (base + rota, "bearer"))
+        r = agents.list_models("openrouter", "sk-x")
+        assert r["models"] == catalogo, rota
+        assert trecho in r["aviso"], rota
+
+    # provedor fora do ar: nada de exceção vazando para a tela
+    monkeypatch.setitem(agents._MODEL_ENDPOINTS, "openrouter",
+                        ("http://127.0.0.1:9/models", "bearer"))
+    r = agents.list_models("openrouter", "sk-x")
+    assert r["models"] == catalogo and "Não foi possível" in r["aviso"]
+
+    with pytest.raises(agents.LLMError, match="desconhecido"):
+        agents.list_models("nao-existe", "sk-x")
+
+
+def test_conversa_leva_historico_e_contexto_nos_tres_formatos(mock_llm):
+    servidor, _ = mock_llm
+    hist = [{"role": "user", "content": "e a margem?"},
+            {"role": "assistant", "content": "subiu"},
+            {"role": "system", "content": "   "}]
+
+    assert agents.chat_conversa(
+        "openrouter", "sk-x", "m", "CTX", hist, "e a dívida?") == "OK-OPENAI"
+    corpo = servidor.recebido["/openai"]["body"]
+    assert corpo["messages"][0]["role"] == "system"
+    assert "CTX" in corpo["messages"][0]["content"]
+    # mensagem em branco não vira turno; a pergunta entra por último
+    assert [m["role"] for m in corpo["messages"][1:]] == ["user", "assistant", "user"]
+    assert corpo["messages"][-1]["content"] == "e a dívida?"
+
+    assert agents.chat_conversa(
+        "anthropic", "sk-x", "m", "CTX", hist, "e a dívida?") == "OK-ANTHROPIC"
+    corpo = servidor.recebido["/anthropic"]["body"]
+    assert "CTX" in corpo["system"]
+    assert [m["role"] for m in corpo["messages"]] == ["user", "assistant", "user"]
+
+    assert agents.chat_conversa(
+        "google", "sk-x", "m", "CTX", hist, "e a dívida?") == "OK-GEMINI"
+    rota = next(p for p in servidor.recebido if p.startswith("/gemini"))
+    corpo = servidor.recebido[rota]["body"]
+    assert "CTX" in corpo["systemInstruction"]["parts"][0]["text"]
+    # o Gemini chama o papel do assistente de "model"
+    assert [c["role"] for c in corpo["contents"]] == ["user", "model", "user"]
+
+
+def test_conversa_trunca_historico_longo(mock_llm):
+    servidor, _ = mock_llm
+    hist = [{"role": "user", "content": f"m{i}"} for i in range(40)]
+    agents.chat_conversa("openrouter", "sk-x", "m", "CTX", hist, "agora")
+    corpo = servidor.recebido["/openai"]["body"]
+    turnos = corpo["messages"][1:]
+    assert len(turnos) == 13                     # 12 do histórico + a pergunta
+    assert turnos[0]["content"] == "m28"
 
 
 def test_parser_de_premissas_do_agente_quant():
@@ -739,3 +865,54 @@ def test_df_to_plain_converte_dataframe_do_yfinance():
     assert out["receita"] == {2025: 400e9, 2024: 380e9}
     assert out["lucro_liquido"] == {2025: 100e9}   # NaN descartado
     assert bdrs._df_to_plain(None, bdrs._Y_INCOME) == {}
+
+
+# ---------------------------------------------------------------------------
+# Contexto dos agentes por tipo de ativo
+# ---------------------------------------------------------------------------
+
+def _payload_min(**over):
+    fund = {"name": "X", "ticker": "XPTO3", "sector": "VAREJO", "financial": False,
+            "last_year": 2025, "base": {"receita": 400e9}, "indicadores": {},
+            "series": {}, "years": []}
+    fund.update(over)
+    return {"fundamentals": fund, "market": {"perf": {}}, "multiples": {}, "score": {}}
+
+
+def test_contexto_de_acao_br_cita_cvm_e_reais():
+    texto = agents.build_context(_payload_min(), {}, {}, {})
+    assert "DFP" in texto and "CVM" in texto
+    assert "R$ 400,00 bi" in texto
+    assert "BDR" not in texto
+
+
+def test_contexto_de_bdr_declara_origem_moeda_e_cambio():
+    texto = agents.build_context(
+        _payload_min(ticker="AAPL34", name="Apple", bdr=True, us_ticker="AAPL",
+                     currency="USD", fonte="Yahoo Finance"), {}, {}, {})
+    assert "BDR" in texto
+    assert "Yahoo Finance" in texto
+    assert "AAPL" in texto
+    # grandezas contábeis na moeda de reporte
+    assert "US$ 400,00 bi" in texto
+    # e o aviso de que preço está em reais
+    assert "REAIS por BDR" in texto
+    assert "CVM" not in texto
+
+
+def test_contexto_respeita_moeda_diferente_de_dolar():
+    texto = agents.build_context(
+        _payload_min(bdr=True, currency="EUR", us_ticker="ASML"), {}, {}, {})
+    assert "EUR 400,00 bi" in texto
+
+
+def test_prompt_do_macro_cobre_acao_br_e_bdr():
+    sistema = agents.AGENTS["macro"]["system"]
+    assert "BDR" in sistema
+    assert "Tesouro americano" in sistema
+    assert "Selic" in sistema
+
+
+def test_regras_comuns_nao_prometem_cvm_para_todo_ativo():
+    for agente in agents.AGENTS.values():
+        assert "ORIGEM DOS DADOS" in agente["system"]

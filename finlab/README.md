@@ -47,7 +47,7 @@ finlab/
 │   ├── metrics.py      margens, retornos, alavancagem, múltiplos
 │   ├── scoring.py      a nota de saúde financeira (0–100)
 │   ├── valuation.py    premissas iniciais: WACC, crescimento, fluxo base
-│   ├── agents.py       prompts dos analistas + proxy multi-provedor de LLM
+│   ├── agents.py       prompts dos analistas, proxy multi-provedor e conversa
 │   └── app.py          rotas HTTP
 ├── web/                front-end sem dependências externas
 │   ├── index.html      tela principal
@@ -56,7 +56,7 @@ finlab/
 │       ├── engine.js   o motor de DCF/EPV — roda no navegador
 │       ├── charts.js   gráficos em SVG puro
 │       └── ...
-└── tests/              49 testes (pytest)
+└── tests/              75 testes (pytest)
 ```
 
 O front não carrega **nada** de CDN: fontes do sistema, gráficos em SVG escritos à mão.
@@ -165,6 +165,24 @@ macro do dia, suas premissas e o resultado do modelo:
 Configure até **4 slots** em *⚙ Modelos de IA* — OpenRouter, OpenAI, Anthropic, Google,
 Groq ou DeepSeek. Cada agente escolhe seu slot, então dá para usar um modelo forte no
 gestor e um barato no macro.
+
+Ao escolher o provedor e colar a chave, clique em **↻ Buscar meus modelos**: o painel
+consulta a API do provedor e lista os modelos que *aquela chave* pode usar, já sem
+embeddings, transcrição e afins. Se o provedor estiver fora do ar ou a chave for
+recusada, cai numa lista de sugestões e diz o motivo — e sempre há a opção
+*✎ outro (digitar)* para colar um id de modelo à mão.
+
+### Conversar com a mesa
+
+O botão do cérebro no canto inferior direito (ou `Ctrl+K`) abre uma caixa de conversa
+que acompanha você em todas as telas. Ela recebe o mesmo contexto dos agentes: o ativo
+aberto, os fundamentos, o macro do dia e — importante — **as premissas como estão nos
+sliders naquele instante**. Mexa no crescimento e pergunte "isso faz sentido?" que a
+pergunta chega junto com o número novo.
+
+A conversa fica no `sessionStorage` do navegador (sobrevive à navegação entre telas,
+some ao fechar a aba) e o 🗑 do cabeçalho limpa tudo. `Enter` envia, `Shift+Enter`
+quebra linha, `Esc` fecha.
 
 **Sobre as chaves:** ficam no `localStorage` do seu navegador e são enviadas ao servidor
 local só no instante da chamada, que apenas repassa ao provedor (isso evita CORS e as

@@ -434,5 +434,6 @@
 
   renderBrand();
   bind();
+  window.FLChat.init({ rotulo: 'visão geral do mercado' });
   load(false);
 })();

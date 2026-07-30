@@ -320,8 +320,30 @@
 
     const all = series.flatMap((s) => s.values).filter(isNum)
       .concat((o.overlay && o.overlay.values || []).filter(isNum));
-    const yScale = niceTicks(Math.min(0, Math.min.apply(null, all)), Math.max.apply(null, all), 5);
+    if (!all.length) {
+      const t = el('text', {
+        x: width / 2, y: height / 2, fill: COLORS.text, 'font-size': 12,
+        'text-anchor': 'middle', 'font-family': 'ui-monospace, monospace'
+      });
+      t.textContent = 'sem dados suficientes';
+      svg.appendChild(t);
+      return null;
+    }
+    // O domínio precisa conter o zero nas duas pontas: a barra é desenhada de
+    // 0 até o valor, então uma série toda negativa (ou toda positiva) sem o
+    // zero no eixo joga a base fora da área e a barra vaza do painel.
+    const yScale = niceTicks(Math.min(0, Math.min.apply(null, all)),
+                             Math.max(0, Math.max.apply(null, all)), 5);
     const sy = (v) => pad.t + H - ((v - yScale.min) / (yScale.max - yScale.min || 1)) * H;
+
+    // Recorte defensivo: nenhum traço pode invadir o resto da página.
+    const clipId = 'clipb-' + Math.random().toString(36).slice(2, 9);
+    const defs = el('defs');
+    const clip = el('clipPath', { id: clipId });
+    clip.appendChild(el('rect', { x: pad.l - 2, y: pad.t - 4, width: W + 4, height: H + 8 }));
+    defs.appendChild(clip);
+    svg.appendChild(defs);
+    const plot = el('g', { 'clip-path': `url(#${clipId})` });
 
     yScale.ticks.forEach((t) => {
       const y = sy(t);
@@ -337,6 +359,8 @@
       lb.textContent = o.yFormat ? o.yFormat(t) : String(t);
       svg.appendChild(lb);
     });
+
+    svg.appendChild(plot);   // barras e linha ficam dentro do recorte
 
     const slot = W / labels.length;
     const groupW = slot * 0.62;
@@ -369,7 +393,7 @@
           rect.setAttribute('opacity', .92);
           tip.classList.remove('on');
         });
-        svg.appendChild(rect);
+        plot.appendChild(rect);
       });
 
       const lb = el('text', {
@@ -385,12 +409,12 @@
         x: pad.l + slot * i + slot / 2, y: isNum(v) ? sy(v) : null
       })).filter((p) => p.y !== null);
       if (pts.length > 1) {
-        svg.appendChild(el('path', {
+        plot.appendChild(el('path', {
           d: pts.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' '),
           fill: 'none', stroke: o.overlay.color, 'stroke-width': 2,
           'stroke-dasharray': o.overlay.dash || null, 'stroke-linecap': 'round'
         }));
-        pts.forEach((p) => svg.appendChild(el('circle', {
+        pts.forEach((p) => plot.appendChild(el('circle', {
           cx: p.x, cy: p.y, r: 3, fill: o.overlay.color, stroke: '#0A1120', 'stroke-width': 1.5
         })));
       }

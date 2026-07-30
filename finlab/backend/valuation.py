@@ -204,7 +204,8 @@ def assumptions(fund: dict, snap: dict, macro: dict, brapi: Optional[dict] = Non
 
 
 def bdr_assumptions(fund: dict, snap: dict, macro: dict,
-                    quote: Optional[dict] = None) -> dict:
+                    quote: Optional[dict] = None,
+                    yahoo_info: Optional[dict] = None) -> dict:
     """Premissas para o DCF de um BDR — inteiro na moeda de reporte (USD).
 
     O truque de conversão: `shares` aqui é sintético — market cap em USD
@@ -222,13 +223,24 @@ def bdr_assumptions(fund: dict, snap: dict, macro: dict,
     fx = b3data.usdbrl()
     preco_bdr = snap.get("price")
 
-    mcap_brl = None
-    if quote and quote.get("marketCap"):
+    # Market cap em USD: direto do Yahoo quando disponível (já vem em dólar);
+    # senão, o marketCap em BRL da BRAPI convertido pela PTAX.
+    mcap_usd = None
+    mcap_fonte = None
+    if yahoo_info and yahoo_info.get("marketCap"):
+        try:
+            mcap_usd = float(yahoo_info["marketCap"])
+            mcap_fonte = "Yahoo Finance"
+        except (TypeError, ValueError):
+            mcap_usd = None
+    if mcap_usd is None and quote and quote.get("marketCap"):
         try:
             mcap_brl = float(quote["marketCap"])
+            if fx:
+                mcap_usd = mcap_brl / fx
+                mcap_fonte = "BRAPI ÷ PTAX"
         except (TypeError, ValueError):
-            mcap_brl = None
-    mcap_usd = (mcap_brl / fx) if (mcap_brl and fx) else None
+            pass
 
     shares_eff = (mcap_usd / preco_bdr) if (mcap_usd and preco_bdr) else None
 
@@ -238,15 +250,16 @@ def bdr_assumptions(fund: dict, snap: dict, macro: dict,
     inflacao = 0.025
     beta = 1.0
     beta_source = "padrão (1,0)"
-    if quote:
+    raw_beta = (yahoo_info or {}).get("beta")
+    if raw_beta is None and quote:
         stats = quote.get("defaultKeyStatistics")
-        raw = stats.get("beta") if isinstance(stats, dict) else None
-        try:
-            if raw:
-                beta = _clamp(float(raw), 0.3, 2.5)
-                beta_source = "BRAPI"
-        except (TypeError, ValueError):
-            pass
+        raw_beta = stats.get("beta") if isinstance(stats, dict) else None
+    try:
+        if raw_beta:
+            beta = _clamp(float(raw_beta), 0.3, 2.5)
+            beta_source = "Yahoo Finance" if (yahoo_info or {}).get("beta") else "BRAPI"
+    except (TypeError, ValueError):
+        pass
 
     spread = 0.015
     kd = rf + spread
@@ -285,8 +298,9 @@ def bdr_assumptions(fund: dict, snap: dict, macro: dict,
         motivo = ("Balanço de instituição financeira: DCF de fluxo da firma não se "
                   "aplica. Use P/L, P/VP e ROE.")
     elif fund.get("years") in (None, []):
-        motivo = ("Sem demonstrações disponíveis. Fundamentos de BDR exigem token "
-                  "BRAPI (módulos de balanço/DRE/fluxo de caixa).")
+        motivo = ("Sem demonstrações disponíveis: o Yahoo Finance não respondeu para o "
+                  "papel de origem (rede bloqueando finance.yahoo.com é a causa mais "
+                  "comum) e a BRAPI não cobre fundamentos de BDR.")
     elif fcf_base is None:
         motivo = "Fluxo de caixa livre indisponível nos módulos da BRAPI."
     elif shares_eff is None:
@@ -332,6 +346,7 @@ def bdr_assumptions(fund: dict, snap: dict, macro: dict,
         "unit_ratio": 1,
         "preco": preco_bdr,
         "mcap_usd": mcap_usd,
+        "mcap_fonte": mcap_fonte,
         "usdbrl": fx,
         "moeda": fund.get("currency") or "USD",
         "bdr": True,

@@ -339,12 +339,19 @@ def _bdr_payload(ticker: str) -> dict:
     if bdr is None:
         raise HTTPException(status_code=404, detail=f"BDR fora do universo: {ticker}")
 
-    mod = bdrs.raw_modules(ticker)
-    fund = cache.memoize(f"bdr:fund:v1:{ticker}", TTL_CVM,
-                         lambda: bdrs.fundamentals_from_modules(bdr, mod)) or {}
+    # Só resultados COM dados entram no cache de 24h: uma falha transitória do
+    # Yahoo não pode condenar o BDR a um dia inteiro sem fundamentos.
+    chave_bundle = f"bdr:bundle:v2:{ticker}"
+    bundle = cache.get(chave_bundle, TTL_CVM)
+    if not bundle or not bundle.get("fonte"):
+        bundle = bdrs.fetch_fundamentals(ticker) or {}
+        if bundle.get("fonte"):
+            cache.set(chave_bundle, bundle)
+    fund = bundle.get("fund") or bdrs.fundamentals_from_modules(bdr, None)
+    yahoo_info = bundle.get("info") or {}
 
     series = market.asset_series([ticker]).get(ticker, [])
-    quote = market.brapi_quotes([ticker]).get(ticker) or (mod or {})
+    quote = market.brapi_quotes([ticker]).get(ticker)
     perf = market.performance(series)
     price = perf.get("price")
     source = market.source_label()
@@ -356,7 +363,7 @@ def _bdr_payload(ticker: str) -> dict:
             perf["day"] = float(chg) / 100.0
 
     macro_data = market.macro()
-    prem = valuation.bdr_assumptions(fund, {"price": price}, macro_data, quote)
+    prem = valuation.bdr_assumptions(fund, {"price": price}, macro_data, quote, yahoo_info)
 
     snap = {
         "price": price,
@@ -377,14 +384,19 @@ def _bdr_payload(ticker: str) -> dict:
     dl = base.get("divida_liquida")
     ev = (mcap_usd + dl) if (mcap_usd is not None and dl is not None
                              and not fund.get("financial")) else None
-    dy = quote.get("dividendYield") if quote else None
+    dy = bdrs.yahoo_dividend_yield(yahoo_info)
+    if dy is None and quote and quote.get("dividendYield") is not None:
+        try:
+            dy = float(quote["dividendYield"]) / 100.0
+        except (TypeError, ValueError):
+            dy = None
     mult = {
         "pl": metrics.div(mcap_usd, base.get("lucro_liquido")),
         "pvp": metrics.div(mcap_usd, base.get("patrimonio_liquido")),
         "ev_ebitda": metrics.div(ev, base.get("ebitda")),
         "ev_ebit": metrics.div(ev, base.get("ebit")),
         "psr": metrics.div(mcap_usd, base.get("receita")),
-        "dy": (float(dy) / 100.0) if dy is not None else None,
+        "dy": dy,
         "roe": fund.get("indicadores", {}).get("roe"),
         "mg_ebitda": fund.get("indicadores", {}).get("mg_ebitda"),
         "nd_ebitda": fund.get("indicadores", {}).get("nd_ebitda"),
@@ -411,9 +423,45 @@ def _bdr_payload(ticker: str) -> dict:
                    "perf": p["perf"]}
                   for p in pares if p["ticker"] != ticker],
         "price_series": [{"d": d, "p": p} for d, p in series[-500:]],
-        "consenso": _consenso(quote if isinstance(quote, dict) else None),
+        "consenso": _consenso_bdr(yahoo_info, price) or _consenso(quote),
         "source": source,
+        "fonte_fundamentos": bundle.get("fonte"),
         "bdr": True,
+    }
+
+
+def _consenso_bdr(info: dict, preco_bdr) -> dict:
+    """Preço-alvo de analistas do Yahoo, convertido para 'por BDR'.
+
+    O alvo vem em USD por ação de origem; convertê-lo pela mesma identidade do
+    valuation (alvo/preço de origem × preço do BDR) devolve um número na moeda
+    e na escala que o usuário vê na tela.
+    """
+    if not info or not preco_bdr:
+        return {}
+    atual = info.get("currentPrice") or info.get("regularMarketPrice")
+    alvo = info.get("targetMeanPrice")
+    try:
+        atual = float(atual)
+        alvo_m = float(alvo)
+    except (TypeError, ValueError):
+        return {}
+    if atual <= 0:
+        return {}
+
+    def conv(chave):
+        try:
+            return round(float(info[chave]) / atual * preco_bdr, 2)
+        except (TypeError, ValueError, KeyError):
+            return None
+
+    return {
+        "alvo_medio": round(alvo_m / atual * preco_bdr, 2),
+        "alvo_alto": conv("targetHighPrice"),
+        "alvo_baixo": conv("targetLowPrice"),
+        "recomendacao": info.get("recommendationKey"),
+        "analistas": info.get("numberOfAnalystOpinions"),
+        "fonte": "Yahoo Finance · convertido para R$ por BDR",
     }
 
 

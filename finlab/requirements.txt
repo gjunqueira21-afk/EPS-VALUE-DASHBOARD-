@@ -5,6 +5,8 @@ requests>=2.31
 pandas>=2.0
 pyarrow>=14.0
 python-dotenv>=1.0
+# Fundamentos de BDRs (demonstrações do papel de origem, gratuito)
+yfinance>=0.2.40
 
 # Testes (opcional): python -m pytest finlab/tests -q
 pytest>=8.0

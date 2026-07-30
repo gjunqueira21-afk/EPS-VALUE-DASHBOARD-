@@ -420,7 +420,7 @@ def _bdr_payload(ticker: str) -> dict:
         "sector_label": bdrs.SECTORS[bdr.sector]["label"],
         "peers": [{"ticker": p["ticker"], "name": p["name"], "score": None,
                    "multiples": {"dy": p.get("dy")}, "price": p["price"],
-                   "perf": p["perf"]}
+                   "perf": p["perf"], "liquidez": p.get("liquidez")}
                   for p in pares if p["ticker"] != ticker],
         "price_series": [{"d": d, "p": p} for d, p in series[-500:]],
         "consenso": _consenso_bdr(yahoo_info, price) or _consenso(quote),
@@ -468,6 +468,59 @@ def _consenso_bdr(info: dict, preco_bdr) -> dict:
 # ---------------------------------------------------------------------------
 # Agentes
 # ---------------------------------------------------------------------------
+
+@app.post("/api/llm/models")
+def api_llm_models(body: dict = Body(...)):
+    """Modelos que a chave informada pode usar naquele provedor."""
+    provider = (body.get("provider") or "").strip()
+    api_key = (body.get("api_key") or "").strip()
+    try:
+        return agents.list_models(provider, api_key)
+    except agents.LLMError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/agents/chat")
+def api_agent_chat(body: dict = Body(...)):
+    """Conversa livre com a mesa, no contexto do ativo aberto na tela."""
+    slot = body.get("slot") or {}
+    api_key = (slot.get("api_key") or "").strip()
+    model = (slot.get("model") or "").strip()
+    if not api_key or not model:
+        raise HTTPException(status_code=400,
+                            detail="Configure um slot com chave e modelo em ⚙ Modelos de IA.")
+
+    pergunta = (body.get("pergunta") or "").strip()
+    if not pergunta:
+        raise HTTPException(status_code=400, detail="Escreva uma pergunta.")
+
+    ticker = (body.get("ticker") or "").upper().strip()
+    if ticker and (universe.get(ticker) or bdrs.get(ticker)):
+        payload = api_company(ticker)
+        contexto = agents.build_context(
+            payload,
+            body.get("assumptions") or payload["assumptions"],
+            body.get("resultado") or {},
+            payload.get("macro") or {},
+        )
+    else:
+        # Sem ativo aberto (telas de lista): a conversa ainda tem o macro do dia.
+        macro_data = market.macro()
+        linhas = ["Nenhum ativo aberto no painel — o usuário está numa tela de lista.",
+                  "MACRO DO DIA"]
+        linhas += [f"  {k.upper()}: {v.get('value')} ({v.get('source')})"
+                   for k, v in (macro_data or {}).items() if isinstance(v, dict)]
+        contexto = "\n".join(linhas)
+
+    try:
+        texto = agents.chat_conversa(slot.get("provider"), api_key, model, contexto,
+                                     body.get("historico") or [], pergunta)
+    except agents.LLMError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return {"texto": texto, "modelo": model, "provedor": slot.get("provider"),
+            "ticker": ticker or None}
+
 
 @app.post("/api/agents/run")
 def api_agent_run(body: dict = Body(...)):

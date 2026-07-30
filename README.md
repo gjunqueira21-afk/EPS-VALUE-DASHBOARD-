@@ -33,7 +33,10 @@ instalação, senão o script avisa e para.
 - **ETFs** — todos os fundos de índice da B3, por categoria: tese, taxa de administração
   e liquidez real (volume do boletim da B3), com painel próprio por fundo.
 - **BDRs** — empresas globais na B3, separadas pelos setores GICS em inglês; clicou,
-  abre o painel de valuation completo (fundamentos em USD via BRAPI).
+  abre o painel de valuation completo (fundamentos em USD via Yahoo Finance).
+- **Mesa de IA** — até 4 slots de LLM (OpenRouter, OpenAI, Anthropic, Google, Groq,
+  DeepSeek), com os modelos da sua chave listados direto da API do provedor, e uma
+  caixa de conversa (`Ctrl+K`) que recebe o ativo aberto e as premissas dos sliders.
 
 📖 **Documentação completa: [`finlab/README.md`](finlab/README.md)** — metodologia do
 score, convenções do modelo de valuation, fontes de dados e limites conhecidos.

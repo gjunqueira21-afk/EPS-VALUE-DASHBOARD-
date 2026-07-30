@@ -27,25 +27,76 @@
       }, p.label))
     );
 
-    const modelWrap = h('div', { class: 'field' });
+    // O modelo é um select alimentado pela API do provedor (os modelos que a
+    // SUA chave pode usar), com escape para digitar um id manualmente.
+    const modelSel = h('select', { id: `slot-model-${idx}` });
     const modelInput = h('input', {
-      type: 'text', id: `slot-model-${idx}`, value: slot.model || '',
-      placeholder: 'ex.: anthropic/claude-sonnet-4.5', list: `models-${idx}`
+      type: 'text', id: `slot-model-txt-${idx}`, value: slot.model || '',
+      placeholder: 'id do modelo', hidden: 'hidden',
+      style: 'margin-top:6px'
     });
-    const datalist = h('datalist', { id: `models-${idx}` });
+    const statusModelo = h('div', {
+      id: `slot-status-${idx}`,
+      style: 'font:400 10px/1.5 var(--mono);color:var(--dim2);margin-top:5px'
+    }, '');
 
-    function refreshModels() {
+    const btnBuscar = h('button', {
+      class: 'btn ghost sm', type: 'button', style: 'margin-top:7px',
+      onclick: () => carregarModelos(true)
+    }, '↻ Buscar meus modelos');
+
+    function preencher(lista, selecionado) {
+      modelSel.innerHTML = '';
+      // Sem escolha ainda, o navegador selecionaria o primeiro da lista e o
+      // salvaria como se o usuário tivesse escolhido. Um vazio na frente evita.
+      if (!selecionado) {
+        modelSel.appendChild(h('option', { value: '', selected: 'selected' }, '— escolher —'));
+      }
+      lista.forEach((m) => modelSel.appendChild(h('option', {
+        value: m, selected: m === selecionado ? 'selected' : null
+      }, m)));
+      modelSel.appendChild(h('option', {
+        value: '__outro__', selected: (selecionado && !lista.includes(selecionado)) ? 'selected' : null
+      }, '✎ outro (digitar)'));
+      const manual = modelSel.value === '__outro__';
+      modelInput.hidden = !manual;
+      if (manual) modelInput.value = selecionado || '';
+    }
+
+    async function carregarModelos(forcar) {
       const p = providers.find((x) => x.key === provSel.value);
-      datalist.innerHTML = '';
-      (p ? p.models : []).forEach((m) => datalist.appendChild(h('option', { value: m })));
       const link = el(`slot-doc-${idx}`);
       if (link && p) { link.href = p.docs; link.textContent = 'obter chave ↗'; }
-    }
-    provSel.addEventListener('change', refreshModels);
 
-    modelWrap.appendChild(h('label', { for: `slot-model-${idx}` }, 'Modelo'));
-    modelWrap.appendChild(modelInput);
-    modelWrap.appendChild(datalist);
+      const atual = modelSel.value === '__outro__'
+        ? modelInput.value.trim()
+        : (modelSel.value || slot.model || '');
+      const chave = (el(`slot-key-${idx}`) || {}).value || '';
+
+      preencher(p ? p.models : [], atual);
+      if (!forcar && !chave) {
+        statusModelo.textContent = 'sugestões — salve a chave e clique em buscar para ver os seus';
+        return;
+      }
+      statusModelo.innerHTML = '<span class="spinner"></span> consultando o provedor…';
+      try {
+        const r = await global.FL.api('/api/llm/models', {
+          method: 'POST',
+          body: JSON.stringify({ provider: provSel.value, api_key: chave.trim() })
+        });
+        preencher(r.models || [], atual);
+        statusModelo.textContent = r.aviso
+          || `${(r.models || []).length} modelos disponíveis nesta chave`;
+      } catch (err) {
+        statusModelo.textContent = 'não foi possível listar: ' + err.message;
+      }
+    }
+
+    modelSel.addEventListener('change', () => {
+      modelInput.hidden = modelSel.value !== '__outro__';
+      if (!modelInput.hidden) modelInput.focus();
+    });
+    provSel.addEventListener('change', () => carregarModelos(false));
 
     const card = h('div', { class: 'slot-card' }, [
       h('div', { class: 'hd' }, [
@@ -58,7 +109,10 @@
       ]),
       h('div', { class: 'slot-grid' }, [
         h('div', { class: 'field' }, [h('label', {}, 'Provedor'), provSel]),
-        modelWrap,
+        h('div', { class: 'field' }, [
+          h('label', { for: `slot-model-${idx}` }, 'Modelo'),
+          modelSel, modelInput, statusModelo, btnBuscar
+        ]),
         h('div', { class: 'field' }, [
           h('label', { for: `slot-key-${idx}` }, 'Chave de API'),
           h('input', {
@@ -75,18 +129,26 @@
         })
       ])
     ]);
-    setTimeout(refreshModels, 0);
+    // Chave já salva: busca os modelos reais assim que o modal abre.
+    setTimeout(() => carregarModelos(!!(slot.api_key || '').trim()), 0);
     return card;
   }
 
   function collect() {
-    return Array.from({ length: SLOT_COUNT }, (_, i) => ({
-      id: i + 1,
-      provider: el(`slot-prov-${i}`).value,
-      model: el(`slot-model-${i}`).value.trim(),
-      api_key: el(`slot-key-${i}`).value.trim(),
-      label: el(`slot-label-${i}`).value.trim()
-    }));
+    return Array.from({ length: SLOT_COUNT }, (_, i) => {
+      const sel = el(`slot-model-${i}`);
+      const manual = el(`slot-model-txt-${i}`);
+      const model = (sel && sel.value === '__outro__')
+        ? (manual ? manual.value.trim() : '')
+        : ((sel && sel.value) || '').trim();
+      return {
+        id: i + 1,
+        provider: el(`slot-prov-${i}`).value,
+        model,
+        api_key: el(`slot-key-${i}`).value.trim(),
+        label: el(`slot-label-${i}`).value.trim()
+      };
+    });
   }
 
   async function open(callback) {

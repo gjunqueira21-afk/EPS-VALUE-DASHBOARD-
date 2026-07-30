@@ -144,6 +144,7 @@
 
   el('brand').innerHTML = window.FL.brandHeader('ETF · ' + ticker);
   el('nav').innerHTML = window.FL.navTabs('etfs');
+  window.FLChat.init({ ticker: ticker, rotulo: 'sobre o ETF ' + ticker });
 
   api('/api/etf/' + encodeURIComponent(ticker))
     .then(render)

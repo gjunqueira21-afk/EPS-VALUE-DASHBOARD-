@@ -14,8 +14,9 @@ demonstrações da CVM. Quatro telas:
    da B3) e patrimônio do registro CVM. ETF não tem valuation — tem custo e liquidez.
 4. **BDRs** — empresas estrangeiras na B3, separadas pelos setores **GICS em inglês**, sem
    misturar com as ações brasileiras. Clicou, abre o mesmo painel de valuation das ações:
-   com token BRAPI, fundamentos/score/DCF funcionam na moeda de reporte (USD), e o preço
-   justo por BDR sai de `upside = equity ÷ market cap` — sem depender da razão BDR/ação.
+   fundamentos/score/DCF vêm do **Yahoo Finance** (gratuito, pelo papel de origem), na
+   moeda de reporte (USD), e o preço justo por BDR sai de `upside = equity ÷ market cap`
+   — sem depender da razão BDR/ação do programa.
 
 ```bash
 git clone https://github.com/gjunqueira21-afk/EPS-VALUE-DASHBOARD-.git
@@ -73,7 +74,7 @@ sensibilidade e os KPIs no mesmo frame.
 | Cotação, volume e liquidez de ETFs/BDRs | Boletim diário da B3 (BDI) via PulseFlat | não |
 | Lista de ETFs e patrimônio | Lista B3 + registro de fundos CVM via PulseFlat | não |
 | Tese e taxa de adm. dos ETFs | Cadastro local (`etfs.py` · `ETF_META`) — não há fonte por API | não |
-| Fundamentos de BDRs | Módulos da BRAPI (dados Yahoo, moeda de reporte) | sim |
+| Fundamentos de BDRs | Yahoo Finance pelo papel de origem (fallback: módulos BRAPI) | não |
 | Selic, CDI, IPCA, dólar, Ibovespa | BCB via PulseFlat | não |
 | Curva de juros (NTN-B / NTN-F) | ANBIMA via PulseFlat | não |
 | Consenso de analistas e beta | BRAPI | sim |

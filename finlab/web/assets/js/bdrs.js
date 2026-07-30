@@ -128,10 +128,9 @@
     if (state.data && !state.data.brapi) {
       zone.appendChild(h('div', {
         class: 'callout',
-        html: '<b>Sem token BRAPI.</b> A tela funciona com o boletim D-1 da B3, mas ao abrir um '
-          + 'BDR os <b>fundamentos, a nota de saúde e o valuation</b> precisam dos módulos da '
-          + 'BRAPI (as demonstrações dessas empresas não estão na CVM). Configure '
-          + '<code>BRAPI_TOKEN</code> no <code>finlab/.env</code> para liberar o painel completo.'
+        html: '<b>Sem token BRAPI</b> — sem problema para os BDRs: cotações vêm do boletim '
+          + 'D-1 da B3 e os <b>fundamentos, a nota de saúde e o valuation</b> vêm do Yahoo '
+          + 'Finance (gratuito) ao abrir cada empresa. O token só acrescenta preço intradiário.'
       }));
     }
   }

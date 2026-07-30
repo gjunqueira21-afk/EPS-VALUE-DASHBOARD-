@@ -611,3 +611,131 @@ def test_toda_meta_curada_de_etf_aponta_categoria_valida():
         assert meta["tese"], ticker
         if meta["taxa_adm"] is not None:
             assert 0 < meta["taxa_adm"] < 3, ticker
+
+
+# ---------------------------------------------------------------------------
+# Fundamentos de BDR via Yahoo Finance
+# ---------------------------------------------------------------------------
+
+def _yahoo_raw_exemplo():
+    def anos(vals):
+        return {2022 + i: v for i, v in enumerate(vals)}
+    return {
+        "income": {
+            "receita": anos([340e9, 360e9, 380e9, 400e9]),
+            "lucro_bruto": anos([150e9, 160e9, 170e9, 180e9]),
+            "ebit": anos([102e9, 108e9, 114e9, 120e9]),
+            "ebitda": anos([113e9, 119e9, 125e9, 131e9]),
+            "lucro_liquido": anos([85e9, 90e9, 95e9, 100e9]),
+        },
+        "balance": {
+            "patrimonio_liquido": anos([60e9, 62e9, 65e9, 70e9]),
+            "ativo_total": anos([330e9, 335e9, 340e9, 350e9]),
+            "caixa_total": anos([55e9, 58e9, 58e9, 60e9]),
+            "divida_bruta": anos([105e9, 104e9, 106e9, 100e9]),
+        },
+        "cashflow": {
+            "fco": anos([95e9, 100e9, 105e9, 110e9]),
+            "capex": anos([-10e9, -10e9, -11e9, -12e9]),
+            "depreciacao": anos([10e9, 10e9, 10e9, 11e9]),
+        },
+        "info": {"marketCap": 3.0e12, "beta": 1.2, "dividendYield": 0.44,
+                 "currentPrice": 210.0, "targetMeanPrice": 250.0,
+                 "targetHighPrice": 300.0, "targetLowPrice": 180.0,
+                 "numberOfAnalystOpinions": 40, "recommendationKey": "buy",
+                 "financialCurrency": "USD"},
+    }
+
+
+def test_fundamentos_de_bdr_via_yahoo():
+    from finlab.backend import bdrs
+    fund = bdrs.fundamentals_from_yahoo(bdrs.get("AAPL34"), _yahoo_raw_exemplo())
+    assert fund["fonte"] == "Yahoo Finance"
+    assert fund["years"] == [2022, 2023, 2024, 2025]
+    base = fund["base"]
+    assert base["receita"] == pytest.approx(400e9)
+    assert base["ebitda"] == pytest.approx(131e9)          # linha EBITDA direto
+    assert base["divida_liquida"] == pytest.approx(40e9)   # 100 − 60 (caixa consolidado)
+    assert base["fcl"] == pytest.approx(98e9)
+    sc = scoring.score(fund["indicadores"], fund["financial"])
+    assert sc["total"] is not None
+
+
+def test_yahoo_ebitda_derivado_quando_linha_falta():
+    from finlab.backend import bdrs
+    raw = _yahoo_raw_exemplo()
+    del raw["income"]["ebitda"]
+    fund = bdrs.fundamentals_from_yahoo(bdrs.get("AAPL34"), raw)
+    # EBIT 120 + D&A 11
+    assert fund["base"]["ebitda"] == pytest.approx(131e9)
+
+
+def test_yahoo_banco_nao_ganha_ebitda_nem_divida_liquida():
+    from finlab.backend import bdrs
+    fund = bdrs.fundamentals_from_yahoo(bdrs.get("JPMC34"), _yahoo_raw_exemplo())
+    assert fund["financial"] is True
+    assert all(v is None for v in fund["series"]["ebitda"])
+    assert fund["indicadores"]["nd_ebitda"] is None
+
+
+def test_yahoo_dy_heuristica_de_escala():
+    from finlab.backend import bdrs
+    assert bdrs.yahoo_dividend_yield({"dividendYield": 0.0044}) == pytest.approx(0.0044)
+    assert bdrs.yahoo_dividend_yield({"dividendYield": 0.44}) == pytest.approx(0.0044)
+    assert bdrs.yahoo_dividend_yield({"dividendYield": None}) is None
+    assert bdrs.yahoo_dividend_yield({}) is None
+
+
+def test_orquestrador_prefere_yahoo_e_cai_para_brapi(monkeypatch):
+    from finlab.backend import bdrs
+    monkeypatch.setattr(bdrs, "yahoo_raw", lambda b: _yahoo_raw_exemplo())
+    bundle = bdrs.fetch_fundamentals("AAPL34")
+    assert bundle["fonte"] == "Yahoo Finance"
+    assert bundle["info"]["marketCap"] == pytest.approx(3.0e12)
+
+    monkeypatch.setattr(bdrs, "yahoo_raw", lambda b: None)
+    monkeypatch.setattr(bdrs, "raw_modules", lambda t: None)
+    bundle = bdrs.fetch_fundamentals("AAPL34")
+    assert bundle["fonte"] is None
+    assert bundle["fund"]["years"] == []
+
+
+def test_bdr_assumptions_usa_mcap_do_yahoo_direto(monkeypatch):
+    from finlab.backend import b3data, bdrs
+    monkeypatch.setattr(b3data, "usdbrl", lambda: 5.0)
+    fund = bdrs.fundamentals_from_yahoo(bdrs.get("AAPL34"), _yahoo_raw_exemplo())
+    prem = valuation.bdr_assumptions(fund, {"price": 87.15}, {}, None,
+                                     yahoo_info=_yahoo_raw_exemplo()["info"])
+    assert prem["mcap_usd"] == pytest.approx(3.0e12)
+    assert prem["mcap_fonte"] == "Yahoo Finance"
+    assert prem["beta"] == pytest.approx(1.2)
+    assert prem["beta_source"] == "Yahoo Finance"
+    assert prem["aplicavel"] is True
+    # identidade: equity == mcap → preço justo == preço do BDR
+    assert 3.0e12 / prem["shares"] == pytest.approx(87.15)
+
+
+def test_consenso_de_bdr_convertido_para_reais_por_bdr():
+    from finlab.backend.app import _consenso_bdr
+    cons = _consenso_bdr(_yahoo_raw_exemplo()["info"], 87.15)
+    # alvo médio 250 sobre preço atual 210 → mesmo upside aplicado ao BDR
+    assert cons["alvo_medio"] == pytest.approx(round(250 / 210 * 87.15, 2))
+    assert cons["alvo_alto"] == pytest.approx(round(300 / 210 * 87.15, 2))
+    assert cons["analistas"] == 40
+    assert "Yahoo" in cons["fonte"]
+    assert _consenso_bdr({}, 87.15) == {}
+    assert _consenso_bdr(_yahoo_raw_exemplo()["info"], None) == {}
+
+
+def test_df_to_plain_converte_dataframe_do_yfinance():
+    import pandas as pd
+    from finlab.backend import bdrs
+    df = pd.DataFrame(
+        {pd.Timestamp("2025-09-30"): [400e9, 100e9],
+         pd.Timestamp("2024-09-30"): [380e9, float("nan")]},
+        index=["Total Revenue", "Net Income"],
+    )
+    out = bdrs._df_to_plain(df, bdrs._Y_INCOME)
+    assert out["receita"] == {2025: 400e9, 2024: 380e9}
+    assert out["lucro_liquido"] == {2025: 100e9}   # NaN descartado
+    assert bdrs._df_to_plain(None, bdrs._Y_INCOME) == {}

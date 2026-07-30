@@ -745,10 +745,11 @@
     if (f.bdr && !anos.length) {
       host.appendChild(h('div', {
         class: 'callout warn',
-        html: '<b>Fundamentos indisponíveis para este BDR.</b> As demonstrações de empresas '
-          + 'estrangeiras não estão na CVM: elas vêm dos módulos da BRAPI (dados Yahoo). '
-          + 'Configure <code>BRAPI_TOKEN</code> no <code>finlab/.env</code> e recarregue — '
-          + 'fundamentos, nota de saúde e valuation passam a funcionar como nas ações brasileiras.'
+        html: '<b>Fundamentos indisponíveis para este BDR.</b> As demonstrações vêm do '
+          + 'Yahoo Finance (gratuito, pelo papel de origem ' + esc(f.us_ticker || '') + '), '
+          + 'e a busca não retornou dados agora. Causas comuns: rede/antivírus bloqueando '
+          + '<code>finance.yahoo.com</code>, ou instabilidade momentânea do Yahoo. '
+          + 'Tente o botão ↻ Atualizar em alguns minutos.'
       }));
       return;
     }
@@ -756,8 +757,8 @@
       host.appendChild(h('div', {
         class: 'callout',
         html: `<b>Valores em ${esc(f.currency || 'USD')}</b> — moeda de reporte da companhia, `
-          + 'via BRAPI/Yahoo (histórico de até 4 exercícios). O preço do BDR em reais embute '
-          + 'o câmbio; os fundamentos aqui, não.'
+          + 'via ' + esc(f.fonte || 'Yahoo Finance') + ' (histórico de até 4 exercícios). '
+          + 'O preço do BDR em reais embute o câmbio; os fundamentos aqui, não.'
       }));
     }
     const s = f.series || {};
@@ -1086,7 +1087,7 @@
     if (isNum(cons.alvo_medio)) {
       host.appendChild(h('section', { class: 'panel' }, [
         h('div', { class: 'panel-h' }, h('div', { class: 'ptitle' },
-          [h('b', {}, 'Consenso de analistas'), ' · via BRAPI'])),
+          [h('b', {}, 'Consenso de analistas'), ' · ' + (cons.fonte || 'via BRAPI')])),
         h('div', { style: 'display:flex;gap:26px;flex-wrap:wrap' }, [
           miniStat('Alvo médio', fmt.money(cons.alvo_medio), `${cons.analistas || '—'} analistas`),
           miniStat('Alvo mínimo', fmt.money(cons.alvo_baixo), ''),

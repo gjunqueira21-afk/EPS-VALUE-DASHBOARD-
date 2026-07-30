@@ -377,7 +377,21 @@ class _MockHandler(http.server.BaseHTTPRequestHandler):
         corpo = json.loads(self.rfile.read(tamanho) or b"{}")
         self.server.recebido[self.path] = {"body": corpo, "headers": dict(self.headers)}
 
-        if self.path.startswith("/openai"):
+        if self.path.startswith("/vazio/raciocinio"):
+            # modelo de raciocínio: content vazio, texto no campo à parte
+            payload = {"choices": [{"message": {"content": "",
+                                                "reasoning": "VEIO-DO-RACIOCINIO"}}]}
+        elif self.path.startswith("/vazio/truncado"):
+            payload = {"choices": [{"message": {"content": ""},
+                                    "finish_reason": "length"}]}
+        elif self.path.startswith("/vazio/nulo"):
+            payload = {"choices": [{"message": {"content": None}}]}
+        elif self.path.startswith("/vazio/anthropic"):
+            payload = {"content": [], "stop_reason": "max_tokens"}
+        elif self.path.startswith("/vazio/gemini"):
+            payload = {"candidates": [{"content": {"parts": []},
+                                       "finishReason": "SAFETY"}]}
+        elif self.path.startswith("/openai"):
             payload = {"choices": [{"message": {"content": "OK-OPENAI"}}]}
         elif self.path.startswith("/anthropic"):
             payload = {"content": [{"type": "text", "text": "OK-"},
@@ -526,6 +540,75 @@ def test_conversa_leva_historico_e_contexto_nos_tres_formatos(mock_llm):
     assert "CTX" in corpo["systemInstruction"]["parts"][0]["text"]
     # o Gemini chama o papel do assistente de "model"
     assert [c["role"] for c in corpo["contents"]] == ["user", "model", "user"]
+
+
+def test_conversa_nao_devolve_bolha_vazia(mock_llm, monkeypatch):
+    """O bug do balão em branco: modelo de raciocínio ou resposta truncada
+    devolviam string vazia, e a tela mostrava uma bolha sem nada dentro."""
+    _, base = mock_llm
+
+    # texto no campo de raciocínio é aproveitado em vez de virar vazio
+    monkeypatch.setitem(agents.PROVIDERS["openrouter"], "url", base + "/vazio/raciocinio")
+    assert agents.chat_conversa(
+        "openrouter", "k", "m", "CTX", [], "e ai?") == "VEIO-DO-RACIOCINIO"
+
+    # sem texto em lugar nenhum, o erro explica o motivo
+    casos = [("/vazio/truncado", "limite de tokens"), ("/vazio/nulo", "vazia")]
+    for rota, trecho in casos:
+        monkeypatch.setitem(agents.PROVIDERS["openrouter"], "url", base + rota)
+        with pytest.raises(agents.LLMError, match=trecho):
+            agents.chat_conversa("openrouter", "k", "m", "CTX", [], "e ai?")
+
+    monkeypatch.setitem(agents.PROVIDERS["anthropic"], "url", base + "/vazio/anthropic")
+    with pytest.raises(agents.LLMError, match="limite de tokens"):
+        agents.chat_conversa("anthropic", "k", "m", "CTX", [], "e ai?")
+
+    monkeypatch.setitem(agents.PROVIDERS["google"], "url", base + "/vazio/gemini")
+    with pytest.raises(agents.LLMError, match="SAFETY"):
+        agents.chat_conversa("google", "k", "m", "CTX", [], "e ai?")
+
+
+def test_cada_agente_fala_com_a_propria_especialidade(mock_llm):
+    servidor, _ = mock_llm
+
+    def sistema_de(agente):
+        agents.chat_conversa("openrouter", "k", "m", "CTX", [], "e ai?", agente)
+        return servidor.recebido["/openai"]["body"]["messages"][0]["content"]
+
+    gestor = sistema_de("gestor")
+    macro = sistema_de("macro")
+    assert "gestor" in gestor.lower() and "posição" in gestor
+    assert "economista" in macro.lower()
+    assert gestor != macro
+
+    # o quant, na conversa, escreve texto — o JSON é só da aba Mesa de IA
+    quant = sistema_de("premissas")
+    assert "NÃO devolva JSON" in quant
+
+    # sem agente, é a mesa inteira falando junto
+    mesa = sistema_de(None)
+    assert "a mesa inteira" in mesa
+
+    # a síntese recebe outro papel: fechar a reunião
+    fim = sistema_de("sintese")
+    assert "CONCLUSÃO" in fim and "fecha a reunião" in fim
+
+    # o CONTEXTO entra em todos
+    for s in (gestor, macro, quant, mesa, fim):
+        assert "CTX" in s
+
+
+def test_pergunta_de_sintese_carrega_o_que_a_mesa_disse():
+    texto = agents.monta_pergunta_sintese("vale a pena?", [
+        {"agente": "gestor", "nome": "Agente Gestor", "texto": "comprar"},
+        {"agente": "macro", "nome": "Agente Macro", "texto": "juro caindo"},
+        {"agente": "equity", "nome": "Vazio", "texto": "   "},
+    ])
+    assert "vale a pena?" in texto
+    assert "--- Agente Gestor ---" in texto and "comprar" in texto
+    assert "--- Agente Macro ---" in texto and "juro caindo" in texto
+    # quem não respondeu não entra na conclusão
+    assert "Vazio" not in texto
 
 
 def test_conversa_trunca_historico_longo(mock_llm):

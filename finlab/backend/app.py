@@ -494,6 +494,13 @@ def api_agent_chat(body: dict = Body(...)):
     if not pergunta:
         raise HTTPException(status_code=400, detail="Escreva uma pergunta.")
 
+    # Quem fala: um especialista, a mesa junta (None) ou a conclusão da rodada.
+    agente = (body.get("agente") or "").strip() or None
+    if agente and agente != "sintese" and agente not in agents.AGENTS:
+        raise HTTPException(status_code=400, detail=f"Agente desconhecido: {agente}")
+    if agente == "sintese":
+        pergunta = agents.monta_pergunta_sintese(pergunta, body.get("respostas") or [])
+
     ticker = (body.get("ticker") or "").upper().strip()
     if ticker and (universe.get(ticker) or bdrs.get(ticker)):
         payload = api_company(ticker)
@@ -514,12 +521,12 @@ def api_agent_chat(body: dict = Body(...)):
 
     try:
         texto = agents.chat_conversa(slot.get("provider"), api_key, model, contexto,
-                                     body.get("historico") or [], pergunta)
+                                     body.get("historico") or [], pergunta, agente)
     except agents.LLMError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return {"texto": texto, "modelo": model, "provedor": slot.get("provider"),
-            "ticker": ticker or None}
+            "ticker": ticker or None, "agente": agente}
 
 
 @app.post("/api/agents/run")

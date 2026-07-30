@@ -56,7 +56,7 @@ finlab/
 │       ├── engine.js   o motor de DCF/EPV — roda no navegador
 │       ├── charts.js   gráficos em SVG puro
 │       └── ...
-└── tests/              75 testes (pytest)
+└── tests/              78 testes (pytest)
 ```
 
 O front não carrega **nada** de CDN: fontes do sistema, gráficos em SVG escritos à mão.
@@ -180,9 +180,27 @@ aberto, os fundamentos, o macro do dia e — importante — **as premissas como 
 sliders naquele instante**. Mexa no crescimento e pergunte "isso faz sentido?" que a
 pergunta chega junto com o número novo.
 
+**Quem responde** se escolhe no rodapé da caixa:
+
+- **🧠 Mesa inteira** (padrão) — os quatro agentes respondem em sequência, cada um pela
+  sua especialidade e com o crachá do nome, e as falas aparecem uma a uma conforme
+  chegam. No fim, uma **Conclusão da mesa** sintetiza: onde eles convergem, onde
+  discordam e o que observar. São 5 chamadas ao provedor por pergunta — é a rodada
+  completa, e custa como tal.
+- **Um agente só** — escolha no seletor, ou simplesmente comece a frase com o nome dele
+  (*"gestor, vale a posição?"*) que a pergunta é desviada mesmo com a mesa selecionada.
+
+Os agentes já vêm batizados pela especialidade — *Agente Analista BR*, *Agente Macro*,
+*Agente Gestor*, *Agente Premissas* — e você renomeia qualquer um em *⚙ Modelos de IA*,
+na seção **A mesa**. Campo em branco volta ao padrão. O nome vale na conversa e na aba
+*Mesa de IA*.
+
 A conversa fica no `sessionStorage` do navegador (sobrevive à navegação entre telas,
 some ao fechar a aba) e o 🗑 do cabeçalho limpa tudo. `Enter` envia, `Shift+Enter`
 quebra linha, `Esc` fecha.
+
+Cada agente usa o slot que você escolheu para ele na aba *Mesa de IA*; sem escolha, usa
+o primeiro slot configurado — então uma chave só já move a mesa inteira.
 
 **Sobre as chaves:** ficam no `localStorage` do seu navegador e são enviadas ao servidor
 local só no instante da chamada, que apenas repassa ao provedor (isso evita CORS e as

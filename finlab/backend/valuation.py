@@ -203,6 +203,144 @@ def assumptions(fund: dict, snap: dict, macro: dict, brapi: Optional[dict] = Non
     }
 
 
+def bdr_assumptions(fund: dict, snap: dict, macro: dict,
+                    quote: Optional[dict] = None) -> dict:
+    """Premissas para o DCF de um BDR — inteiro na moeda de reporte (USD).
+
+    O truque de conversão: `shares` aqui é sintético — market cap em USD
+    dividido pelo preço do BDR em BRL. Assim, equity_value(USD) ÷ shares
+    devolve diretamente o preço justo POR BDR em reais, sem precisar da
+    razão BDR/ação do programa:
+
+        equity/shares = preço_BDR × equity/mcap = preço_BDR × (1 + upside)
+    """
+    from . import b3data
+
+    base = fund.get("base", {})
+    ind = fund.get("indicadores", {})
+
+    fx = b3data.usdbrl()
+    preco_bdr = snap.get("price")
+
+    mcap_brl = None
+    if quote and quote.get("marketCap"):
+        try:
+            mcap_brl = float(quote["marketCap"])
+        except (TypeError, ValueError):
+            mcap_brl = None
+    mcap_usd = (mcap_brl / fx) if (mcap_brl and fx) else None
+
+    shares_eff = (mcap_usd / preco_bdr) if (mcap_usd and preco_bdr) else None
+
+    # Custo de capital em dólar: âncoras dos EUA, não a curva brasileira.
+    rf = 0.045       # UST ~10 anos, referência editável
+    erp = 0.045
+    inflacao = 0.025
+    beta = 1.0
+    beta_source = "padrão (1,0)"
+    if quote:
+        stats = quote.get("defaultKeyStatistics")
+        raw = stats.get("beta") if isinstance(stats, dict) else None
+        try:
+            if raw:
+                beta = _clamp(float(raw), 0.3, 2.5)
+                beta_source = "BRAPI"
+        except (TypeError, ValueError):
+            pass
+
+    spread = 0.015
+    kd = rf + spread
+
+    divida = base.get("divida_bruta")
+    if mcap_usd and divida is not None and mcap_usd > 0:
+        wd = _clamp(divida / (divida + mcap_usd), 0.0, 0.80)
+        wd_source = "mercado (dívida bruta / (dívida + market cap))"
+    else:
+        wd = 0.20
+        wd_source = "padrão (20%)"
+    we = 1 - wd
+
+    ke = rf + beta * erp
+    wacc = we * ke + wd * kd * (1 - TAX_RATE)
+
+    cagr_rec = ind.get("cagr_receita_3a")
+    g0 = _clamp(cagr_rec if cagr_rec is not None else 0.05, -0.05, 0.25)
+    g_terminal = _clamp(inflacao, 0.0, max(0.0, wacc - 0.020))
+    growth = [round(g0 + (g_terminal - g0) * (i / 4), 4) for i in range(5)]
+
+    fcf = base_fcf(fund)
+    fcf_base = fcf["media3"] if fcf["media3"] is not None else fcf["ultimo"]
+
+    series = fund.get("series", {})
+    ebit_hist = [v for v in (series.get("ebit") or []) if v is not None]
+    ebit_norm = _mean(ebit_hist[-3:]) if ebit_hist else None
+    ebitda_hist = [v for v in (series.get("ebitda") or []) if v is not None]
+    ebitda_norm = _mean(ebitda_hist[-3:]) if ebitda_hist else None
+    fcl_sobre_ebitda = (round(fcf_base / ebitda_norm, 3)
+                        if fcf_base is not None and ebitda_norm and ebitda_norm > 0 else None)
+
+    aplicavel = (not fund.get("financial") and fcf_base is not None
+                 and shares_eff is not None)
+    if fund.get("financial"):
+        motivo = ("Balanço de instituição financeira: DCF de fluxo da firma não se "
+                  "aplica. Use P/L, P/VP e ROE.")
+    elif fund.get("years") in (None, []):
+        motivo = ("Sem demonstrações disponíveis. Fundamentos de BDR exigem token "
+                  "BRAPI (módulos de balanço/DRE/fluxo de caixa).")
+    elif fcf_base is None:
+        motivo = "Fluxo de caixa livre indisponível nos módulos da BRAPI."
+    elif shares_eff is None:
+        motivo = ("Market cap ou câmbio indisponível — impossível converter o "
+                  "equity em preço por BDR.")
+    else:
+        motivo = None
+
+    return {
+        "rf": round(rf, 4),
+        "rf_fonte": "UST ~10 anos (referência fixa, editável)",
+        "rf_modo": "ust",
+        "rf_opcoes": {},
+        "erp": erp,
+        "beta": round(beta, 3),
+        "beta_source": beta_source,
+        "premio_extra": 0.0,
+        "ke": round(ke, 4),
+        "cdi": round(rf, 4),
+        "spread_credito": spread,
+        "kd": round(kd, 4),
+        "tax": TAX_RATE,
+        "wd": round(wd, 4),
+        "we": round(we, 4),
+        "wd_source": wd_source,
+        "wacc": round(wacc, 4),
+        "inflacao": inflacao,
+        "growth": growth,
+        "g_terminal": round(g_terminal, 4),
+        "anos": 5,
+        "fcf_base": fcf_base,
+        "fcf_ultimo": fcf["ultimo"],
+        "fcf_media3": fcf["media3"],
+        "fcf_historico": fcf["historico"],
+        "fcf_modo": "media3" if fcf["media3"] is not None else "ultimo",
+        "ebit_normalizado": ebit_norm,
+        "ebitda_normalizado": ebitda_norm,
+        "fcl_sobre_ebitda": fcl_sobre_ebitda,
+        "divida_liquida": base.get("divida_liquida"),
+        "caixa": base.get("caixa"),
+        "shares": shares_eff,
+        "shares_emitidas": None,
+        "unit_ratio": 1,
+        "preco": preco_bdr,
+        "mcap_usd": mcap_usd,
+        "usdbrl": fx,
+        "moeda": fund.get("currency") or "USD",
+        "bdr": True,
+        "aplicavel": aplicavel,
+        "motivo_nao_aplicavel": motivo,
+        "fcl_negativo": bool(fcf_base is not None and fcf_base <= 0),
+    }
+
+
 def _motivo(fund: dict, fcf_base: Optional[float], snap: dict) -> Optional[str]:
     if fund.get("financial"):
         return ("Instituição financeira: DCF por fluxo de caixa livre da firma não se "

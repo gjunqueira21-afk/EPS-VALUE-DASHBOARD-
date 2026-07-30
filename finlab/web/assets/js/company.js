@@ -46,7 +46,8 @@
     const f = d.fundamentals, m = d.market, mu = d.multiples, sc = d.score;
     const perf = m.perf || {};
 
-    const banda = 'sb-' + (sc.total >= 70 ? 'good' : sc.total >= 55 ? 'ok' : sc.total >= 40 ? 'warn' : 'bad');
+    const banda = 'sb-' + (!isNum(sc.total) ? 'none'
+      : sc.total >= 70 ? 'good' : sc.total >= 55 ? 'ok' : sc.total >= 40 ? 'warn' : 'bad');
 
     el('companyStrip').innerHTML = '';
     el('companyStrip').appendChild(h('section', { class: 'panel tight' }, [
@@ -64,7 +65,13 @@
           ]),
           h('div', {
             style: 'font:400 11px var(--mono);color:var(--dim2);margin-top:6px'
-          }, [
+          }, f.bdr ? [
+            'BDR · ', d.sector_label,
+            ' · papel de origem: ', f.us_ticker || '—',
+            f.last_year ? ' · exercício-base ' + f.last_year : '',
+            f.currency ? ' · demonstrações em ' + f.currency : '',
+            f.financial ? ' · balanço de instituição financeira' : ''
+          ].join('') : [
             d.sector_label,
             ' · CVM ', f.cd_cvm || '—',
             ' · exercício-base ', String(f.last_year || '—'),
@@ -104,10 +111,12 @@
     const r = result();
 
     if (!a.aplicavel && a.motivo_nao_aplicavel) {
+      const temDados = (state.data.fundamentals.years || []).length > 0;
       zone.appendChild(h('div', {
         class: 'callout warn',
         html: '<b>DCF indisponível para esta empresa.</b> ' + esc(a.motivo_nao_aplicavel)
-          + ' As abas de fundamentos, nota de saúde e múltiplos continuam completas.'
+          + (temDados ? ' As abas de fundamentos, nota de saúde e múltiplos continuam completas.'
+            : ' A cotação e a performance abaixo continuam funcionando.')
       }));
       return;
     }
@@ -694,8 +703,19 @@
     box.appendChild(linha('= Enterprise Value', fmt.big(r.ev, 2), '#67E8F9'));
     box.appendChild(linha('− Dívida líquida', fmt.big(-dl, 2), dl > 0 ? '#F87171' : '#34D399'));
     box.appendChild(linha('= Equity value', fmt.big(r.equity_value, 2), '#A78BFA'));
-    box.appendChild(linha('÷ ' + fmt.bigShort(a.shares, 2) + ' papéis',
+    box.appendChild(linha(
+      a.bdr ? '→ preço justo por BDR (via market cap e câmbio)'
+        : '÷ ' + fmt.bigShort(a.shares, 2) + ' papéis',
       isNum(r.preco_justo) ? fmt.money(r.preco_justo) : '—', '#34D399'));
+    if (a.bdr) {
+      box.appendChild(h('div', {
+        class: 'note',
+        html: 'Conversão sem depender da razão BDR/ação do programa: '
+          + '<b>upside = equity value ÷ market cap em USD − 1</b>, e o preço justo por BDR '
+          + 'é o preço de tela vezes (1 + upside). Market cap da BRAPI convertido pela PTAX '
+          + (isNum(a.usdbrl) ? `(US$ 1 = R$ ${fmt.num(a.usdbrl, 2)})` : '') + '.'
+      }));
+    }
 
     const stackBox = h('div', { style: 'margin-top:11px' });
     box.appendChild(stackBox);
@@ -721,6 +741,25 @@
 
     const f = state.data.fundamentals;
     const anos = f.years || [];
+
+    if (f.bdr && !anos.length) {
+      host.appendChild(h('div', {
+        class: 'callout warn',
+        html: '<b>Fundamentos indisponíveis para este BDR.</b> As demonstrações de empresas '
+          + 'estrangeiras não estão na CVM: elas vêm dos módulos da BRAPI (dados Yahoo). '
+          + 'Configure <code>BRAPI_TOKEN</code> no <code>finlab/.env</code> e recarregue — '
+          + 'fundamentos, nota de saúde e valuation passam a funcionar como nas ações brasileiras.'
+      }));
+      return;
+    }
+    if (f.bdr) {
+      host.appendChild(h('div', {
+        class: 'callout',
+        html: `<b>Valores em ${esc(f.currency || 'USD')}</b> — moeda de reporte da companhia, `
+          + 'via BRAPI/Yahoo (histórico de até 4 exercícios). O preço do BDR em reais embute '
+          + 'o câmbio; os fundamentos aqui, não.'
+      }));
+    }
     const s = f.series || {};
     const labels = anos.map(String);
 
@@ -954,7 +993,9 @@
     const fmts = state.universe.metric_format;
 
     // Comparação com a mediana ------------------------------------------
-    host.appendChild(h('section', { class: 'panel' }, [
+    // BDRs não têm mediana setorial calculada (os pares só têm dados de
+    // mercado sem token) — a tabela de pares abaixo já cobre a comparação.
+    if (!d.bdr) host.appendChild(h('section', { class: 'panel' }, [
       h('div', { class: 'panel-h' }, h('div', { class: 'ptitle' },
         [h('b', {}, 'A empresa contra a mediana do setor')])),
       h('div', { class: 'table-wrap' }, h('table', {}, [
@@ -1087,7 +1128,8 @@
       const q = input.value.trim().toUpperCase();
       list.innerHTML = '';
       if (!q) return close();
-      const hits = (state.universe.companies || []).filter(
+      const todos = (state.universe.companies || []).concat(state.universe.bdrs || []);
+      const hits = todos.filter(
         (c) => c.ticker.includes(q) || c.name.toUpperCase().includes(q)).slice(0, 10);
       if (!hits.length) return close();
       hits.forEach((c) => {
@@ -1154,6 +1196,19 @@
 
   function renderFooter() {
     const f = state.data.fundamentals;
+    if (f.bdr) {
+      el('foot').innerHTML =
+        '<b>Fontes (BDR).</b> Preço e volume do BDR na B3 ('
+        + esc(state.data.market.price_source || '—') + '); demonstrações da companhia via '
+        + 'módulos da BRAPI (dados Yahoo), na moeda de reporte ('
+        + esc(f.currency || 'USD') + '), com histórico de até 4 exercícios.<br><br>'
+        + '<b>Método.</b> O DCF roda inteiro na moeda de reporte; o upside compara o equity '
+        + 'value com o market cap convertido pela PTAX, e o preço justo por BDR é o preço de '
+        + 'tela vezes (1 + upside) — sem depender da razão BDR/ação do programa. Custo de '
+        + 'capital ancorado em referências americanas (UST ~10 anos), editável nos sliders.'
+        + '<br><br><b>Isto não é recomendação de investimento.</b>';
+      return;
+    }
     el('foot').innerHTML =
       '<b>Fontes.</b> Demonstrações anuais (DFP) da CVM para os fundamentos; '
       + esc(state.data.market.price_source || '—') + ' para preço e performance; '
@@ -1183,6 +1238,18 @@
       state.a = JSON.parse(JSON.stringify(data.assumptions));
       state.base = JSON.parse(JSON.stringify(data.assumptions));
       state.fcfMode = data.assumptions.fcf_modo || 'media3';
+
+      // BDR: grandezas financeiras na moeda de reporte da companhia, e o
+      // botão de voltar aponta para a tela de BDRs.
+      if (data.fundamentals && data.fundamentals.bdr) {
+        window.FL.fmt.unit = (data.fundamentals.currency === 'USD' || !data.fundamentals.currency)
+          ? 'US$' : data.fundamentals.currency;
+        const voltar = document.querySelector('.topbar-actions a.btn');
+        if (voltar) {
+          voltar.href = '/bdrs';
+          voltar.textContent = '← BDRs';
+        }
+      }
 
       if (state.a.aplicavel) rebuildControls();
       bindTabs();

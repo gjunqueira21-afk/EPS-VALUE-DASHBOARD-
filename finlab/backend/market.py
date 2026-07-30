@@ -544,6 +544,44 @@ def price_series(tickers: list[str]) -> dict[str, list[tuple[str, float]]]:
     return merge_history(result)
 
 
+def asset_series(tickers: list[str]) -> dict[str, list[tuple[str, float]]]:
+    """Séries de fechamento para QUALQUER ativo à vista da B3 (ETF, BDR, ação).
+
+    Ordem: BRAPI (token) → Yahoo → boletim diário da B3 (BDI, sem token).
+    Tudo é fundido com o histórico local, que se aprofunda com o uso.
+    """
+    from . import b3data
+
+    result: dict[str, list[tuple[str, float]]] = {}
+
+    if BRAPI_TOKEN:
+        for tk in tickers:
+            hist = brapi_history(tk, "1y")
+            if len(hist) > 20:
+                result[tk] = hist
+
+    faltando = [t for t in tickers if t not in result]
+    if faltando and _probe("yahoo"):
+        for tk in faltando:
+            hist = yahoo_history(tk, "2y")
+            if len(hist) > 20:
+                result[tk] = hist
+
+    boletim = b3data.bdi()
+    for tk in tickers:
+        extra = (boletim.get(tk) or {}).get("series") or []
+        if not extra:
+            continue
+        if tk in result:
+            merged = dict(result[tk])
+            merged.update(dict(extra))
+            result[tk] = sorted(merged.items())
+        else:
+            result[tk] = extra
+
+    return merge_history(result)
+
+
 def source_label() -> str:
     if BRAPI_TOKEN and _probe("brapi"):
         return "BRAPI"

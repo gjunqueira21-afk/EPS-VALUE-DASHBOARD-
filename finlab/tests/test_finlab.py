@@ -442,3 +442,172 @@ def test_todos_os_agentes_tem_prompt_e_descricao():
         assert "português" in agente["system"].lower()
     assert {a["key"] for a in agents.agent_list()} == set(agents.AGENTS)
     assert {p["key"] for p in agents.provider_list()} == set(agents.PROVIDERS)
+
+
+# ---------------------------------------------------------------------------
+# ETFs e BDRs
+# ---------------------------------------------------------------------------
+
+def test_universo_bdr_sem_duplicatas_e_setores_validos():
+    from finlab.backend import bdrs
+    tickers = [b.ticker for b in bdrs.UNIVERSE]
+    assert len(tickers) == len(set(tickers))
+    for b in bdrs.UNIVERSE:
+        assert b.sector in bdrs.SECTORS, b.ticker
+        assert b.us_ticker, b.ticker
+
+
+def test_bdr_peers_do_mesmo_setor():
+    from finlab.backend import bdrs
+    pares = bdrs.peers("AAPL34")
+    assert pares and all(p.sector == "TECHNOLOGY" for p in pares)
+    assert all(p.ticker != "AAPL34" for p in pares)
+
+
+def test_bancos_de_bdr_marcados():
+    from finlab.backend import bdrs
+    assert bdrs.get("JPMC34").bank
+    assert not bdrs.get("VISA34").bank      # rede de pagamento, balanço corporativo
+    assert not bdrs.get("AAPL34").bank
+
+
+def test_fundamentos_de_bdr_a_partir_de_modulos_mockados():
+    """Payload no formato Yahoo/BRAPI vira a mesma estrutura dos fundamentos CVM."""
+    from finlab.backend import bdrs
+
+    def stmt(ano, campos):
+        base = {"endDate": {"fmt": f"{ano}-09-30"}}
+        base.update({k: {"raw": v} for k, v in campos.items()})
+        return base
+
+    mod = {
+        "incomeStatementHistory": {"incomeStatementHistory": [
+            stmt(2025, {"totalRevenue": 400e9, "grossProfit": 180e9,
+                        "ebit": 120e9, "netIncome": 100e9}),
+            stmt(2024, {"totalRevenue": 380e9, "grossProfit": 170e9,
+                        "ebit": 114e9, "netIncome": 95e9}),
+            stmt(2023, {"totalRevenue": 360e9, "grossProfit": 160e9,
+                        "ebit": 108e9, "netIncome": 90e9}),
+            stmt(2022, {"totalRevenue": 340e9, "grossProfit": 150e9,
+                        "ebit": 102e9, "netIncome": 85e9}),
+        ]},
+        "balanceSheetHistory": {"balanceSheetStatements": [
+            stmt(2025, {"totalStockholderEquity": 70e9, "totalAssets": 350e9,
+                        "cash": 30e9, "shortTermInvestments": 30e9,
+                        "shortLongTermDebt": 10e9, "longTermDebt": 90e9}),
+            stmt(2024, {"totalStockholderEquity": 65e9, "totalAssets": 340e9,
+                        "cash": 28e9, "shortTermInvestments": 30e9,
+                        "shortLongTermDebt": 11e9, "longTermDebt": 95e9}),
+        ]},
+        "cashflowStatementHistory": {"cashflowStatements": [
+            stmt(2025, {"totalCashFromOperatingActivities": 110e9,
+                        "capitalExpenditures": -12e9, "depreciation": 11e9}),
+            stmt(2024, {"totalCashFromOperatingActivities": 105e9,
+                        "capitalExpenditures": -11e9, "depreciation": 10e9}),
+        ]},
+        "financialData": {"financialCurrency": "USD"},
+    }
+
+    bdr = bdrs.get("AAPL34")
+    fund = bdrs.fundamentals_from_modules(bdr, mod)
+
+    assert fund["currency"] == "USD"
+    assert fund["years"] == [2022, 2023, 2024, 2025]
+    assert fund["last_year"] == 2025
+    base = fund["base"]
+    assert base["receita"] == pytest.approx(400e9)
+    assert base["ebitda"] == pytest.approx(120e9 + 11e9)
+    assert base["divida_bruta"] == pytest.approx(100e9)
+    assert base["divida_liquida"] == pytest.approx(100e9 - 60e9)
+    assert base["fcl"] == pytest.approx(110e9 - 12e9)
+    ind = fund["indicadores"]
+    assert ind["roe"] == pytest.approx(100e9 / 70e9)
+    assert ind["cagr_receita_3a"] == pytest.approx((400 / 340) ** (1 / 3) - 1, rel=1e-6)
+    # dá para pontuar com esses indicadores
+    sc = scoring.score(ind, fund["financial"])
+    assert sc["total"] is not None and 0 <= sc["total"] <= 100
+
+
+def test_fundamentos_de_bdr_sem_modulos_ficam_vazios_e_sinalizados():
+    from finlab.backend import bdrs
+    fund = bdrs.fundamentals_from_modules(bdrs.get("MSFT34"), None)
+    assert fund["years"] == []
+    assert fund["bdr"] is True
+    prem = valuation.bdr_assumptions(fund, {"price": 80.0}, {}, None)
+    assert prem["aplicavel"] is False
+    assert "BRAPI" in prem["motivo_nao_aplicavel"]
+
+
+def test_valuation_de_bdr_converte_upside_para_preco_por_bdr(monkeypatch):
+    """shares sintético: equity/shares = preço_BDR × (1+upside)."""
+    from finlab.backend import b3data, bdrs
+
+    monkeypatch.setattr(b3data, "usdbrl", lambda: 5.0)
+
+    fund = {"sector": "TECHNOLOGY", "financial": False, "bdr": True, "currency": "USD",
+            "years": [2023, 2024, 2025],
+            "base": {"divida_bruta": 100e9, "divida_liquida": 40e9, "caixa": 60e9},
+            "indicadores": {"cagr_receita_3a": 0.06},
+            "series": {"fcl": [90e9, 95e9, 100e9], "ebit": [110e9, 115e9, 120e9],
+                       "ebitda": [120e9, 126e9, 133e9]}}
+    quote = {"marketCap": 5.0 * 2000e9}   # US$ 2 tri em BRL
+    prem = valuation.bdr_assumptions(fund, {"price": 80.0}, {}, quote)
+
+    assert prem["aplicavel"] is True
+    assert prem["mcap_usd"] == pytest.approx(2000e9)
+    # identidade da conversão
+    assert prem["shares"] == pytest.approx(2000e9 / 80.0)
+    equity_hipotetico = 2400e9   # +20% sobre o mcap
+    preco_justo = equity_hipotetico / prem["shares"]
+    assert preco_justo == pytest.approx(80.0 * 1.20)
+    assert prem["g_terminal"] < prem["wacc"]
+
+
+def test_universo_etf_completo_e_categorizado(monkeypatch):
+    from finlab.backend import b3data, etfs as met
+
+    monkeypatch.setattr(b3data, "etf_listing", lambda: [
+        {"ticker": "BOVA11", "nome": "ISHARES IBOVESPA FUNDO DE ÍNDICE",
+         "categoria_b3": "ETF Renda Variável"},
+        {"ticker": "XPTO11", "nome": "GESTORA MSCI GLOBAL FUNDO DE ÍNDICE",
+         "categoria_b3": "ETF Renda Variável"},
+        {"ticker": "BOL5", "nome": "PRODUTO ESTRANHO", "categoria_b3": ""},
+    ])
+    monkeypatch.setattr(b3data, "registry_for", lambda nome: {"pl": 1e9, "pl_data": "2026-07-01",
+                                                              "situacao": "Em Funcionamento Normal",
+                                                              "gestor": None, "administrador": None,
+                                                              "inicio": None})
+    uni = met.universe()
+    tickers = {e["ticker"] for e in uni}
+    assert "BOVA11" in tickers
+    assert "XPTO11" in tickers
+    assert "BOL5" not in tickers            # código fora do padrão XXXX11 sai
+    assert "HASH11" in tickers              # cripto entra pela lista extra
+
+    bova = next(e for e in uni if e["ticker"] == "BOVA11")
+    assert bova["categoria"] == "INDICES_BR"
+    assert bova["curado"] and bova["taxa_adm"] == 0.10
+    xpto = next(e for e in uni if e["ticker"] == "XPTO11")
+    assert xpto["categoria"] == "INTERNACIONAL"   # heurística de nome
+    assert not xpto["curado"]
+    hash11 = next(e for e in uni if e["ticker"] == "HASH11")
+    assert hash11["categoria"] == "CRIPTO"
+
+
+def test_faixas_de_liquidez():
+    from finlab.backend import etfs as met
+    assert met.liquidity_band(None) == "sem negócios"
+    assert met.liquidity_band(200e6) == "muito alta"
+    assert met.liquidity_band(20e6) == "alta"
+    assert met.liquidity_band(2e6) == "média"
+    assert met.liquidity_band(200e3) == "baixa"
+    assert met.liquidity_band(5e3) == "muito baixa"
+
+
+def test_toda_meta_curada_de_etf_aponta_categoria_valida():
+    from finlab.backend import etfs as met
+    for ticker, meta in met.ETF_META.items():
+        assert meta["cat"] in met.CATEGORIES, ticker
+        assert meta["tese"], ticker
+        if meta["taxa_adm"] is not None:
+            assert 0 < meta["taxa_adm"] < 3, ticker

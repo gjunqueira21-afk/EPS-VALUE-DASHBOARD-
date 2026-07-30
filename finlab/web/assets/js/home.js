@@ -18,6 +18,8 @@
 
   function renderBrand() {
     el('brand').innerHTML = window.FL.brandHeader('Monitor fundamentalista B3 · valuation interativo');
+    const nav = el('nav');
+    if (nav) nav.innerHTML = window.FL.navTabs('acoes');
   }
 
   /* ----------------------------------------------------------- faixa macro */

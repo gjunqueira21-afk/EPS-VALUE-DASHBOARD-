@@ -1,14 +1,21 @@
 # 🧠 Gab's FinLab
 
 Monitor fundamentalista e **valuation interativo** de ações da B3, construído sobre as
-demonstrações da CVM. Duas telas:
+demonstrações da CVM. Quatro telas:
 
-1. **Tela principal** — 90 ações em 11 setores, com cotação do dia, performance de semana,
+1. **Ações** — 90 ações em 11 setores, com cotação do dia, performance de semana,
    3 meses, 12 meses e YTD, os múltiplos que fazem sentido para cada setor e dívida
    líquida/EBITDA. Tudo ordenado da empresa **financeiramente mais sólida para a mais frágil**.
 2. **Painel da empresa** — DCF e EPV com recálculo instantâneo ao mexer nos sliders,
    régua de sensibilidade, matriz WACC × perpetuidade, 10 anos de demonstrações,
    comparação com pares e uma **mesa de IA** com quatro analistas comentando os números.
+3. **ETFs** — todos os fundos de índice listados na B3 (universo dinâmico), por categoria:
+   tese (o que o fundo faz), taxa de administração, liquidez real (volume médio do boletim
+   da B3) e patrimônio do registro CVM. ETF não tem valuation — tem custo e liquidez.
+4. **BDRs** — empresas estrangeiras na B3, separadas pelos setores **GICS em inglês**, sem
+   misturar com as ações brasileiras. Clicou, abre o mesmo painel de valuation das ações:
+   com token BRAPI, fundamentos/score/DCF funcionam na moeda de reporte (USD), e o preço
+   justo por BDR sai de `upside = equity ÷ market cap` — sem depender da razão BDR/ação.
 
 ```bash
 git clone https://github.com/gjunqueira21-afk/EPS-VALUE-DASHBOARD-.git
@@ -62,7 +69,11 @@ sensibilidade e os KPIs no mesmo frame.
 |---|---|---|
 | Demonstrações anuais (DFP) | Parquets do pipeline em `valuation_cvm/` | não |
 | Ações emitidas | Capital social da CVM; se faltar, deduzido do LPA publicado | não |
-| Cotação e performance | BRAPI → Yahoo Finance → PulseFlat, nessa ordem | opcional |
+| Cotação e performance (ações) | BRAPI → Yahoo Finance → PulseFlat, nessa ordem | opcional |
+| Cotação, volume e liquidez de ETFs/BDRs | Boletim diário da B3 (BDI) via PulseFlat | não |
+| Lista de ETFs e patrimônio | Lista B3 + registro de fundos CVM via PulseFlat | não |
+| Tese e taxa de adm. dos ETFs | Cadastro local (`etfs.py` · `ETF_META`) — não há fonte por API | não |
+| Fundamentos de BDRs | Módulos da BRAPI (dados Yahoo, moeda de reporte) | sim |
 | Selic, CDI, IPCA, dólar, Ibovespa | BCB via PulseFlat | não |
 | Curva de juros (NTN-B / NTN-F) | ANBIMA via PulseFlat | não |
 | Consenso de analistas e beta | BRAPI | sim |

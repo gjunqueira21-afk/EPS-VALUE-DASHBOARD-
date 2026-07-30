@@ -206,7 +206,10 @@ a:hover { text-decoration: underline; }
   margin-bottom: 16px;
 }
 .search-box { position: relative; flex: 1 1 260px; max-width: 380px; }
-.search-box input {
+/* O seletor genérico input[type=text] (usado nos formulários) vem depois no
+   arquivo e empata em especificidade — sem o [type] aqui, ele vencia e o
+   texto ficava por baixo da lupa. */
+.search-box input[type=text] {
   width: 100%; background: var(--panel2); border: 1px solid var(--line);
   border-radius: 999px; padding: 10px 14px 10px 36px; color: var(--paper);
   font: 500 13px var(--sans);

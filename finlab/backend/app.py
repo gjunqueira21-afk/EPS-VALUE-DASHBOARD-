@@ -21,6 +21,23 @@ from .settings import DEMO_MODE, TTL_CVM, TTL_QUOTE, WEB_DIR
 app = FastAPI(title="Gab's FinLab", version="2.0", docs_url="/api/docs")
 
 
+@app.middleware("http")
+async def _sem_cache_heuristico(request, call_next):
+    """Força o navegador a revalidar HTML e assets a cada visita.
+
+    Sem Cache-Control, os navegadores aplicam "frescor heurístico" e reutilizam
+    JS/CSS antigos do cache sem perguntar ao servidor — depois de um git pull,
+    a página carrega com metade dos scripts desatualizados e quebra de formas
+    silenciosas. `no-cache` não desliga o cache: só exige a revalidação
+    (respostas 304 continuam baratas).
+    """
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/assets") or not path.startswith("/api"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 # ---------------------------------------------------------------------------
 # Camada de dados
 # ---------------------------------------------------------------------------

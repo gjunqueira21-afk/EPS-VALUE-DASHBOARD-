@@ -56,7 +56,7 @@ finlab/
 │       ├── engine.js   o motor de DCF/EPV — roda no navegador
 │       ├── charts.js   gráficos em SVG puro
 │       └── ...
-└── tests/              78 testes (pytest)
+└── tests/              81 testes (pytest)
 ```
 
 O front não carrega **nada** de CDN: fontes do sistema, gráficos em SVG escritos à mão.
@@ -87,6 +87,24 @@ sensibilidade e os KPIs no mesmo frame.
 — CSVs públicos servidos pelo GitHub, que costumam passar até em rede corporativa restrita.
 Com token, você ganha preço intradiário, dividend yield, beta e preço-alvo de analistas:
 basta preencher `BRAPI_TOKEN` em `finlab/.env` (veja `.env.example`).
+
+### O semáforo das fontes
+
+No topo de toda tela de lista há uma bolinha por provedor:
+
+| | O que significa |
+|---|---|
+| 🟢 verde | respondeu ao teste de conexão agora |
+| 🟠 âmbar | está configurado, mas não respondeu — rede, proxy ou provedor fora do ar |
+| ⚪ apagado (tracejado) | falta o token |
+
+A pastilha destacada é a fonte **em uso** no momento. Passe o mouse para ver o detalhe:
+qual token foi lido (mascarado — nunca o token inteiro) e, quando falta, **o caminho
+absoluto exato** onde o painel procurou o `.env`.
+
+O `.env` é lido **uma vez, quando o servidor sobe**: depois de preencher o token, reinicie
+o painel. O estado das fontes, por outro lado, nunca é servido do cache — assim que você
+reinicia com o token, o semáforo já mostra a verdade.
 
 Todo fechamento que o painel vê é gravado em `finlab/data/history.csv`. As janelas de
 3 meses, 12 meses e YTD aparecem conforme o histórico local se aprofunda.

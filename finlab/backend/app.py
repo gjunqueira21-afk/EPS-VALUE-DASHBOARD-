@@ -90,13 +90,25 @@ def _overview_rows() -> dict:
         return {
             "rows": rows,
             "sector_stats": _sector_stats(rows),
-            "source": market.source_label(),
             "demo": DEMO_MODE,
-            "providers": market.provider_status(),
             "cvm_disponivel": cvm.available(),
         }
 
-    return cache.memoize("overview:v4", TTL_QUOTE, build) or {"rows": []}
+    return _com_diagnostico(cache.memoize("overview:v4", TTL_QUOTE, build) or {"rows": []})
+
+
+def _com_diagnostico(payload: dict) -> dict:
+    """Acrescenta o estado das fontes a um payload vindo do cache.
+
+    Isto NÃO pode entrar no blob memoizado: o cache vive em disco e sobrevive
+    ao restart, então quem acabou de preencher o BRAPI_TOKEN e reiniciou
+    continuaria vendo "rodando sem token" pelo resto do TTL — exatamente o
+    contrário do que o painel deveria dizer.
+    """
+    out = dict(payload)
+    out["providers"] = market.provider_status()
+    out["source"] = market.source_label()
+    return out
 
 
 def _sector_stats(rows: list[dict]) -> dict:
@@ -243,10 +255,8 @@ def _etf_rows() -> dict:
             })
         # Mais líquidos primeiro dentro de cada categoria.
         rows.sort(key=lambda r: -(r["liquidez"] or 0))
-        return {"rows": rows,
-                "categories": etfs.CATEGORIES,
-                "source": market.source_label()}
-    return cache.memoize("etfs:rows:v1", TTL_QUOTE, build) or {"rows": []}
+        return {"rows": rows, "categories": etfs.CATEGORIES}
+    return _com_diagnostico(cache.memoize("etfs:rows:v1", TTL_QUOTE, build) or {"rows": []})
 
 
 @app.get("/api/etfs")
@@ -321,11 +331,10 @@ def _bdr_rows() -> dict:
                 "dy": (float(dy) / 100.0) if dy is not None else None,
             })
         rows.sort(key=lambda r: -(r["liquidez"] or 0))
-        return {"rows": rows,
-                "sectors": {k: v for k, v in bdrs.SECTORS.items()},
-                "source": market.source_label(),
-                "brapi": bool(market.BRAPI_TOKEN)}
-    return cache.memoize("bdrs:rows:v1", TTL_QUOTE, build) or {"rows": []}
+        return {"rows": rows, "sectors": {k: v for k, v in bdrs.SECTORS.items()}}
+    saida = _com_diagnostico(cache.memoize("bdrs:rows:v1", TTL_QUOTE, build) or {"rows": []})
+    saida["brapi"] = bool(market.BRAPI_TOKEN)
+    return saida
 
 
 @app.get("/api/bdrs")

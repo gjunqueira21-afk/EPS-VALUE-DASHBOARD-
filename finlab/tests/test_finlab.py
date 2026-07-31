@@ -461,6 +461,70 @@ def test_proxy_llm_exige_chave_e_provedor_valido():
         agents.chat("nao-existe", "k", "m", "s", "u")
 
 
+def test_status_das_fontes_diagnostica_o_token(monkeypatch):
+    monkeypatch.setattr(market, "_probe", lambda k: {"brapi": True, "yahoo": True,
+                                                     "pulseflat": False}[k])
+    monkeypatch.setattr(market, "BRAPI_TOKEN", "abcd1234567890xyz")
+    monkeypatch.setattr(market, "source_label", lambda: "BRAPI")
+
+    st = market.provider_status()
+    assert set(st) == {"brapi", "yahoo", "pulseflat"}
+    assert st["brapi"]["configured"] and st["brapi"]["ok"] and st["brapi"]["em_uso"]
+    assert st["yahoo"]["ok"] and not st["yahoo"]["precisa_token"]
+    assert st["pulseflat"]["ok"] is False
+
+    # o token é identificável mas nunca aparece inteiro
+    mascara = st["brapi"]["token_mascarado"]
+    assert "abcd1234567890xyz" not in mascara
+    assert mascara.startswith("abcd") and "17 caracteres" in mascara
+
+    # e o painel diz onde procurou o arquivo
+    assert st["brapi"]["env_path"].endswith(".env")
+
+
+def test_status_sem_token_nao_vaza_mascara(monkeypatch):
+    monkeypatch.setattr(market, "_probe", lambda k: k != "brapi")
+    monkeypatch.setattr(market, "BRAPI_TOKEN", "")
+    monkeypatch.setattr(market, "source_label", lambda: "PulseFlat (B3/Yahoo D-1)")
+
+    st = market.provider_status()
+    assert st["brapi"]["configured"] is False
+    assert st["brapi"]["token_mascarado"] == ""
+    assert st["pulseflat"]["em_uso"] is True
+
+    # token curto vira só bolinhas, sem revelar o tamanho útil
+    monkeypatch.setattr(market, "BRAPI_TOKEN", "abc")
+    assert market.provider_status()["brapi"]["token_mascarado"] == "•••"
+
+
+def test_diagnostico_das_fontes_nao_entra_no_cache(monkeypatch):
+    """O cache vive em disco e sobrevive ao restart. Se o estado do token
+    fosse memoizado junto, quem acabasse de configurar o BRAPI_TOKEN veria
+    'rodando sem token' pelo resto do TTL."""
+    from finlab.backend import app as app_mod
+
+    chamadas = {"n": 0}
+
+    def status_falso():
+        chamadas["n"] += 1
+        return {"brapi": {"configured": chamadas["n"] > 1, "ok": True}}
+
+    monkeypatch.setattr(app_mod.market, "provider_status", status_falso)
+    monkeypatch.setattr(app_mod.market, "source_label", lambda: f"fonte-{chamadas['n']}")
+
+    payload = {"rows": [1, 2, 3]}
+    primeiro = app_mod._com_diagnostico(payload)
+    segundo = app_mod._com_diagnostico(payload)
+
+    assert primeiro["rows"] == [1, 2, 3] and segundo["rows"] == [1, 2, 3]
+    # a segunda leitura enxerga o token que acabou de ser configurado
+    assert primeiro["providers"]["brapi"]["configured"] is False
+    assert segundo["providers"]["brapi"]["configured"] is True
+    assert primeiro["source"] != segundo["source"]
+    # e o payload original (o que fica no cache) segue limpo
+    assert "providers" not in payload and "source" not in payload
+
+
 def test_lista_de_modelos_le_a_api_do_provedor(mock_llm, monkeypatch):
     servidor, base = mock_llm
     monkeypatch.setitem(agents._MODEL_ENDPOINTS, "openrouter",

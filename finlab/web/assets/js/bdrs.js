@@ -145,7 +145,7 @@
     try {
       if (force) await api('/api/cache/clear', { method: 'POST' });
       state.data = await api('/api/bdrs');
-      el('sourcePill').textContent = 'fonte: ' + (state.data.source || '—');
+      window.FL.renderFontes(el('sourcePill'), state.data.providers, state.data.source);
       renderAlerts();
       render();
     } catch (err) {

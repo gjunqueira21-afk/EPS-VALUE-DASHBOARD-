@@ -24,9 +24,9 @@ from typing import Iterable, Optional
 import requests
 
 from . import cache
-from .settings import (BRAPI_BASE, BRAPI_TOKEN, DATA_DIR, FALLBACK_MACRO,
-                       HTTP_TIMEOUT, TTL_FUNDAMENTALS, TTL_HISTORY, TTL_MACRO,
-                       TTL_QUOTE)
+from .settings import (BRAPI_BASE, BRAPI_TOKEN, DATA_DIR, ENV_FILE,
+                       ENV_FILE_FOUND, FALLBACK_MACRO, HTTP_TIMEOUT,
+                       TTL_FUNDAMENTALS, TTL_HISTORY, TTL_MACRO, TTL_QUOTE)
 
 PULSE_BASE = "https://raw.githubusercontent.com/PulseDataLabs/PulseFlat/main/data"
 YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart"
@@ -41,12 +41,38 @@ _SESSION.headers.update({"User-Agent": "GabsFinLab/1.0"})
 # ---------------------------------------------------------------------------
 
 def provider_status() -> dict:
-    """Quais fontes estão configuradas/disponíveis, para exibir no painel."""
+    """Quais fontes estão configuradas/disponíveis, para exibir no painel.
+
+    A BRAPI é a única que depende de token, então ela leva junto o diagnóstico
+    do `.env`: onde o painel procurou o arquivo, se achou, e como o token foi
+    lido. Sem isso, "rodando sem token" com o token salvo vira adivinhação.
+    """
+    em_uso = source_label()
     return {
-        "brapi": {"configured": bool(BRAPI_TOKEN), "ok": _probe("brapi")},
-        "yahoo": {"configured": True, "ok": _probe("yahoo")},
-        "pulseflat": {"configured": True, "ok": _probe("pulseflat")},
+        "brapi": {
+            "label": "BRAPI",
+            "configured": bool(BRAPI_TOKEN),
+            "ok": _probe("brapi"),
+            "em_uso": em_uso == "BRAPI",
+            "precisa_token": True,
+            "token_mascarado": _mascara(BRAPI_TOKEN),
+            "env_path": str(ENV_FILE),
+            "env_encontrado": ENV_FILE_FOUND,
+        },
+        "yahoo": {"label": "Yahoo Finance", "configured": True, "ok": _probe("yahoo"),
+                  "em_uso": em_uso == "Yahoo Finance", "precisa_token": False},
+        "pulseflat": {"label": "PulseFlat", "configured": True, "ok": _probe("pulseflat"),
+                      "em_uso": em_uso.startswith("PulseFlat"), "precisa_token": False},
     }
+
+
+def _mascara(token: str) -> str:
+    """Só o suficiente para reconhecer o token — nunca o token inteiro."""
+    if not token:
+        return ""
+    if len(token) <= 8:
+        return "•" * len(token)
+    return f"{token[:4]}…{token[-2:]} ({len(token)} caracteres)"
 
 
 def _probe(kind: str) -> Optional[bool]:

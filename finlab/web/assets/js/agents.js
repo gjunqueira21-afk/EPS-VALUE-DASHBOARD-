@@ -193,7 +193,8 @@
         h('div', { class: 'hd' }, [
           h('span', { class: 'ico' }, agent.icon),
           h('div', {}, [
-            h('div', { class: 'ttl' }, agent.label),
+            // O nome que o usuário deu à mesa vale aqui também.
+            h('div', { class: 'ttl' }, global.FL.agentName(agent.key) || agent.label),
             h('div', { class: 'dsc' }, agent.desc)
           ]),
           h('span', { class: 'sp' }),

@@ -36,7 +36,7 @@ instalação, senão o script avisa e para.
   abre o painel de valuation completo (fundamentos em USD via Yahoo Finance).
 - **Mesa de IA** — até 4 slots de LLM (OpenRouter, OpenAI, Anthropic, Google, Groq,
   DeepSeek), com os modelos da sua chave listados direto da API do provedor, e uma
-  caixa de conversa (`Ctrl+K`) que recebe o ativo aberto e as premissas dos sliders.
+  caixa de conversa (`Ctrl+K`) onde a mesa inteira debate e fecha com uma conclusão.
 
 📖 **Documentação completa: [`finlab/README.md`](finlab/README.md)** — metodologia do
 score, convenções do modelo de valuation, fontes de dados e limites conhecidos.

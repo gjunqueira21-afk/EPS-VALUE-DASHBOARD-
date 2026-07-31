@@ -250,18 +250,62 @@ def _extrai_ids(data: dict, estilo: str) -> list[str]:
     return [str(m.get("id")) for m in (data.get("data") or []) if m.get("id")]
 
 
-CHAT_SYSTEM = _COMUM + (
-    "\nSeu papel: você é a mesa inteira, em conversa. O usuário está com o painel aberto e "
-    "pergunta o que quiser sobre o ativo do CONTEXTO — fundamentos, múltiplos, premissas, "
-    "macro, comparação com pares, sentido de um número na tela.\n"
-    "Como responder:\n"
-    "• Direto ao ponto. Uma pergunta simples merece resposta curta, sem seções nem títulos.\n"
+_CHAT_REGRAS = (
+    "\nVocê está numa CONVERSA, não escrevendo um relatório.\n"
+    "• Direto ao ponto. Pergunta simples merece resposta curta, sem seções nem títulos.\n"
     "• Cite o número do CONTEXTO que sustenta o que você afirma.\n"
     "• Se a pergunta pedir algo que não está no CONTEXTO (notícia, trimestre, evento), diga "
     "que o painel não tem esse dado em vez de especular.\n"
     "• Se o usuário pedir uma mudança de premissa, explique o efeito esperado e diga em qual "
     "slider mexer.\n"
-    "• Mantenha o fio da conversa: o histórico anterior faz parte do assunto."
+    "• Mantenha o fio da conversa: o histórico anterior faz parte do assunto.\n"
+    "• Nunca responda vazio. Se não tiver o dado, escreva isso em uma frase.\n"
+)
+
+# Voz padrão quando o usuário não escolheu um agente: a mesa falando junto.
+CHAT_SYSTEM = _COMUM + (
+    "\nSeu papel: você é a mesa inteira, em conversa. O usuário está com o painel aberto e "
+    "pergunta o que quiser sobre o ativo do CONTEXTO — fundamentos, múltiplos, premissas, "
+    "macro, comparação com pares, sentido de um número na tela."
+) + _CHAT_REGRAS
+
+# Na conversa cada agente fala com a própria especialidade, mas em tom de mesa
+# — sem o formato rígido de relatório que a aba "Mesa de IA" pede.
+CHAT_PERSONAS = {
+    "equity": (
+        "\nSeu papel na mesa: analista fundamentalista de renda variável. Você olha "
+        "rentabilidade, margem, alavancagem, crescimento e a qualidade do lucro. Responda "
+        "pelo ângulo dos fundamentos da empresa e do que eles sustentam ou ameaçam na tese. "
+        "Deixe macro e decisão de posição para os outros da mesa."
+    ),
+    "macro": (
+        "\nSeu papel na mesa: economista. Você responde pelo ângulo de juros, inflação e "
+        "câmbio, e de como isso chega ao custo de capital e à demanda desta empresa. "
+        "Em ação brasileira o eixo é Selic, CDI, IPCA e câmbio; em BDR o custo de capital "
+        "é em dólar e o BRL/USD entra como retorno ou risco extra para quem compra em reais. "
+        "Não invada a leitura contábil nem o veredito de posição."
+    ),
+    "gestor": (
+        "\nSeu papel na mesa: gestor, o dono da decisão. Você responde pelo ângulo de "
+        "portfólio: vale a posição, de que tamanho, com que gatilho, e o que invalidaria a "
+        "tese. Seja decisivo — nada de 'depende do perfil do investidor'."
+    ),
+    "premissas": (
+        "\nSeu papel na mesa: quant da calibragem do modelo. Você responde pelo ângulo das "
+        "premissas: Rf, beta, spread, estrutura de capital, curva de crescimento e "
+        "perpetuidade. Diga que número usaria e em qual slider mexer. "
+        "Aqui é conversa: escreva em texto corrido, NÃO devolva JSON."
+    ),
+}
+
+SINTESE_SYSTEM = _COMUM + (
+    "\nSeu papel: você fecha a reunião da mesa. Recebe a pergunta do usuário e o que cada "
+    "analista respondeu, e escreve a CONCLUSÃO.\n"
+    "Como escrever, em no máximo 130 palavras:\n"
+    "• Comece pelo veredito da pergunta — uma frase que responde de fato o que foi perguntado.\n"
+    "• Diga onde a mesa converge e, se houver, onde discorda — nomeando quem discorda.\n"
+    "• Termine com o que observar ou o que mudaria a leitura.\n"
+    "• Não repita as respostas: sintetize. Nada de listas longas nem títulos."
 )
 
 
@@ -270,18 +314,70 @@ def agent_list() -> list[dict]:
             for k, v in AGENTS.items()]
 
 
+# Modelos de raciocínio devolvem `content` vazio e o texto num campo à parte,
+# e estouram o teto de tokens pensando antes de escrever a primeira palavra.
+# Um teto folgado aqui evita a resposta em branco que isso produzia.
+CHAT_MAX_TOKENS = 4000
+
+_CAMPOS_TEXTO = ("content", "reasoning_content", "reasoning")
+
+
+def _texto_openai(data: dict) -> str:
+    """Texto de uma resposta estilo OpenAI, tolerante a modelos de raciocínio."""
+    escolhas = data.get("choices") or []
+    if not escolhas:
+        raise LLMError("O provedor devolveu uma resposta sem nenhuma escolha.")
+
+    msg = escolhas[0].get("message") or {}
+    for campo in _CAMPOS_TEXTO:
+        valor = msg.get(campo)
+        # Alguns gateways devolvem content como lista de blocos.
+        if isinstance(valor, list):
+            valor = "".join(b.get("text", "") for b in valor if isinstance(b, dict))
+        if isinstance(valor, str) and valor.strip():
+            return valor
+
+    motivo = escolhas[0].get("finish_reason") or ""
+    if motivo == "length":
+        raise LLMError(
+            "O modelo gastou todo o limite de tokens raciocinando e não chegou a escrever "
+            "a resposta. Tente uma pergunta mais objetiva ou escolha um modelo sem "
+            "raciocínio longo neste slot."
+        )
+    if motivo in ("content_filter", "safety"):
+        raise LLMError("O provedor bloqueou a resposta pelo filtro de conteúdo dele.")
+    raise LLMError(
+        "O modelo devolveu uma resposta vazia"
+        + (f" (finish_reason: {motivo})" if motivo else "")
+        + ". Isso costuma ser instabilidade do provedor — tente de novo."
+    )
+
+
+def _sistema_da_conversa(agente: str | None, contexto: str) -> str:
+    """Prompt de sistema conforme quem está falando na mesa."""
+    if agente == "sintese":
+        base = SINTESE_SYSTEM
+    elif agente and agente in CHAT_PERSONAS:
+        base = _COMUM + CHAT_PERSONAS[agente] + _CHAT_REGRAS
+    else:
+        base = CHAT_SYSTEM
+    return base + "\n\nCONTEXTO\n========\n" + contexto
+
+
 def chat_conversa(provider: str, api_key: str, model: str, contexto: str,
-                  historico: list[dict], pergunta: str) -> str:
+                  historico: list[dict], pergunta: str, agente: str | None = None) -> str:
     """Conversa multi-turno com o contexto do painel injetado no sistema.
 
     O histórico chega do navegador (a conversa vive lá) e é truncado para
     caber num prompt: as 12 últimas mensagens bastam para manter o fio.
+    `agente` escolhe a voz: None é a mesa junto, uma chave de CHAT_PERSONAS é
+    o especialista, e "sintese" é a conclusão que fecha a rodada.
     """
     cfg = PROVIDERS.get(provider)
     if not cfg:
         raise LLMError(f"Provedor desconhecido: {provider}")
 
-    sistema = CHAT_SYSTEM + "\n\nCONTEXTO\n========\n" + contexto
+    sistema = _sistema_da_conversa(agente, contexto)
 
     turnos = []
     for msg in (historico or [])[-12:]:
@@ -300,23 +396,32 @@ def chat_conversa(provider: str, api_key: str, model: str, contexto: str,
                          "Content-Type": "application/json",
                          "HTTP-Referer": "https://github.com/gjunqueira21-afk/eps-value-dashboard-",
                          "X-Title": "Gab's FinLab"},
-                json={"model": model, "temperature": 0.3, "max_tokens": 1200,
+                json={"model": model, "temperature": 0.3, "max_tokens": CHAT_MAX_TOKENS,
                       "messages": [{"role": "system", "content": sistema}] + turnos},
                 timeout=max(HTTP_TIMEOUT, 120),
             )
-            return _json_or_raise(resp)["choices"][0]["message"]["content"]
+            return _texto_openai(_json_or_raise(resp))
 
         if style == "anthropic":
             resp = requests.post(
                 cfg["url"],
                 headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
                          "Content-Type": "application/json"},
-                json={"model": model, "max_tokens": 1200, "temperature": 0.3,
+                json={"model": model, "max_tokens": CHAT_MAX_TOKENS, "temperature": 0.3,
                       "system": sistema, "messages": turnos},
                 timeout=max(HTTP_TIMEOUT, 120),
             )
             data = _json_or_raise(resp)
-            return "".join(b.get("text", "") for b in data.get("content", []))
+            texto = "".join(b.get("text", "") for b in data.get("content", [])
+                            if b.get("type", "text") == "text")
+            if not texto.strip():
+                raise LLMError(
+                    "O modelo devolveu uma resposta vazia"
+                    + (" (parou no limite de tokens)"
+                       if data.get("stop_reason") == "max_tokens" else "")
+                    + ". Tente de novo."
+                )
+            return texto
 
         if style == "gemini":
             conteudos = [{"role": "model" if t["role"] == "assistant" else "user",
@@ -326,7 +431,8 @@ def chat_conversa(provider: str, api_key: str, model: str, contexto: str,
                 headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
                 json={"systemInstruction": {"parts": [{"text": sistema}]},
                       "contents": conteudos,
-                      "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1200}},
+                      "generationConfig": {"temperature": 0.3,
+                                           "maxOutputTokens": CHAT_MAX_TOKENS}},
                 timeout=max(HTTP_TIMEOUT, 120),
             )
             data = _json_or_raise(resp)
@@ -334,7 +440,14 @@ def chat_conversa(provider: str, api_key: str, model: str, contexto: str,
             if not cands:
                 raise LLMError("Resposta vazia do Gemini.")
             partes = (cands[0].get("content") or {}).get("parts") or []
-            return "".join(p.get("text", "") for p in partes)
+            texto = "".join(p.get("text", "") for p in partes)
+            if not texto.strip():
+                motivo = cands[0].get("finishReason") or ""
+                raise LLMError(
+                    "O Gemini devolveu uma resposta vazia"
+                    + (f" ({motivo})" if motivo else "") + ". Tente de novo."
+                )
+            return texto
     except requests.Timeout as exc:
         raise LLMError(f"{cfg['label']} não respondeu a tempo. Tente de novo.") from exc
     except requests.RequestException as exc:
@@ -344,6 +457,18 @@ def chat_conversa(provider: str, api_key: str, model: str, contexto: str,
         ) from exc
 
     raise LLMError(f"Estilo de API não suportado: {style}")
+
+
+def monta_pergunta_sintese(pergunta: str, respostas: list[dict]) -> str:
+    """Junta o que a mesa respondeu num único turno para a conclusão."""
+    linhas = [f"PERGUNTA DO USUÁRIO\n{pergunta}\n", "O QUE A MESA RESPONDEU"]
+    for r in respostas:
+        nome = str(r.get("nome") or r.get("agente") or "analista").strip()
+        texto = str(r.get("texto") or "").strip()
+        if texto:
+            linhas.append(f"\n--- {nome} ---\n{texto}")
+    linhas.append("\nEscreva agora a conclusão da mesa.")
+    return "\n".join(linhas)
 
 
 def provider_list() -> list[dict]:

@@ -27,7 +27,12 @@ CVM_PROCESSED_DIR = Path(
     os.getenv("FINLAB_CVM_DIR", REPO_DIR / "valuation_cvm" / "data" / "processed")
 )
 
-load_dotenv(BASE_DIR / ".env")
+ENV_FILE = BASE_DIR / ".env"
+# Guardado antes de carregar: o painel mostra este caminho quando o token não
+# aparece, para não sobrar dúvida sobre onde o arquivo tem de estar.
+ENV_FILE_FOUND = ENV_FILE.is_file()
+
+load_dotenv(ENV_FILE)
 load_dotenv(REPO_DIR / "valuation_cvm" / ".env")
 
 BRAPI_TOKEN = os.getenv("BRAPI_TOKEN", "").strip()

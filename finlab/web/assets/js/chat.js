@@ -3,13 +3,20 @@
    Vive em todas as telas. O contexto enviado é o do ativo aberto (quando há
    um) mais as premissas correntes do painel — as mesmas que os agentes da
    aba Mesa de IA recebem. A conversa fica no navegador; nada é gravado no
-   servidor. */
+   servidor.
+
+   Quem responde é escolhido no rodapé: a mesa inteira (cada agente fala pela
+   sua especialidade e no fim sai uma conclusão) ou um agente só. Dá para
+   chamar alguém pelo nome no meio da pergunta — "gestor, vale a posição?" —
+   que a conversa vai direto para ele. */
 (function (global) {
   'use strict';
 
-  const { h, el, esc, api, markdown, loadSlots, prefs } = global.FL;
+  const { h, el, esc, api, markdown, loadSlots, loadAgentNames, agentIcon, prefs } = global.FL;
 
   const HIST_KEY = 'finlab.chat.hist.v1';
+  const ORDEM = ['equity', 'macro', 'gestor', 'premissas'];
+
   const state = { aberto: false, enviando: false, ticker: null, ctx: null, montado: false };
 
   /* -------------------------------------------------------------- histórico */
@@ -26,27 +33,66 @@
     try { sessionStorage.setItem(HIST_KEY, JSON.stringify(msgs.slice(-40))); } catch (e) { /* noop */ }
   }
 
+  /** O que vai ao modelo como histórico: só o fio da conversa, sem os avisos
+   *  locais do painel e sem as falas dos outros agentes da mesma rodada. */
+  function fio(msgs) {
+    return msgs
+      .filter((m) => !m.local && m.content && String(m.content).trim())
+      .map((m) => ({ role: m.role, content: m.content }));
+  }
+
   /* ------------------------------------------------------------------ slot */
 
-  function slotAtivo() {
+  /** Slot de cada agente: o que ele já usa na aba Mesa de IA, senão o
+   *  primeiro configurado. Assim uma chave só atende a mesa inteira. */
+  function slotDo(agentKey) {
     const slots = loadSlots();
-    const escolhido = prefs.get('chat.slot', null);
+    const prontos = slots.filter((s) => s.api_key && s.model);
+    const escolhido = agentKey ? prefs.get('agentSlot.' + agentKey, null) : null;
     if (escolhido) {
-      const s = slots.find((x) => x.id === escolhido);
-      if (s && s.api_key && s.model) return s;
+      const s = prontos.find((x) => x.id === escolhido);
+      if (s) return s;
     }
-    return slots.find((x) => x.api_key && x.model) || null;
+    return prontos[0] || null;
+  }
+
+  function temSlot() { return loadSlots().some((s) => s.api_key && s.model); }
+
+  /* ------------------------------------------------------------- destinatário */
+
+  function alvo() { return prefs.get('chat.alvo', 'mesa'); }
+
+  /** "gestor, vale a posição?" fala com o gestor, mesmo com a mesa escolhida. */
+  function alvoDaPergunta(texto) {
+    const nomes = loadAgentNames();
+    const inicio = texto.slice(0, 60).toLowerCase();
+    const achado = ORDEM.find((k) => {
+      const nome = (nomes[k] || '').toLowerCase().replace(/^agente\s+/, '');
+      return nome && (inicio.startsWith(nome) || inicio.startsWith('agente ' + nome)
+        || inicio.startsWith('@' + nome));
+    });
+    return achado || null;
   }
 
   /* ----------------------------------------------------------------- render */
 
   function bolha(msg) {
     const meu = msg.role === 'user';
-    return h('div', { class: 'chat-msg ' + (meu ? 'me' : 'ai') },
-      h('div', {
-        class: 'chat-bubble',
-        html: meu ? esc(msg.content) : markdown(msg.content)
-      }));
+    const corpo = h('div', {
+      class: 'chat-bubble',
+      html: meu ? esc(msg.content) : markdown(msg.content)
+    });
+    const caixa = h('div', { class: 'chat-msg ' + (meu ? 'me' : 'ai') });
+    if (!meu && msg.autor) {
+      caixa.classList.add('nomeado');
+      if (msg.agente === 'sintese') caixa.classList.add('sintese');
+      caixa.appendChild(h('div', { class: 'chat-autor' }, [
+        h('span', { class: 'ico' }, msg.icone || '🧠'),
+        h('span', {}, msg.autor)
+      ]));
+    }
+    caixa.appendChild(corpo);
+    return caixa;
   }
 
   function pintarHistorico() {
@@ -60,7 +106,9 @@
         h('div', {
           html: state.ticker
             ? `Pergunte o que quiser sobre <b>${esc(state.ticker)}</b> — fundamentos, `
-              + 'múltiplos, premissas do modelo, comparação com os pares.'
+              + 'múltiplos, premissas do modelo, comparação com os pares.<br><br>'
+              + 'A mesa inteira responde e fecha com uma conclusão. Para falar com um '
+              + 'só, escolha embaixo ou comece a frase com o nome dele.'
             : 'Abra uma empresa para conversar sobre ela, ou pergunte sobre o macro do dia.'
         })
       ]));
@@ -70,30 +118,98 @@
     corpo.scrollTop = corpo.scrollHeight;
   }
 
+  /** Acrescenta uma mensagem, grava e rola — sem repintar tudo, para que as
+   *  falas da mesa entrem uma a uma em vez de piscar a lista inteira. */
+  function empilhar(msg) {
+    const msgs = carregar();
+    msgs.push(msg);
+    salvar(msgs);
+    const corpo = el('chat-body');
+    if (corpo.querySelector('.chat-vazio')) corpo.innerHTML = '';
+    corpo.appendChild(bolha(msg));
+    corpo.scrollTop = corpo.scrollHeight;
+    return msgs;
+  }
+
   function atualizarRodape() {
-    const info = el('chat-slot');
+    const info = el('chat-alvo');
     if (!info) return;
-    const slots = loadSlots();
-    const prontos = slots.filter((s) => s.api_key && s.model);
     info.innerHTML = '';
-    if (!prontos.length) {
+
+    if (!temSlot()) {
       info.appendChild(h('button', {
         class: 'btn ghost sm',
         onclick: () => global.FLSettings.open(() => { atualizarRodape(); })
       }, '⚙ configurar IA'));
       return;
     }
-    const atual = slotAtivo();
+
+    const nomes = loadAgentNames();
+    const atual = alvo();
     const sel = h('select', {
-      title: 'Slot usado nesta conversa',
-      onchange: (ev) => prefs.set('chat.slot', Number(ev.target.value) || null)
-    }, prontos.map((s) => h('option', {
-      value: s.id, selected: atual && s.id === atual.id ? 'selected' : null
-    }, `Slot ${s.id} · ${s.label || s.model}`)));
+      id: 'chat-alvo-sel',
+      title: 'Quem responde: a mesa inteira ou um agente',
+      onchange: (ev) => prefs.set('chat.alvo', ev.target.value)
+    }, [h('option', { value: 'mesa', selected: atual === 'mesa' ? 'selected' : null },
+      '🧠 Mesa inteira')].concat(ORDEM.map((k) => h('option', {
+      value: k, selected: k === atual ? 'selected' : null
+    }, `${agentIcon(k)} ${nomes[k]}`))));
     info.appendChild(sel);
   }
 
   /* ---------------------------------------------------------------- envio */
+
+  function pensando(rotulo, icone) {
+    const n = h('div', { class: 'chat-msg ai nomeado pensando' }, [
+      h('div', { class: 'chat-autor' }, [
+        h('span', { class: 'ico' }, icone || '🧠'), h('span', {}, rotulo)
+      ]),
+      h('div', { class: 'chat-bubble' }, [h('span', { class: 'spinner' }), ' pensando…'])
+    ]);
+    const corpo = el('chat-body');
+    if (corpo.querySelector('.chat-vazio')) corpo.innerHTML = '';
+    corpo.appendChild(n);
+    corpo.scrollTop = corpo.scrollHeight;
+    return n;
+  }
+
+  /** Uma fala. Devolve o texto ou null, e nunca deixa bolha vazia na tela. */
+  async function falar(agente, rotulo, icone, pergunta, historico, extra) {
+    const slot = slotDo(agente);
+    const marca = pensando(rotulo, icone);
+    try {
+      const r = await api('/api/agents/chat', {
+        method: 'POST',
+        body: JSON.stringify(Object.assign({
+          slot: { provider: slot.provider, api_key: slot.api_key, model: slot.model },
+          ticker: state.ticker,
+          assumptions: (state.ctxAtual || {}).assumptions || null,
+          resultado: (state.ctxAtual || {}).resultado || null,
+          historico: historico,
+          pergunta: pergunta,
+          agente: agente || null
+        }, extra || {}))
+      });
+      marca.remove();
+      const texto = (r.texto || '').trim();
+      if (!texto) {
+        empilhar({
+          role: 'assistant', autor: rotulo, icone: icone, agente: agente, local: true,
+          content: '⚠️ Resposta vazia do provedor. Tente de novo ou troque o modelo do slot.'
+        });
+        return null;
+      }
+      empilhar({ role: 'assistant', autor: rotulo, icone: icone, agente: agente, content: texto });
+      return texto;
+    } catch (err) {
+      marca.remove();
+      empilhar({
+        role: 'assistant', autor: rotulo, icone: icone, agente: agente, local: true,
+        content: '⚠️ ' + err.message
+      });
+      return null;
+    }
+  }
 
   async function enviar() {
     if (state.enviando) return;
@@ -101,56 +217,51 @@
     const texto = campo.value.trim();
     if (!texto) return;
 
-    const slot = slotAtivo();
-    const msgs = carregar();
-
-    if (!slot) {
-      msgs.push({ role: 'user', content: texto });
-      msgs.push({
-        role: 'assistant',
+    if (!temSlot()) {
+      empilhar({ role: 'user', content: texto });
+      empilhar({
+        role: 'assistant', local: true,
         content: 'Nenhum slot de IA configurado ainda. Clique em **⚙ configurar IA** aqui '
           + 'embaixo e cadastre uma chave — OpenRouter, OpenAI, Anthropic, Google, Groq ou '
           + 'DeepSeek.'
       });
-      salvar(msgs); pintarHistorico(); campo.value = '';
+      campo.value = '';
       return;
     }
 
-    msgs.push({ role: 'user', content: texto });
-    salvar(msgs);
+    // O histórico enviado é o de ANTES desta pergunta.
+    const anterior = fio(carregar());
+    empilhar({ role: 'user', content: texto });
     campo.value = '';
     campo.style.height = 'auto';
-    pintarHistorico();
 
     state.enviando = true;
-    const corpo = el('chat-body');
-    const pensando = h('div', { class: 'chat-msg ai' },
-      h('div', { class: 'chat-bubble' }, [h('span', { class: 'spinner' }), ' pensando…']));
-    corpo.appendChild(pensando);
-    corpo.scrollTop = corpo.scrollHeight;
     el('chat-send').disabled = true;
+    state.ctxAtual = (state.ctx && state.ctx()) || {};
+
+    const nomes = loadAgentNames();
+    const dirigido = alvoDaPergunta(texto);
+    const escolha = dirigido || alvo();
 
     try {
-      const ctx = (state.ctx && state.ctx()) || {};
-      const r = await api('/api/agents/chat', {
-        method: 'POST',
-        body: JSON.stringify({
-          slot: { provider: slot.provider, api_key: slot.api_key, model: slot.model },
-          ticker: state.ticker,
-          assumptions: ctx.assumptions || null,
-          resultado: ctx.resultado || null,
-          historico: msgs.slice(0, -1),
-          pergunta: texto
-        })
-      });
-      msgs.push({ role: 'assistant', content: r.texto });
-    } catch (err) {
-      msgs.push({ role: 'assistant', content: '⚠️ ' + err.message });
+      if (escolha !== 'mesa') {
+        await falar(escolha, nomes[escolha], agentIcon(escolha), texto, anterior);
+      } else {
+        // Cada agente fala na sua vez, e a bolha aparece assim que chega —
+        // é a reunião acontecendo na tela, não um bloco no fim.
+        const respostas = [];
+        for (const k of ORDEM) {
+          const r = await falar(k, nomes[k], agentIcon(k), texto, anterior);
+          if (r) respostas.push({ agente: k, nome: nomes[k], texto: r });
+        }
+        if (respostas.length >= 2) {
+          await falar('sintese', 'Conclusão da mesa', '⚖️', texto, anterior,
+            { respostas: respostas });
+        }
+      }
     } finally {
       state.enviando = false;
       el('chat-send').disabled = false;
-      salvar(msgs);
-      pintarHistorico();
       el('chat-input').focus();
     }
   }
@@ -205,7 +316,7 @@
           h('button', { class: 'btn primary', id: 'chat-send', onclick: enviar }, '➤')
         ]),
         h('div', { class: 'chat-slotrow' }, [
-          h('span', { id: 'chat-slot' }),
+          h('span', { id: 'chat-alvo' }),
           h('span', { style: 'flex:1 1 auto' }),
           h('span', { class: 'chat-hint' }, 'Enter envia · Shift+Enter quebra linha')
         ])
@@ -233,7 +344,7 @@
     el('chat-fab').classList.toggle('on', state.aberto);
     if (state.aberto) {
       atualizarRodape();
-      pintarHistorico();
+      if (!state.enviando) pintarHistorico();
       setTimeout(() => el('chat-input').focus(), 60);
     }
   }
@@ -261,7 +372,8 @@
         : 'Pergunte sobre o mercado…';
     }
     pintarHistorico();
+    atualizarRodape();
   }
 
-  global.FLChat = { init, alternar };
+  global.FLChat = { init, alternar, atualizarRodape };
 })(window);

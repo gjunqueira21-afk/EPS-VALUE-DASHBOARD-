@@ -184,6 +184,32 @@ a:hover { text-decoration: underline; }
 .tag-pill.good { color: var(--green); border-color: rgba(52, 211, 153, .4); background: rgba(52, 211, 153, .08); }
 .tag-pill.bad  { color: var(--red);   border-color: rgba(248, 113, 113, .4); background: rgba(248, 113, 113, .08); }
 
+/* --------------------------------------------------- semáforo das fontes */
+/* Uma bolinha por provedor de mercado. Verde é quem respondeu ao teste;
+   cinza é quem está sem token. A fonte em uso agora fica em destaque. */
+
+.fontes { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.fonte {
+  display: inline-flex; align-items: center; gap: 5px; cursor: help;
+  font: 600 9.5px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase;
+  padding: 5px 8px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--dim2); background: transparent;
+}
+.fonte i {
+  width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: var(--dim2); box-shadow: none;
+}
+.fonte.f-up    { color: var(--green); border-color: rgba(52, 211, 153, .32); }
+.fonte.f-up i  { background: var(--green); box-shadow: 0 0 6px rgba(52, 211, 153, .85); }
+.fonte.f-down  { color: var(--amber); border-color: rgba(245, 184, 65, .34); }
+.fonte.f-down i { background: var(--amber); box-shadow: 0 0 6px rgba(245, 184, 65, .8); }
+.fonte.f-unknown i { background: var(--dim); }
+.fonte.f-off   { color: var(--dim2); border-style: dashed; }
+.fonte.em-uso  { background: rgba(103, 232, 249, .08); border-color: rgba(103, 232, 249, .4); }
+.fonte.em-uso .nm { color: var(--paper); }
+
+@media (max-width: 900px) { .fonte .nm { display: none; } .fonte { padding: 6px; } }
+
 /* --------------------------------------------------------------- macro bar */
 
 .macro-strip {
@@ -433,6 +459,11 @@ textarea { font-family: var(--sans); resize: vertical; min-height: 64px; line-he
    uma largura diferente. Preso na coluna, os quatro alinham. */
 .slot-grid .field select, .slot-grid .field input { width: 100%; }
 
+.mesa-grid { display: grid; gap: 9px; grid-template-columns: 1fr; }
+@media (min-width: 620px) { .mesa-grid { grid-template-columns: 1fr 1fr; } }
+.mesa-grid .field input { width: 100%; }
+.mesa-grid .field label { text-transform: none; letter-spacing: .02em; font-size: 10.5px; }
+
 /* ------------------------------------------------------------------ agentes */
 
 .agent-card {
@@ -551,6 +582,19 @@ textarea { font-family: var(--sans); resize: vertical; min-height: 64px; line-he
 
 .chat-msg { display: flex; }
 .chat-msg.me { justify-content: flex-end; }
+/* Fala de um agente nomeado: crachá em cima e a bolha embaixo. */
+.chat-msg.nomeado { flex-direction: column; align-items: flex-start; gap: 4px; }
+.chat-autor {
+  display: flex; align-items: center; gap: 6px; padding-left: 2px;
+  font: 700 10.5px/1 var(--mono); letter-spacing: .04em; color: var(--brand);
+}
+.chat-autor .ico { font-size: 12px; }
+.chat-msg.nomeado .chat-bubble { max-width: 100%; }
+.chat-msg.sintese .chat-autor { color: var(--brand2); }
+.chat-msg.sintese .chat-bubble {
+  background: rgba(167, 139, 250, .1); border-color: rgba(167, 139, 250, .34);
+}
+.chat-msg.pensando .chat-bubble { color: var(--dim); }
 .chat-bubble {
   max-width: 88%; padding: 9px 12px; border-radius: 14px;
   font-size: 12.5px; line-height: 1.6; word-break: break-word;

@@ -134,6 +134,47 @@
     return card;
   }
 
+  /* ------------------------------------------------------- nomes da mesa */
+
+  /** Os quatro agentes já vêm batizados pela especialidade; aqui só se troca
+   *  o nome. Campo vazio volta ao padrão. */
+  function mesaCard() {
+    const nomes = global.FL.loadAgentNames();
+    const padroes = global.FL.AGENT_DEFAULTS;
+    const icones = global.FL.AGENT_ICONS;
+    const papeis = {
+      equity: 'fundamentos, tese, riscos',
+      macro: 'juros, inflação e câmbio nas premissas',
+      gestor: 'veredito de posição e gatilhos',
+      premissas: 'calibragem do modelo — Rf, beta, crescimento'
+    };
+
+    return h('div', { class: 'slot-card' }, [
+      h('div', { class: 'hd' }, [
+        h('span', { class: 'n' }, 'A mesa'),
+        h('span', { class: 'sp', style: 'flex:1 1 auto' }),
+        h('span', { style: 'font:400 10.5px var(--mono);color:var(--dim2)' },
+          'como cada agente assina na conversa')
+      ]),
+      h('div', { class: 'mesa-grid' }, Object.keys(padroes).map((k) => h('div', { class: 'field' }, [
+        h('label', { for: `agent-nome-${k}` }, `${icones[k]} ${papeis[k]}`),
+        h('input', {
+          type: 'text', id: `agent-nome-${k}`, value: nomes[k] === padroes[k] ? '' : nomes[k],
+          placeholder: padroes[k], autocomplete: 'off'
+        })
+      ])))
+    ]);
+  }
+
+  function collectNomes() {
+    const out = {};
+    Object.keys(global.FL.AGENT_DEFAULTS).forEach((k) => {
+      const campo = el(`agent-nome-${k}`);
+      out[k] = campo && campo.value.trim() ? campo.value.trim() : global.FL.AGENT_DEFAULTS[k];
+    });
+    return out;
+  }
+
   function collect() {
     return Array.from({ length: SLOT_COUNT }, (_, i) => {
       const sel = el(`slot-model-${i}`);
@@ -156,7 +197,7 @@
     await ensureProviders();
     const slots = loadSlots();
 
-    const body = h('div', {}, slots.map((s, i) => slotCard(s, i)));
+    const body = h('div', {}, [mesaCard()].concat(slots.map((s, i) => slotCard(s, i))));
 
     const bg = h('div', { class: 'modal-bg', id: 'llm-modal' });
     const modal = h('div', { class: 'modal wide' }, [
@@ -192,6 +233,8 @@
           class: 'btn primary',
           onclick: () => {
             saveSlots(collect());
+            global.FL.saveAgentNames(collectNomes());
+            if (global.FLChat) global.FLChat.atualizarRodape();
             close();
             if (onSaved) onSaved();
           }

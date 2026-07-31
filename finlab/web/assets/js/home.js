@@ -135,13 +135,22 @@
     const semPreco = (ov.rows || []).filter((r) => !isNum(r.price)).length;
 
     if (!prov.brapi || !prov.brapi.configured) {
+      // Dizer ONDE o painel procurou o .env evita a caça ao tesouro quando o
+      // token está salvo mas no arquivo errado (ou salvo como .env.txt).
+      const caminho = (prov.brapi && prov.brapi.env_path) || 'finlab/.env';
+      const existe = prov.brapi && prov.brapi.env_encontrado;
       zone.appendChild(h('div', {
         class: 'callout',
         html: '<b>Rodando sem token BRAPI.</b> Cotações e performance vêm de '
           + `<b>${esc(ov.source || 'fonte alternativa')}</b> (fechamento D-1) e os fundamentos vêm `
           + 'direto das DFPs da CVM. Para preço intradiário, consenso de analistas e beta de '
-          + 'mercado, configure <code>BRAPI_TOKEN</code> no arquivo <code>.env</code> — o painel '
-          + 'passa a usá-lo automaticamente.'
+          + 'mercado, preencha <code>BRAPI_TOKEN</code> em <code>' + esc(caminho) + '</code>'
+          + (existe
+            ? ' — o arquivo existe, mas a variável veio vazia. Confira se a linha é '
+              + '<code>BRAPI_TOKEN=seu_token</code>, sem aspas, e <b>reinicie o painel</b>: '
+              + 'o <code>.env</code> só é lido quando o servidor sobe.'
+            : ' — <b>esse arquivo ainda não existe</b>. Copie o <code>.env.example</code> '
+              + 'que está na mesma pasta e preencha a linha do token.')
           + (semPreco ? ` Hoje, <b>${semPreco}</b> das ${ov.rows.length} ações estão sem cotação nessa fonte.` : '')
           + ' As janelas de <b>3 meses, 12 meses e YTD</b> só aparecem quando há histórico '
           + 'suficiente — o painel guarda todo fechamento que vê em '
@@ -382,8 +391,7 @@
       state.overview = ov;
       state.macro = macro;
 
-      el('sourcePill').textContent = 'fonte: ' + (ov.source || '—');
-      el('sourcePill').className = 'tag-pill' + (ov.demo ? ' warn' : '');
+      window.FL.renderFontes(el('sourcePill'), ov.providers, ov.source);
       el('footSource').innerHTML = ' Última carga com <b>' + esc(ov.source || '—')
         + '</b>; fundamentos das DFPs anuais da CVM.';
 

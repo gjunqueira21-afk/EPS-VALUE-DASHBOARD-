@@ -138,7 +138,7 @@
     try {
       if (force) await api('/api/cache/clear', { method: 'POST' });
       state.data = await api('/api/etfs');
-      el('sourcePill').textContent = 'fonte: ' + (state.data.source || '—');
+      window.FL.renderFontes(el('sourcePill'), state.data.providers, state.data.source);
       render();
     } catch (err) {
       el('cats').innerHTML = '';

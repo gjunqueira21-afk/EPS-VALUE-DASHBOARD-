@@ -377,7 +377,21 @@ class _MockHandler(http.server.BaseHTTPRequestHandler):
         corpo = json.loads(self.rfile.read(tamanho) or b"{}")
         self.server.recebido[self.path] = {"body": corpo, "headers": dict(self.headers)}
 
-        if self.path.startswith("/openai"):
+        if self.path.startswith("/vazio/raciocinio"):
+            # modelo de raciocínio: content vazio, texto no campo à parte
+            payload = {"choices": [{"message": {"content": "",
+                                                "reasoning": "VEIO-DO-RACIOCINIO"}}]}
+        elif self.path.startswith("/vazio/truncado"):
+            payload = {"choices": [{"message": {"content": ""},
+                                    "finish_reason": "length"}]}
+        elif self.path.startswith("/vazio/nulo"):
+            payload = {"choices": [{"message": {"content": None}}]}
+        elif self.path.startswith("/vazio/anthropic"):
+            payload = {"content": [], "stop_reason": "max_tokens"}
+        elif self.path.startswith("/vazio/gemini"):
+            payload = {"candidates": [{"content": {"parts": []},
+                                       "finishReason": "SAFETY"}]}
+        elif self.path.startswith("/openai"):
             payload = {"choices": [{"message": {"content": "OK-OPENAI"}}]}
         elif self.path.startswith("/anthropic"):
             payload = {"content": [{"type": "text", "text": "OK-"},
@@ -445,6 +459,70 @@ def test_proxy_llm_exige_chave_e_provedor_valido():
         agents.chat("openrouter", "", "m", "s", "u")
     with pytest.raises(agents.LLMError, match="desconhecido"):
         agents.chat("nao-existe", "k", "m", "s", "u")
+
+
+def test_status_das_fontes_diagnostica_o_token(monkeypatch):
+    monkeypatch.setattr(market, "_probe", lambda k: {"brapi": True, "yahoo": True,
+                                                     "pulseflat": False}[k])
+    monkeypatch.setattr(market, "BRAPI_TOKEN", "abcd1234567890xyz")
+    monkeypatch.setattr(market, "source_label", lambda: "BRAPI")
+
+    st = market.provider_status()
+    assert set(st) == {"brapi", "yahoo", "pulseflat"}
+    assert st["brapi"]["configured"] and st["brapi"]["ok"] and st["brapi"]["em_uso"]
+    assert st["yahoo"]["ok"] and not st["yahoo"]["precisa_token"]
+    assert st["pulseflat"]["ok"] is False
+
+    # o token é identificável mas nunca aparece inteiro
+    mascara = st["brapi"]["token_mascarado"]
+    assert "abcd1234567890xyz" not in mascara
+    assert mascara.startswith("abcd") and "17 caracteres" in mascara
+
+    # e o painel diz onde procurou o arquivo
+    assert st["brapi"]["env_path"].endswith(".env")
+
+
+def test_status_sem_token_nao_vaza_mascara(monkeypatch):
+    monkeypatch.setattr(market, "_probe", lambda k: k != "brapi")
+    monkeypatch.setattr(market, "BRAPI_TOKEN", "")
+    monkeypatch.setattr(market, "source_label", lambda: "PulseFlat (B3/Yahoo D-1)")
+
+    st = market.provider_status()
+    assert st["brapi"]["configured"] is False
+    assert st["brapi"]["token_mascarado"] == ""
+    assert st["pulseflat"]["em_uso"] is True
+
+    # token curto vira só bolinhas, sem revelar o tamanho útil
+    monkeypatch.setattr(market, "BRAPI_TOKEN", "abc")
+    assert market.provider_status()["brapi"]["token_mascarado"] == "•••"
+
+
+def test_diagnostico_das_fontes_nao_entra_no_cache(monkeypatch):
+    """O cache vive em disco e sobrevive ao restart. Se o estado do token
+    fosse memoizado junto, quem acabasse de configurar o BRAPI_TOKEN veria
+    'rodando sem token' pelo resto do TTL."""
+    from finlab.backend import app as app_mod
+
+    chamadas = {"n": 0}
+
+    def status_falso():
+        chamadas["n"] += 1
+        return {"brapi": {"configured": chamadas["n"] > 1, "ok": True}}
+
+    monkeypatch.setattr(app_mod.market, "provider_status", status_falso)
+    monkeypatch.setattr(app_mod.market, "source_label", lambda: f"fonte-{chamadas['n']}")
+
+    payload = {"rows": [1, 2, 3]}
+    primeiro = app_mod._com_diagnostico(payload)
+    segundo = app_mod._com_diagnostico(payload)
+
+    assert primeiro["rows"] == [1, 2, 3] and segundo["rows"] == [1, 2, 3]
+    # a segunda leitura enxerga o token que acabou de ser configurado
+    assert primeiro["providers"]["brapi"]["configured"] is False
+    assert segundo["providers"]["brapi"]["configured"] is True
+    assert primeiro["source"] != segundo["source"]
+    # e o payload original (o que fica no cache) segue limpo
+    assert "providers" not in payload and "source" not in payload
 
 
 def test_lista_de_modelos_le_a_api_do_provedor(mock_llm, monkeypatch):
@@ -526,6 +604,75 @@ def test_conversa_leva_historico_e_contexto_nos_tres_formatos(mock_llm):
     assert "CTX" in corpo["systemInstruction"]["parts"][0]["text"]
     # o Gemini chama o papel do assistente de "model"
     assert [c["role"] for c in corpo["contents"]] == ["user", "model", "user"]
+
+
+def test_conversa_nao_devolve_bolha_vazia(mock_llm, monkeypatch):
+    """O bug do balão em branco: modelo de raciocínio ou resposta truncada
+    devolviam string vazia, e a tela mostrava uma bolha sem nada dentro."""
+    _, base = mock_llm
+
+    # texto no campo de raciocínio é aproveitado em vez de virar vazio
+    monkeypatch.setitem(agents.PROVIDERS["openrouter"], "url", base + "/vazio/raciocinio")
+    assert agents.chat_conversa(
+        "openrouter", "k", "m", "CTX", [], "e ai?") == "VEIO-DO-RACIOCINIO"
+
+    # sem texto em lugar nenhum, o erro explica o motivo
+    casos = [("/vazio/truncado", "limite de tokens"), ("/vazio/nulo", "vazia")]
+    for rota, trecho in casos:
+        monkeypatch.setitem(agents.PROVIDERS["openrouter"], "url", base + rota)
+        with pytest.raises(agents.LLMError, match=trecho):
+            agents.chat_conversa("openrouter", "k", "m", "CTX", [], "e ai?")
+
+    monkeypatch.setitem(agents.PROVIDERS["anthropic"], "url", base + "/vazio/anthropic")
+    with pytest.raises(agents.LLMError, match="limite de tokens"):
+        agents.chat_conversa("anthropic", "k", "m", "CTX", [], "e ai?")
+
+    monkeypatch.setitem(agents.PROVIDERS["google"], "url", base + "/vazio/gemini")
+    with pytest.raises(agents.LLMError, match="SAFETY"):
+        agents.chat_conversa("google", "k", "m", "CTX", [], "e ai?")
+
+
+def test_cada_agente_fala_com_a_propria_especialidade(mock_llm):
+    servidor, _ = mock_llm
+
+    def sistema_de(agente):
+        agents.chat_conversa("openrouter", "k", "m", "CTX", [], "e ai?", agente)
+        return servidor.recebido["/openai"]["body"]["messages"][0]["content"]
+
+    gestor = sistema_de("gestor")
+    macro = sistema_de("macro")
+    assert "gestor" in gestor.lower() and "posição" in gestor
+    assert "economista" in macro.lower()
+    assert gestor != macro
+
+    # o quant, na conversa, escreve texto — o JSON é só da aba Mesa de IA
+    quant = sistema_de("premissas")
+    assert "NÃO devolva JSON" in quant
+
+    # sem agente, é a mesa inteira falando junto
+    mesa = sistema_de(None)
+    assert "a mesa inteira" in mesa
+
+    # a síntese recebe outro papel: fechar a reunião
+    fim = sistema_de("sintese")
+    assert "CONCLUSÃO" in fim and "fecha a reunião" in fim
+
+    # o CONTEXTO entra em todos
+    for s in (gestor, macro, quant, mesa, fim):
+        assert "CTX" in s
+
+
+def test_pergunta_de_sintese_carrega_o_que_a_mesa_disse():
+    texto = agents.monta_pergunta_sintese("vale a pena?", [
+        {"agente": "gestor", "nome": "Agente Gestor", "texto": "comprar"},
+        {"agente": "macro", "nome": "Agente Macro", "texto": "juro caindo"},
+        {"agente": "equity", "nome": "Vazio", "texto": "   "},
+    ])
+    assert "vale a pena?" in texto
+    assert "--- Agente Gestor ---" in texto and "comprar" in texto
+    assert "--- Agente Macro ---" in texto and "juro caindo" in texto
+    # quem não respondeu não entra na conclusão
+    assert "Vazio" not in texto
 
 
 def test_conversa_trunca_historico_longo(mock_llm):

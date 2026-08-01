@@ -1,13 +1,21 @@
-/* Modal de configuração dos 4 slots de LLM.
-   As chaves ficam somente no localStorage deste navegador e são enviadas ao
-   backend apenas no momento da chamada, que age como proxy para o provedor. */
+/* Modal de configuração da mesa: um cartão por agente, com o nome, a chave e
+   o modelo que ele usa. As chaves ficam somente no localStorage deste
+   navegador e são enviadas ao backend apenas no momento da chamada, que age
+   como proxy para o provedor. */
 (function (global) {
   'use strict';
 
-  const { h, el, esc, loadSlots, saveSlots, SLOT_COUNT } = global.FL;
+  const { h, el, esc, loadSlots, saveSlots, SLOT_COUNT, AGENT_ORDER } = global.FL;
 
   let providers = [];
   let onSaved = null;
+
+  const PAPEIS = {
+    equity: 'lê os fundamentos e monta a tese: o que sustenta e o que ameaça',
+    macro: 'traduz juros, inflação e câmbio em impacto nas premissas',
+    gestor: 'dá o veredito: posição, gatilhos e o que invalida a tese',
+    premissas: 'calibra o modelo: Rf, beta, spread, crescimento, perpetuidade'
+  };
 
   async function ensureProviders() {
     if (providers.length) return providers;
@@ -20,7 +28,13 @@
     return providers;
   }
 
-  function slotCard(slot, idx) {
+  /* ------------------------------------------------- um cartão por agente */
+
+  function agentCard(slot, idx) {
+    const chave = AGENT_ORDER[idx];
+    const nomes = global.FL.loadAgentNames();
+    const padrao = global.FL.AGENT_DEFAULTS[chave];
+
     const provSel = h('select', { id: `slot-prov-${idx}` },
       providers.map((p) => h('option', {
         value: p.key, selected: p.key === slot.provider ? 'selected' : null
@@ -71,18 +85,19 @@
       const atual = modelSel.value === '__outro__'
         ? modelInput.value.trim()
         : (modelSel.value || slot.model || '');
-      const chave = (el(`slot-key-${idx}`) || {}).value || '';
+      const senha = (el(`slot-key-${idx}`) || {}).value || '';
 
       preencher(p ? p.models : [], atual);
-      if (!forcar && !chave) {
-        statusModelo.textContent = 'sugestões — salve a chave e clique em buscar para ver os seus';
+      if (!forcar && !senha) {
+        statusModelo.textContent = 'sugestões — cole a chave e clique em buscar para ver os seus';
+        atualizarTodasHerancas();
         return;
       }
       statusModelo.innerHTML = '<span class="spinner"></span> consultando o provedor…';
       try {
         const r = await global.FL.api('/api/llm/models', {
           method: 'POST',
-          body: JSON.stringify({ provider: provSel.value, api_key: chave.trim() })
+          body: JSON.stringify({ provider: provSel.value, api_key: senha.trim() })
         });
         preencher(r.models || [], atual);
         statusModelo.textContent = r.aviso
@@ -90,24 +105,40 @@
       } catch (err) {
         statusModelo.textContent = 'não foi possível listar: ' + err.message;
       }
+      atualizarTodasHerancas();
     }
 
     modelSel.addEventListener('change', () => {
       modelInput.hidden = modelSel.value !== '__outro__';
       if (!modelInput.hidden) modelInput.focus();
+      atualizarTodasHerancas();
     });
     provSel.addEventListener('change', () => carregarModelos(false));
 
-    const card = h('div', { class: 'slot-card' }, [
+    const aviso = h('div', { class: 'agent-heranca', id: `agent-heranca-${idx}` });
+
+    const card = h('div', { class: 'slot-card agent-slot' }, [
       h('div', { class: 'hd' }, [
-        h('span', { class: 'n' }, `Slot ${idx + 1}`),
+        h('span', { class: 'ico-agente' }, global.FL.agentIcon(chave)),
+        h('span', { class: 'n' }, nomes[chave]),
+        h('span', { class: 'papel' }, PAPEIS[chave]),
         h('span', { class: 'sp', style: 'flex:1 1 auto' }),
         h('a', {
           id: `slot-doc-${idx}`, href: '#', target: '_blank', rel: 'noopener',
           style: 'font:600 10.5px ui-monospace,monospace'
         }, 'obter chave ↗')
       ]),
-      h('div', { class: 'slot-grid' }, [
+      h('div', { class: 'field' }, [
+        h('label', { for: `slot-label-${idx}` }, 'Nome do agente'),
+        h('input', {
+          type: 'text', id: `slot-label-${idx}`,
+          value: nomes[chave] === padrao ? '' : nomes[chave],
+          placeholder: padrao, autocomplete: 'off',
+          // O nome aparece no aviso dos outros ("vai usar a configuração de X").
+          oninput: atualizarTodasHerancas
+        })
+      ]),
+      h('div', { class: 'slot-grid', style: 'margin-top:9px' }, [
         h('div', { class: 'field' }, [h('label', {}, 'Provedor'), provSel]),
         h('div', { class: 'field' }, [
           h('label', { for: `slot-model-${idx}` }, 'Modelo'),
@@ -117,99 +148,139 @@
           h('label', { for: `slot-key-${idx}` }, 'Chave de API'),
           h('input', {
             type: 'password', id: `slot-key-${idx}`, value: slot.api_key || '',
-            placeholder: 'sk-...', autocomplete: 'off', spellcheck: 'false'
-          })
+            placeholder: 'sk-...', autocomplete: 'off', spellcheck: 'false',
+            oninput: atualizarTodasHerancas
+          }),
+          h('button', {
+            class: 'btn ghost sm', type: 'button', style: 'margin-top:7px',
+            title: 'Copia provedor, chave e modelo deste agente para os outros três',
+            onclick: replicar
+          }, '⇊ usar em todos')
         ])
       ]),
-      h('div', { class: 'field', style: 'margin-top:9px' }, [
-        h('label', { for: `slot-label-${idx}` }, 'Apelido (opcional)'),
-        h('input', {
-          type: 'text', id: `slot-label-${idx}`, value: slot.label || '',
-          placeholder: `ex.: ${idx === 0 ? 'raciocínio pesado' : 'rápido e barato'}`
-        })
-      ])
+      aviso
     ]);
+
+    function replicar() {
+      const dados = {
+        provider: provSel.value,
+        model: modeloDe(idx),
+        api_key: (el(`slot-key-${idx}`) || {}).value || ''
+      };
+      if (!dados.api_key.trim() || !dados.model) {
+        alert('Preencha a chave e escolha o modelo deste agente antes de copiar.');
+        return;
+      }
+      if (!confirm('Copiar provedor, chave e modelo deste agente para os outros três?')) return;
+      for (let j = 0; j < SLOT_COUNT; j++) {
+        if (j === idx) continue;
+        el(`slot-prov-${j}`).value = dados.provider;
+        el(`slot-key-${j}`).value = dados.api_key;
+        const sel = el(`slot-model-${j}`);
+        const txt = el(`slot-model-txt-${j}`);
+        // O agente de destino pode nunca ter listado os modelos desta chave;
+        // acrescenta a opção para o select mostrar o modelo, não "outro".
+        if (!Array.from(sel.options).some((o) => o.value === dados.model)) {
+          sel.insertBefore(h('option', { value: dados.model }, dados.model),
+            sel.querySelector('option[value="__outro__"]'));
+        }
+        sel.value = dados.model;
+        txt.hidden = true;
+      }
+      atualizarTodasHerancas();
+    }
+
     // Chave já salva: busca os modelos reais assim que o modal abre.
     setTimeout(() => carregarModelos(!!(slot.api_key || '').trim()), 0);
     return card;
   }
 
-  /* ------------------------------------------------------- nomes da mesa */
+  /* ------------------------------------------------------------ coleta */
 
-  /** Os quatro agentes já vêm batizados pela especialidade; aqui só se troca
-   *  o nome. Campo vazio volta ao padrão. */
-  function mesaCard() {
-    const nomes = global.FL.loadAgentNames();
-    const padroes = global.FL.AGENT_DEFAULTS;
-    const icones = global.FL.AGENT_ICONS;
-    const papeis = {
-      equity: 'fundamentos, tese, riscos',
-      macro: 'juros, inflação e câmbio nas premissas',
-      gestor: 'veredito de posição e gatilhos',
-      premissas: 'calibragem do modelo — Rf, beta, crescimento'
-    };
-
-    return h('div', { class: 'slot-card' }, [
-      h('div', { class: 'hd' }, [
-        h('span', { class: 'n' }, 'A mesa'),
-        h('span', { class: 'sp', style: 'flex:1 1 auto' }),
-        h('span', { style: 'font:400 10.5px var(--mono);color:var(--dim2)' },
-          'como cada agente assina na conversa')
-      ]),
-      h('div', { class: 'mesa-grid' }, Object.keys(padroes).map((k) => h('div', { class: 'field' }, [
-        h('label', { for: `agent-nome-${k}` }, `${icones[k]} ${papeis[k]}`),
-        h('input', {
-          type: 'text', id: `agent-nome-${k}`, value: nomes[k] === padroes[k] ? '' : nomes[k],
-          placeholder: padroes[k], autocomplete: 'off'
-        })
-      ])))
-    ]);
+  function modeloDe(i) {
+    const sel = el(`slot-model-${i}`);
+    const manual = el(`slot-model-txt-${i}`);
+    return (sel && sel.value === '__outro__')
+      ? (manual ? manual.value.trim() : '')
+      : ((sel && sel.value) || '').trim();
   }
 
+  function primeiroConfigurado(exceto) {
+    const nomes = global.FL.loadAgentNames();
+    for (let j = 0; j < SLOT_COUNT; j++) {
+      if (j === exceto) continue;
+      const senha = (el(`slot-key-${j}`) || {}).value || '';
+      if (senha.trim() && modeloDe(j)) {
+        const campo = el(`slot-label-${j}`);
+        const proprio = campo && campo.value.trim();
+        return proprio || nomes[AGENT_ORDER[j]];
+      }
+    }
+    return null;
+  }
+
+  function atualizarTodasHerancas() {
+    for (let j = 0; j < SLOT_COUNT; j++) {
+      const aviso = el(`agent-heranca-${j}`);
+      if (!aviso) continue;
+      const senha = (el(`slot-key-${j}`) || {}).value || '';
+      if (senha.trim() && modeloDe(j)) {
+        aviso.className = 'agent-heranca ok';
+        aviso.textContent = '✓ este agente usa a chave e o modelo acima';
+      } else {
+        const doador = primeiroConfigurado(j);
+        aviso.className = 'agent-heranca';
+        aviso.textContent = doador
+          ? `sem chave própria — vai usar a configuração de ${doador}`
+          : 'sem chave: configure ao menos um agente para a mesa funcionar';
+      }
+    }
+  }
+
+  function collect() {
+    return Array.from({ length: SLOT_COUNT }, (_, i) => ({
+      id: i + 1,
+      agent: AGENT_ORDER[i],
+      provider: el(`slot-prov-${i}`).value,
+      model: modeloDe(i),
+      api_key: el(`slot-key-${i}`).value.trim(),
+      label: el(`slot-label-${i}`).value.trim()
+    }));
+  }
+
+  /** O nome do agente e o apelido do slot passaram a ser a mesma coisa. */
   function collectNomes() {
     const out = {};
-    Object.keys(global.FL.AGENT_DEFAULTS).forEach((k) => {
-      const campo = el(`agent-nome-${k}`);
-      out[k] = campo && campo.value.trim() ? campo.value.trim() : global.FL.AGENT_DEFAULTS[k];
+    AGENT_ORDER.forEach((k, i) => {
+      const campo = el(`slot-label-${i}`);
+      out[k] = campo && campo.value.trim()
+        ? campo.value.trim() : global.FL.AGENT_DEFAULTS[k];
     });
     return out;
   }
 
-  function collect() {
-    return Array.from({ length: SLOT_COUNT }, (_, i) => {
-      const sel = el(`slot-model-${i}`);
-      const manual = el(`slot-model-txt-${i}`);
-      const model = (sel && sel.value === '__outro__')
-        ? (manual ? manual.value.trim() : '')
-        : ((sel && sel.value) || '').trim();
-      return {
-        id: i + 1,
-        provider: el(`slot-prov-${i}`).value,
-        model,
-        api_key: el(`slot-key-${i}`).value.trim(),
-        label: el(`slot-label-${i}`).value.trim()
-      };
-    });
-  }
+  /* ------------------------------------------------------------- modal */
 
   async function open(callback) {
     onSaved = callback || null;
     await ensureProviders();
     const slots = loadSlots();
 
-    const body = h('div', {}, [mesaCard()].concat(slots.map((s, i) => slotCard(s, i))));
+    const body = h('div', {}, slots.map((s, i) => agentCard(s, i)));
 
     const bg = h('div', { class: 'modal-bg', id: 'llm-modal' });
     const modal = h('div', { class: 'modal wide' }, [
       h('div', { class: 'modal-head' }, [
         h('div', {}, [
-          h('h2', {}, '⚙ Modelos de IA'),
+          h('h2', {}, '⚙ A mesa de IA'),
           h('p', {
             class: 'sub',
-            html: 'Configure até <b>4 slots</b> de LLM. Cada agente de análise do painel pode '
-              + 'usar um slot diferente — por exemplo, um modelo forte para o gestor e um '
-              + 'barato para o analista macro.<br>'
-              + '<b>As chaves ficam só neste navegador</b> (localStorage) e são enviadas ao '
+            html: 'Um cartão por analista: dê o nome, cole a chave e escolha o modelo que '
+              + '<b>aquele agente</b> vai usar. Dá para pôr um modelo forte no gestor e um '
+              + 'barato no macro — ou usar a mesma chave nos quatro, com <b>⇊ usar em todos</b>.'
+              + '<br>Agente sem chave própria <b>herda a do primeiro configurado</b>, então uma '
+              + 'chave só já move a mesa inteira.'
+              + '<br><b>As chaves ficam só neste navegador</b> (localStorage) e são enviadas ao '
               + 'servidor local apenas no instante da chamada, que apenas repassa ao provedor. '
               + 'Nada é gravado em disco, em log ou no repositório.'
           })
@@ -238,7 +309,7 @@
             close();
             if (onSaved) onSaved();
           }
-        }, 'Salvar slots')
+        }, 'Salvar a mesa')
       ])
     ]);
 
@@ -246,6 +317,7 @@
     bg.addEventListener('mousedown', (ev) => { if (ev.target === bg) close(); });
     document.body.appendChild(bg);
     document.addEventListener('keydown', escClose);
+    setTimeout(atualizarTodasHerancas, 30);
   }
 
   function escClose(ev) { if (ev.key === 'Escape') close(); }
@@ -256,11 +328,10 @@
     document.removeEventListener('keydown', escClose);
   }
 
-  /** Rótulo curto de um slot, para os seletores dos agentes. */
+  /** Rótulo curto de um agente configurado, para os seletores. */
   function slotLabel(slot) {
     if (!slot) return '—';
-    const base = slot.label || slot.model || '(vazio)';
-    return `Slot ${slot.id} · ${esc(base)}`;
+    return esc(slot.label || slot.model || '(vazio)');
   }
 
   global.FLSettings = { open, close, ensureProviders, slotLabel };

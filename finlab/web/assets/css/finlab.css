@@ -455,14 +455,34 @@ textarea { font-family: var(--sans); resize: vertical; min-height: 64px; line-he
   display: block; font: 600 9.5px/1.4 var(--mono); letter-spacing: .12em;
   text-transform: uppercase; color: var(--dim2); margin-bottom: 5px;
 }
-/* O select do modelo mede pela opção mais longa, então cada slot ficava com
+/* O select do modelo mede pela opção mais longa, então cada cartão ficava com
    uma largura diferente. Preso na coluna, os quatro alinham. */
 .slot-grid .field select, .slot-grid .field input { width: 100%; }
 
-.mesa-grid { display: grid; gap: 9px; grid-template-columns: 1fr; }
-@media (min-width: 620px) { .mesa-grid { grid-template-columns: 1fr 1fr; } }
-.mesa-grid .field input { width: 100%; }
-.mesa-grid .field label { text-transform: none; letter-spacing: .02em; font-size: 10.5px; }
+/* ------------------------------------------------- cartão de cada agente */
+
+.agent-slot .hd { flex-wrap: wrap; gap: 8px; }
+.agent-slot .ico-agente { font-size: 17px; line-height: 1; }
+.agent-slot .n { text-transform: none; letter-spacing: .02em; font-size: 12.5px; }
+.agent-slot .papel {
+  font: 400 10.5px/1.4 var(--mono); color: var(--dim2);
+  padding-left: 8px; border-left: 1px solid var(--line);
+}
+.agent-slot .field input, .agent-slot .field select { width: 100%; }
+.agent-heranca {
+  margin-top: 10px; padding-top: 9px; border-top: 1px dashed var(--line);
+  font: 400 10.5px/1.5 var(--mono); color: var(--amber);
+}
+.agent-heranca.ok { color: var(--green); }
+
+.agent-modelo {
+  font: 500 10px/1 var(--mono); color: var(--dim); cursor: help;
+  border: 1px solid var(--line); border-radius: 999px; padding: 5px 9px;
+  max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.agent-modelo.herdado { color: var(--dim2); border-style: dashed; }
+.agent-modelo.vazio { color: var(--red); border-color: rgba(248, 113, 113, .4); }
+
 
 /* ------------------------------------------------------------------ agentes */
 
@@ -589,6 +609,11 @@ textarea { font-family: var(--sans); resize: vertical; min-height: 64px; line-he
   font: 700 10.5px/1 var(--mono); letter-spacing: .04em; color: var(--brand);
 }
 .chat-autor .ico { font-size: 12px; }
+.chat-modelo {
+  font: 400 9.5px/1 var(--mono); color: var(--dim2); letter-spacing: 0;
+  border: 1px solid var(--line); border-radius: 999px; padding: 3px 6px;
+  max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .chat-msg.nomeado .chat-bubble { max-width: 100%; }
 .chat-msg.sintese .chat-autor { color: var(--brand2); }
 .chat-msg.sintese .chat-bubble {

@@ -18,47 +18,36 @@
   }
 
   function slotFor(agentKey) {
-    const slots = loadSlots();
-    const escolhido = prefs.get('agentSlot.' + agentKey, null);
-    if (escolhido) {
-      const s = slots.find((x) => x.id === escolhido);
-      if (s && s.api_key && s.model) return s;
-    }
-    return slots.find((x) => x.api_key && x.model) || null;
+    return global.FL.agentConfig(agentKey);
   }
 
-  function slotSelect(agentKey) {
-    const slots = loadSlots();
-    const atual = prefs.get('agentSlot.' + agentKey, null);
-    const sel = h('select', {
-      title: 'Slot de LLM usado por este agente',
-      onchange: (ev) => prefs.set('agentSlot.' + agentKey, Number(ev.target.value) || null)
-    }, slots.map((s) => h('option', {
-      value: s.id,
-      selected: s.id === atual ? 'selected' : null
-    }, `Slot ${s.id}${s.label ? ' · ' + s.label : s.model ? ' · ' + s.model : ' · vazio'}`)));
-    if (!atual) {
-      const primeiro = slots.find((x) => x.api_key && x.model);
-      if (primeiro) sel.value = primeiro.id;
+  /** Qual modelo este agente usa — e se ele herdou de outro. A escolha em si
+   *  passou a ser feita no cartão do agente, em ⚙ A mesa de IA. */
+  function modeloDoAgente(agentKey) {
+    const cfg = global.FL.agentConfig(agentKey);
+    if (!cfg) {
+      return h('span', { class: 'agent-modelo vazio', title: 'Nenhum agente configurado' },
+        'sem modelo');
     }
-    return sel;
+    return h('span', {
+      class: 'agent-modelo' + (cfg.herdado ? ' herdado' : ''),
+      title: cfg.herdado
+        ? 'Este agente não tem chave própria: usa a de ' + (cfg.label || cfg.model)
+        : 'Modelo configurado para este agente'
+    }, (cfg.herdado ? '↳ ' : '') + cfg.model);
   }
 
   /* ------------------------------------------------------------ execução */
 
   async function run(agentKey, state, card) {
-    const slot = (function () {
-      const escolhido = Number(card.querySelector('select').value);
-      const s = loadSlots().find((x) => x.id === escolhido);
-      return (s && s.api_key && s.model) ? s : slotFor(agentKey);
-    })();
+    const slot = slotFor(agentKey);
 
     const out = card.querySelector('.agent-out');
     const btn = card.querySelector('button[data-run]');
 
     if (!slot) {
-      out.innerHTML = '<div class="note bad">Nenhum slot de IA configurado com chave e modelo. '
-        + 'Abra <b>⚙ Modelos de IA</b> no topo da página.</div>';
+      out.innerHTML = '<div class="note bad">Nenhum agente configurado com chave e modelo. '
+        + 'Abra <b>⚙ A mesa de IA</b> no topo da página.</div>';
       return;
     }
 
@@ -164,7 +153,7 @@
           h('button', {
             class: 'btn ghost sm',
             onclick: () => global.FLSettings.open(() => render(state))
-          }, '⚙ Slots'),
+          }, '⚙ A mesa'),
           h('button', {
             class: 'btn primary sm', disabled: prontos.length ? null : 'disabled',
             onclick: (ev) => rodarTodos(state, ev.target)
@@ -174,10 +163,11 @@
       h('div', {
         class: 'note',
         html: prontos.length
-          ? `<b>${prontos.length}</b> de 4 slots configurados. Cada agente recebe o mesmo contexto: `
-            + 'fundamentos da CVM, múltiplos, macro do dia, suas premissas atuais e o resultado do '
-            + 'modelo. Eles interpretam — não têm acesso a notícias nem a dados fora desta tela.'
-          : 'Nenhum slot configurado ainda. Clique em <b>⚙ Slots</b> e cadastre pelo menos uma '
+          ? `<b>${prontos.length}</b> de 4 agentes com chave própria; os demais herdam a do `
+            + 'primeiro. Todos recebem o mesmo contexto: fundamentos da CVM, múltiplos, macro do '
+            + 'dia, suas premissas atuais e o resultado do modelo. Eles interpretam — não têm '
+            + 'acesso a notícias nem a dados fora desta tela.'
+          : 'Nenhum agente configurado ainda. Clique em <b>⚙ A mesa</b> e cadastre pelo menos uma '
             + 'chave (OpenRouter, OpenAI, Anthropic, Google, Groq ou DeepSeek).'
       })
     ]));
@@ -185,8 +175,8 @@
     (cfg.agents || []).forEach((agent) => {
       const out = h('div', { class: 'agent-out' }, saidas[agent.key] ? undefined
         : h('div', { class: 'note' }, prontos.length
-          ? 'Escolha o slot e clique em Rodar para receber a leitura deste agente.'
-          : 'Configure um slot de IA para habilitar este agente.'));
+          ? 'Clique em Rodar para receber a leitura deste agente.'
+          : 'Configure a chave de um agente para habilitar a mesa.'));
       if (saidas[agent.key]) out.innerHTML = markdown(saidas[agent.key]);
 
       const card = h('section', { class: 'agent-card' }, [
@@ -198,7 +188,7 @@
             h('div', { class: 'dsc' }, agent.desc)
           ]),
           h('span', { class: 'sp' }),
-          slotSelect(agent.key),
+          modeloDoAgente(agent.key),
           h('button', {
             class: 'btn sm', 'data-run': agent.key,
             onclick: (ev) => run(agent.key, state, ev.target.closest('.agent-card'))

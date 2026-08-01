@@ -18,6 +18,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 from datetime import date, datetime, timedelta
 from typing import Iterable, Optional
 
@@ -370,34 +371,63 @@ def brapi_fundamentals(ticker: str) -> Optional[dict]:
 # ---------------------------------------------------------------------------
 
 def _load_local_history() -> dict[str, dict[str, float]]:
+    """Lê o histórico acumulado, ignorando o que não der para aproveitar.
+
+    Este arquivo é escrito a cada carga e pode ficar corrompido — duas
+    instâncias do painel no ar ao mesmo tempo, disco cheio, desligamento no
+    meio da gravação. Uma linha ruim NÃO pode derrubar o painel inteiro: aqui
+    se pula o que estiver quebrado e se aproveita o resto.
+    """
     out: dict[str, dict[str, float]] = {}
     if not HISTORY_FILE.exists():
         return out
     try:
-        with HISTORY_FILE.open("r", encoding="utf-8", newline="") as fh:
-            for row in csv.reader(fh):
+        with HISTORY_FILE.open("r", encoding="utf-8", newline="",
+                               errors="replace") as fh:
+            leitor = csv.reader(fh)
+            while True:
+                try:
+                    row = next(leitor)
+                except StopIteration:
+                    break
+                except csv.Error:
+                    # Campo gigante ou NUL no meio: o leitor levanta e segue.
+                    continue
                 if len(row) != 3:
                     continue
-                tk, dt, px = row
+                tk, dt, px = (c.strip() for c in row)
+                if not tk or not dt:
+                    continue
                 try:
                     out.setdefault(tk, {})[dt] = float(px)
                 except ValueError:
                     continue
-    except OSError:
+    except (OSError, csv.Error):
         pass
     return out
 
 
 def _save_local_history(store: dict[str, dict[str, float]]) -> None:
+    """Grava num temporário e troca no fim.
+
+    Escrever direto no arquivo final deixa uma janela em que ele está pela
+    metade; se o processo morrer aí (ou outro painel estiver gravando junto),
+    o histórico fica corrompido. `os.replace` é atômico no mesmo volume.
+    """
+    tmp = HISTORY_FILE.with_suffix(f".tmp{os.getpid()}")
     try:
         HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with HISTORY_FILE.open("w", encoding="utf-8", newline="") as fh:
+        with tmp.open("w", encoding="utf-8", newline="") as fh:
             w = csv.writer(fh)
             for tk in sorted(store):
                 for dt in sorted(store[tk]):
                     w.writerow([tk, dt, f"{store[tk][dt]:.6f}"])
+        os.replace(tmp, HISTORY_FILE)
     except OSError:
-        pass
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def merge_history(series_by_ticker: dict[str, list[tuple[str, float]]]) -> dict[str, list[tuple[str, float]]]:

@@ -461,6 +461,38 @@ def test_proxy_llm_exige_chave_e_provedor_valido():
         agents.chat("nao-existe", "k", "m", "s", "u")
 
 
+def test_historico_corrompido_nao_derruba_o_painel(tmp_path, monkeypatch):
+    """Duas instâncias do painel gravando junto corromperam o history.csv e
+    TODA página de empresa passou a devolver 500. Uma linha ruim tem de ser
+    pulada, não virar exceção."""
+    arq = tmp_path / "history.csv"
+    arq.write_text(
+        "PETR4,2024-01-02,30.5\n"
+        + "LIXO," + ("x" * 200000) + ",1\n"          # campo gigante
+        + "VALE3,2024-01-02,nao-e-numero\n"          # preço inválido
+        + "SO,DUAS,COLUNAS,DEMAIS\n"                 # colunas a mais
+        + ",,\n"                                     # linha vazia
+        + "VALE3,2024-01-03,61.25\n",
+        encoding="utf-8")
+    monkeypatch.setattr(market, "HISTORY_FILE", arq)
+
+    hist = market._load_local_history()
+    assert hist["PETR4"] == {"2024-01-02": 30.5}
+    assert hist["VALE3"] == {"2024-01-03": 61.25}   # a linha ruim sumiu, a boa ficou
+    assert "SO" not in hist and "" not in hist
+
+
+def test_historico_e_gravado_de_forma_atomica(tmp_path, monkeypatch):
+    arq = tmp_path / "history.csv"
+    monkeypatch.setattr(market, "HISTORY_FILE", arq)
+    market._save_local_history({"PETR4": {"2024-01-02": 30.5}})
+
+    assert arq.read_text(encoding="utf-8").strip() == "PETR4,2024-01-02,30.500000"
+    # nenhum temporário deixado para trás
+    assert [p.name for p in tmp_path.iterdir()] == ["history.csv"]
+    assert market._load_local_history() == {"PETR4": {"2024-01-02": 30.5}}
+
+
 def test_status_das_fontes_diagnostica_o_token(monkeypatch):
     monkeypatch.setattr(market, "_probe", lambda k: {"brapi": True, "yahoo": True,
                                                      "pulseflat": False}[k])

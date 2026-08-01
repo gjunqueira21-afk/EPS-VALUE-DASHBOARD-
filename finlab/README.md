@@ -56,7 +56,7 @@ finlab/
 │       ├── engine.js   o motor de DCF/EPV — roda no navegador
 │       ├── charts.js   gráficos em SVG puro
 │       └── ...
-└── tests/              81 testes (pytest)
+└── tests/              83 testes (pytest)
 ```
 
 O front não carrega **nada** de CDN: fontes do sistema, gráficos em SVG escritos à mão.
@@ -180,9 +180,15 @@ macro do dia, suas premissas e o resultado do modelo:
 | 🎯 Gestor | veredito, tamanho de posição, gatilhos, o que invalida a tese |
 | 🧪 Engenheiro de Premissas | devolve um JSON de premissas que você aplica com um clique |
 
-Configure até **4 slots** em *⚙ Modelos de IA* — OpenRouter, OpenAI, Anthropic, Google,
-Groq ou DeepSeek. Cada agente escolhe seu slot, então dá para usar um modelo forte no
-gestor e um barato no macro.
+A configuração fica em *⚙ A mesa de IA*: **um cartão por agente**, com o nome dele, o
+provedor (OpenRouter, OpenAI, Anthropic, Google, Groq ou DeepSeek), a chave e o modelo.
+Dá para pôr um modelo forte no gestor e um barato no macro — ou preencher um agente só e
+clicar em **⇊ usar em todos**.
+
+**Uma chave só basta.** Agente sem chave própria **herda a configuração do primeiro
+configurado**, e o cartão diz isso na hora ("sem chave própria — vai usar a configuração
+de X"). Cada fala na conversa e cada card na aba *Mesa de IA* mostram o modelo que aquele
+agente está usando, então nunca fica a dúvida de quem usa o quê.
 
 Ao escolher o provedor e colar a chave, clique em **↻ Buscar meus modelos**: o painel
 consulta a API do provedor e lista os modelos que *aquela chave* pode usar, já sem
@@ -209,16 +215,16 @@ pergunta chega junto com o número novo.
   (*"gestor, vale a posição?"*) que a pergunta é desviada mesmo com a mesa selecionada.
 
 Os agentes já vêm batizados pela especialidade — *Agente Analista BR*, *Agente Macro*,
-*Agente Gestor*, *Agente Premissas* — e você renomeia qualquer um em *⚙ Modelos de IA*,
-na seção **A mesa**. Campo em branco volta ao padrão. O nome vale na conversa e na aba
+*Agente Gestor*, *Agente Premissas* — e você renomeia qualquer um no cartão dele em
+*⚙ A mesa de IA*. Campo em branco volta ao padrão. O nome vale na conversa e na aba
 *Mesa de IA*.
 
 A conversa fica no `sessionStorage` do navegador (sobrevive à navegação entre telas,
 some ao fechar a aba) e o 🗑 do cabeçalho limpa tudo. `Enter` envia, `Shift+Enter`
 quebra linha, `Esc` fecha.
 
-Cada agente usa o slot que você escolheu para ele na aba *Mesa de IA*; sem escolha, usa
-o primeiro slot configurado — então uma chave só já move a mesa inteira.
+Cada agente usa a chave e o modelo do próprio cartão; sem chave própria, herda a do
+primeiro configurado — então uma chave só já move a mesa inteira.
 
 **Sobre as chaves:** ficam no `localStorage` do seu navegador e são enviadas ao servidor
 local só no instante da chamada, que apenas repassa ao provedor (isso evita CORS e as

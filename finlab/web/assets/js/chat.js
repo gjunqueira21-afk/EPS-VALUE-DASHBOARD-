@@ -43,17 +43,9 @@
 
   /* ------------------------------------------------------------------ slot */
 
-  /** Slot de cada agente: o que ele já usa na aba Mesa de IA, senão o
-   *  primeiro configurado. Assim uma chave só atende a mesa inteira. */
+  /** A configuração do agente: a dele, ou a herdada de quem tem chave. */
   function slotDo(agentKey) {
-    const slots = loadSlots();
-    const prontos = slots.filter((s) => s.api_key && s.model);
-    const escolhido = agentKey ? prefs.get('agentSlot.' + agentKey, null) : null;
-    if (escolhido) {
-      const s = prontos.find((x) => x.id === escolhido);
-      if (s) return s;
-    }
-    return prontos[0] || null;
+    return global.FL.agentConfig(agentKey);
   }
 
   function temSlot() { return loadSlots().some((s) => s.api_key && s.model); }
@@ -86,10 +78,18 @@
     if (!meu && msg.autor) {
       caixa.classList.add('nomeado');
       if (msg.agente === 'sintese') caixa.classList.add('sintese');
-      caixa.appendChild(h('div', { class: 'chat-autor' }, [
+      const cracha = [
         h('span', { class: 'ico' }, msg.icone || '🧠'),
         h('span', {}, msg.autor)
-      ]));
+      ];
+      // Qual modelo respondeu: a pergunta "quem está usando o quê" tem de ter
+      // resposta olhando a própria fala, não só no modal de configuração.
+      if (msg.modelo) {
+        cracha.push(h('span', {
+          class: 'chat-modelo', title: 'Slot usado por este agente'
+        }, msg.modelo));
+      }
+      caixa.appendChild(h('div', { class: 'chat-autor' }, cracha));
     }
     caixa.appendChild(corpo);
     return caixa;
@@ -159,11 +159,12 @@
 
   /* ---------------------------------------------------------------- envio */
 
-  function pensando(rotulo, icone) {
+  function pensando(rotulo, icone, modelo) {
     const n = h('div', { class: 'chat-msg ai nomeado pensando' }, [
       h('div', { class: 'chat-autor' }, [
-        h('span', { class: 'ico' }, icone || '🧠'), h('span', {}, rotulo)
-      ]),
+        h('span', { class: 'ico' }, icone || '🧠'), h('span', {}, rotulo),
+        modelo ? h('span', { class: 'chat-modelo' }, modelo) : null
+      ].filter(Boolean)),
       h('div', { class: 'chat-bubble' }, [h('span', { class: 'spinner' }), ' pensando…'])
     ]);
     const corpo = el('chat-body');
@@ -176,7 +177,7 @@
   /** Uma fala. Devolve o texto ou null, e nunca deixa bolha vazia na tela. */
   async function falar(agente, rotulo, icone, pergunta, historico, extra) {
     const slot = slotDo(agente);
-    const marca = pensando(rotulo, icone);
+    const marca = pensando(rotulo, icone, slot && slot.model);
     try {
       const r = await api('/api/agents/chat', {
         method: 'POST',
@@ -199,7 +200,8 @@
         });
         return null;
       }
-      empilhar({ role: 'assistant', autor: rotulo, icone: icone, agente: agente, content: texto });
+      empilhar({ role: 'assistant', autor: rotulo, icone: icone, agente: agente,
+                 modelo: r.modelo || (slot && slot.model), content: texto });
       return texto;
     } catch (err) {
       marca.remove();

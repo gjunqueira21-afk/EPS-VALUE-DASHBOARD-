@@ -167,6 +167,6 @@
   el('btnRefresh').addEventListener('click', () => load(true));
   el('btnLLM').addEventListener('click', () => window.FLSettings.open());
 
-  window.FLChat.init({ rotulo: 'ETFs listados na B3' });
+  window.FLChat.init({ tela: 'etfs', rotulo: 'todos os ETFs da B3' });
   load(false);
 })();

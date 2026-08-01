@@ -17,7 +17,7 @@
   const HIST_KEY = 'finlab.chat.hist.v1';
   const ORDEM = ['equity', 'macro', 'gestor', 'premissas'];
 
-  const state = { aberto: false, enviando: false, ticker: null, ctx: null, montado: false };
+  const state = { aberto: false, enviando: false, ticker: null, tela: null, ctx: null, montado: false };
 
   /* -------------------------------------------------------------- histórico */
 
@@ -109,7 +109,11 @@
               + 'múltiplos, premissas do modelo, comparação com os pares.<br><br>'
               + 'A mesa inteira responde e fecha com uma conclusão. Para falar com um '
               + 'só, escolha embaixo ou comece a frase com o nome dele.'
-            : 'Abra uma empresa para conversar sobre ela, ou pergunte sobre o macro do dia.'
+            : state.tela
+              ? 'A mesa enxerga <b>tudo o que está nesta tela</b> — pergunte sobre o '
+                + 'conjunto. Ex.: <i>"se fosse montar uma carteira com as melhores, '
+                + 'quais seriam?"</i>'
+              : 'Abra uma empresa para conversar sobre ela, ou pergunte sobre o macro do dia.'
         })
       ]));
     } else {
@@ -184,6 +188,7 @@
         body: JSON.stringify(Object.assign({
           slot: { provider: slot.provider, api_key: slot.api_key, model: slot.model },
           ticker: state.ticker,
+          tela: state.tela,
           assumptions: (state.ctxAtual || {}).assumptions || null,
           resultado: (state.ctxAtual || {}).resultado || null,
           historico: historico,
@@ -361,6 +366,7 @@
     const o = opts || {};
     montar();
     state.ticker = o.ticker || null;
+    state.tela = o.tela || null;
     state.ctx = typeof o.ctx === 'function' ? o.ctx : null;
     const rotulo = el('chat-ctx');
     if (rotulo) {

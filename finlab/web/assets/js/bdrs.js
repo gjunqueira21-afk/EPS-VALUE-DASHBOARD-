@@ -171,6 +171,6 @@
   el('btnRefresh').addEventListener('click', () => load(true));
   el('btnLLM').addEventListener('click', () => window.FLSettings.open());
 
-  window.FLChat.init({ rotulo: 'BDRs na B3 · empresas globais' });
+  window.FLChat.init({ tela: 'bdrs', rotulo: 'os BDRs do painel, por setor' });
   load(false);
 })();

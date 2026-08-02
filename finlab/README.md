@@ -56,7 +56,7 @@ finlab/
 │       ├── engine.js   o motor de DCF/EPV — roda no navegador
 │       ├── charts.js   gráficos em SVG puro
 │       └── ...
-└── tests/              83 testes (pytest)
+└── tests/              86 testes (pytest)
 ```
 
 O front não carrega **nada** de CDN: fontes do sistema, gráficos em SVG escritos à mão.
@@ -203,6 +203,14 @@ que acompanha você em todas as telas. Ela recebe o mesmo contexto dos agentes: 
 aberto, os fundamentos, o macro do dia e — importante — **as premissas como estão nos
 sliders naquele instante**. Mexa no crescimento e pergunte "isso faz sentido?" que a
 pergunta chega junto com o número novo.
+
+**O que a mesa enxerga** depende de onde você está. No painel de uma empresa, ela
+recebe os fundamentos, o macro e as premissas dos sliders. Nas telas de lista —
+Ações, ETFs, BDRs — ela recebe **a tabela inteira que está na tela**: as 90 ações com
+nota e múltiplos, os ETFs com taxa e liquidez, os BDRs por setor. É o que permite
+perguntar sobre o conjunto: *"se fosse montar uma carteira com as melhores ações,
+quais seriam?"*, *"qual ETF de S&P 500 tem a menor taxa?"*, *"quais BDRs de tecnologia
+pagam dividendo?"*.
 
 **Quem responde** se escolhe no rodapé da caixa:
 

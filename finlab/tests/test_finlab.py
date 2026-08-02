@@ -461,6 +461,66 @@ def test_proxy_llm_exige_chave_e_provedor_valido():
         agents.chat("nao-existe", "k", "m", "s", "u")
 
 
+def test_contexto_da_tela_de_acoes_carrega_a_lista_inteira():
+    overview = {
+        "rows": [
+            {"rank": 1, "ticker": "PRIO3", "sector": "OIL", "score": 87.6,
+             "price": 40.0, "financial": False,
+             "perf": {"m12": 0.35, "ytd": 0.12},
+             "multiples": {"pl": 9.9, "pvp": 2.3, "dy": 0.051, "roe": 0.22,
+                           "nd_ebitda": 0.4}},
+            {"rank": 2, "ticker": "ITUB4", "sector": "FIN", "score": 80.0,
+             "price": None, "financial": True,
+             "perf": {"m12": None, "ytd": None},
+             "multiples": {"pl": 8.0, "pvp": 1.8, "dy": None, "roe": 0.21,
+                           "nd_ebitda": None}},
+        ],
+        "sector_stats": {"OIL": {"n": 7, "score": 68.0, "pl": 6.1, "pvp": 1.2,
+                                 "dy": 0.08, "roe": 0.15}},
+    }
+    setores = {"OIL": {"label": "Petróleo"}, "FIN": {"label": "Bancos"}}
+    macro = {"selic": {"value": "14,15%"}}
+
+    ctx = agents.contexto_lista_acoes(overview, macro, setores)
+    assert "TELA ABERTA" in ctx and "2 ações" in ctx
+    assert "1. PRIO3 (Petróleo) nota 87,6 | R$ 40,00 | 12m +35,0% | YTD +12,0% | " \
+           "P/L 9,9x | P/VP 2,3x | DY +5,1% | ROE +22,0% | DL/EBITDA 0,4x" in ctx
+    # banco: sem cotação não vira número, e DL/EBITDA é n/a por definição
+    assert "2. ITUB4 (Bancos) nota 80,0 | sem cotação | 12m n/a" in ctx
+    assert "DL/EBITDA n/a" in ctx
+    assert "Petróleo (7 ações): nota 68,0 · P/L 6,1x" in ctx
+    assert "SELIC: 14,15%" in ctx
+
+
+def test_contexto_da_tela_de_etfs_filtra_sem_negocio_e_corta_tese():
+    payload = {"rows": [
+        {"ticker": "BOVA11", "categoria": "INDICES_BR", "taxa_adm": 0.1,
+         "liquidez": 1.8e9, "pl": 2.1e10, "price": 130.0,
+         "perf": {"m12": 0.15, "ytd": 0.1}, "tese": "x" * 200},
+        {"ticker": "MORTO11", "categoria": "INDICES_BR", "taxa_adm": None,
+         "liquidez": 0, "pl": None, "price": None, "perf": {}, "tese": "sem negócio"},
+    ]}
+    cats = {"INDICES_BR": {"label": "Índices Brasil"}}
+    ctx = agents.contexto_lista_etfs(payload, {}, cats)
+    assert "2 ETFs" in ctx and "(1 sem negócios recentes ficaram fora" in ctx
+    assert "BOVA11 (Índices Brasil) taxa 0,10% | liq R$ 1,8 bi | PL R$ 21,0 bi" in ctx
+    assert "MORTO11" not in ctx
+    assert "x" * 107 + "…" in ctx and "x" * 120 not in ctx   # tese truncada
+
+
+def test_contexto_da_tela_de_bdrs_converte_setor_e_dy():
+    payload = {"rows": [
+        {"ticker": "AAPL34", "us_ticker": "AAPL", "name": "Apple",
+         "sector": "TECHNOLOGY", "price": 61.5, "dy": 0.005, "liquidez": 1.2e7,
+         "perf": {"m12": 0.3, "ytd": -0.02}},
+    ]}
+    setores = {"TECHNOLOGY": {"label": "Information Technology"}}
+    ctx = agents.contexto_lista_bdrs(payload, {}, setores)
+    assert "1 BDRs" in ctx
+    assert "AAPL34 (AAPL) Apple · Information Technology | R$ 61,50 | " \
+           "12m +30,0% | YTD -2,0% | DY +0,5% | liq R$ 12,0 mi" in ctx
+
+
 def test_historico_corrompido_nao_derruba_o_painel(tmp_path, monkeypatch):
     """Duas instâncias do painel gravando junto corromperam o history.csv e
     TODA página de empresa passou a devolver 500. Uma linha ruim tem de ser

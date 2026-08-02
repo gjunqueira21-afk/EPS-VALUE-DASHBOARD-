@@ -442,6 +442,6 @@
 
   renderBrand();
   bind();
-  window.FLChat.init({ rotulo: 'visão geral do mercado' });
+  window.FLChat.init({ tela: 'acoes', rotulo: 'as 90 ações da tela principal' });
   load(false);
 })();

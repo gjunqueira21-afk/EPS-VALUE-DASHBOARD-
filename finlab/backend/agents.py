@@ -569,6 +569,145 @@ def _json_or_raise(resp: requests.Response) -> dict:
 # Contexto enviado ao modelo
 # ---------------------------------------------------------------------------
 
+def _f_num(v, casas: int = 1) -> str:
+    if v is None:
+        return "n/a"
+    return f"{v:,.{casas}f}".replace(",", "·").replace(".", ",").replace("·", ".")
+
+
+def _f_pct(v, casas: int = 1) -> str:
+    """Fração -> percentual com sinal: 0.123 -> '+12,3%'."""
+    if v is None:
+        return "n/a"
+    return f"{'+' if v >= 0 else ''}{_f_num(v * 100.0, casas)}%"
+
+
+def _f_x(v) -> str:
+    return "n/a" if v is None else f"{_f_num(v, 1)}x"
+
+
+def _f_dinheiro(v) -> str:
+    """Volume/patrimônio compacto: 1.8e9 -> 'R$ 1,8 bi'."""
+    if v is None or v <= 0:
+        return "n/a"
+    if v >= 1e9:
+        return f"R$ {_f_num(v / 1e9, 1)} bi"
+    if v >= 1e6:
+        return f"R$ {_f_num(v / 1e6, 1)} mi"
+    return f"R$ {_f_num(v / 1e3, 0)} mil"
+
+
+def _bloco_macro(macro: dict) -> list[str]:
+    linhas = ["MACRO DO DIA"]
+    for k, v in (macro or {}).items():
+        if isinstance(v, dict) and v.get("value") is not None:
+            linhas.append(f"  {k.upper()}: {v.get('value')}")
+    return linhas
+
+
+def contexto_lista_acoes(overview: dict, macro: dict, setores: dict) -> str:
+    """A tela principal inteira, para a mesa opinar sobre o conjunto.
+
+    É isto que permite perguntar "quais ações para uma carteira?" sem abrir
+    empresa por empresa: as 90 linhas vão no prompt, já ordenadas pela nota.
+    """
+    rows = overview.get("rows") or []
+    linhas = [
+        "TELA ABERTA: lista principal com as "
+        f"{len(rows)} ações do painel, ordenadas da melhor para a pior "
+        "saúde financeira (nota 0-100 construída das demonstrações anuais da CVM).",
+        "Múltiplos calculados com o preço recente sobre o último exercício fechado "
+        "na CVM. Bancos/seguradoras não têm DL/EBITDA (n/a).",
+        "Use estes dados para perguntas sobre o conjunto — comparações, filtros, "
+        "montagem de carteira — citando sempre os números que sustentam a escolha.",
+        "",
+        "AÇÕES (nº · ticker · setor · nota · preço · 12 meses · YTD · P/L · P/VP "
+        "· DY · ROE · DL/EBITDA)",
+    ]
+    for r in rows:
+        m = r.get("multiples") or {}
+        perf = r.get("perf") or {}
+        setor = (setores.get(r.get("sector")) or {}).get("label") or r.get("sector") or "?"
+        preco = r.get("price")
+        linhas.append(
+            f"{r.get('rank')}. {r.get('ticker')} ({setor}) nota {_f_num(r.get('score'))} | "
+            f"{'R$ ' + _f_num(preco, 2) if preco is not None else 'sem cotação'} | "
+            f"12m {_f_pct(perf.get('m12'))} | YTD {_f_pct(perf.get('ytd'))} | "
+            f"P/L {_f_x(m.get('pl'))} | P/VP {_f_x(m.get('pvp'))} | "
+            f"DY {_f_pct(m.get('dy')) if m.get('dy') is not None else 'n/a'} | "
+            f"ROE {_f_pct(m.get('roe')) if m.get('roe') is not None else 'n/a'} | "
+            f"DL/EBITDA {'n/a' if r.get('financial') else _f_x(m.get('nd_ebitda'))}"
+        )
+
+    stats = overview.get("sector_stats") or {}
+    if stats:
+        linhas += ["", "MEDIANAS POR SETOR (nota · P/L · P/VP · DY · ROE)"]
+        for chave, s in stats.items():
+            setor = (setores.get(chave) or {}).get("label") or chave
+            linhas.append(
+                f"  {setor} ({s.get('n')} ações): nota {_f_num(s.get('score'))} · "
+                f"P/L {_f_x(s.get('pl'))} · P/VP {_f_x(s.get('pvp'))} · "
+                f"DY {_f_pct(s.get('dy')) if s.get('dy') is not None else 'n/a'} · "
+                f"ROE {_f_pct(s.get('roe')) if s.get('roe') is not None else 'n/a'}"
+            )
+
+    linhas += [""] + _bloco_macro(macro)
+    return "\n".join(linhas)
+
+
+def contexto_lista_etfs(payload: dict, macro: dict, categorias: dict) -> str:
+    rows = payload.get("rows") or []
+    liquidos = [r for r in rows if r.get("price") is not None]
+    fora = len(rows) - len(liquidos)
+    linhas = [
+        f"TELA ABERTA: lista dos {len(rows)} ETFs listados na B3, por categoria."
+        + (f" ({fora} sem negócios recentes ficaram fora desta lista.)" if fora else ""),
+        "ETF não tem valuation aqui: a análise é tese, taxa de administração, "
+        "liquidez (volume médio por pregão na B3) e patrimônio. Taxa vem de "
+        "cadastro local — recomende conferir no regulamento da gestora.",
+        "",
+        "ETFS (ticker · categoria · taxa adm · liquidez/dia · PL · 12 meses · YTD · tese)",
+    ]
+    for r in liquidos:
+        cat = (categorias.get(r.get("categoria")) or {}).get("label") or r.get("categoria") or "?"
+        perf = r.get("perf") or {}
+        taxa = r.get("taxa_adm")
+        tese = (r.get("tese") or "").strip()
+        if len(tese) > 110:
+            tese = tese[:107] + "…"
+        linhas.append(
+            f"- {r.get('ticker')} ({cat}) taxa {_f_num(taxa, 2) + '%' if taxa is not None else 'n/a'} | "
+            f"liq {_f_dinheiro(r.get('liquidez'))} | PL {_f_dinheiro(r.get('pl'))} | "
+            f"12m {_f_pct(perf.get('m12'))} | YTD {_f_pct(perf.get('ytd'))} | {tese}"
+        )
+    linhas += [""] + _bloco_macro(macro)
+    return "\n".join(linhas)
+
+
+def contexto_lista_bdrs(payload: dict, macro: dict, setores: dict) -> str:
+    rows = payload.get("rows") or []
+    linhas = [
+        f"TELA ABERTA: lista dos {len(rows)} BDRs do painel, por setor GICS.",
+        "Preço e variação são do BDR em reais — embutem a variação do papel na "
+        "bolsa de origem E a do dólar. Liquidez é o volume médio na B3.",
+        "",
+        "BDRS (ticker · empresa · setor · preço · 12 meses · YTD · DY · liquidez/dia)",
+    ]
+    for r in rows:
+        setor = (setores.get(r.get("sector")) or {}).get("label") or r.get("sector") or "?"
+        perf = r.get("perf") or {}
+        preco = r.get("price")
+        linhas.append(
+            f"- {r.get('ticker')} ({r.get('us_ticker')}) {r.get('name')} · {setor} | "
+            f"{'R$ ' + _f_num(preco, 2) if preco is not None else 'sem cotação'} | "
+            f"12m {_f_pct(perf.get('m12'))} | YTD {_f_pct(perf.get('ytd'))} | "
+            f"DY {_f_pct(r.get('dy')) if r.get('dy') is not None else 'n/a'} | "
+            f"liq {_f_dinheiro(r.get('liquidez'))}"
+        )
+    linhas += [""] + _bloco_macro(macro)
+    return "\n".join(linhas)
+
+
 def build_context(payload: dict, assumptions: dict, resultado: dict, macro: dict) -> str:
     """Serializa um contexto compacto e legível para o modelo."""
     fund = payload.get("fundamentals", {})

@@ -511,6 +511,7 @@ def api_agent_chat(body: dict = Body(...)):
         pergunta = agents.monta_pergunta_sintese(pergunta, body.get("respostas") or [])
 
     ticker = (body.get("ticker") or "").upper().strip()
+    tela = (body.get("tela") or "").strip().lower()
     if ticker and (universe.get(ticker) or bdrs.get(ticker)):
         payload = api_company(ticker)
         contexto = agents.build_context(
@@ -519,8 +520,25 @@ def api_agent_chat(body: dict = Body(...)):
             body.get("resultado") or {},
             payload.get("macro") or {},
         )
+    elif tela in ("acoes", "etfs", "bdrs"):
+        # Telas de lista: a mesa enxerga a tabela inteira que está na tela —
+        # é o que permite perguntar sobre o conjunto ("quais para uma carteira?").
+        macro_data = market.macro()
+        if tela == "acoes":
+            contexto = agents.contexto_lista_acoes(_overview_rows(), macro_data,
+                                                   universe.SECTORS)
+        elif tela == "etfs":
+            contexto = agents.contexto_lista_etfs(_etf_rows(), macro_data,
+                                                  etfs.CATEGORIES)
+        else:
+            contexto = agents.contexto_lista_bdrs(_bdr_rows(), macro_data,
+                                                  bdrs.SECTORS)
+        if ticker:
+            # ETF aberto: fora do universo de valuation, mas o ativo em foco
+            # entra no contexto para a conversa não fingir que não o vê.
+            contexto = f"O usuário está com {ticker} aberto na tela.\n\n" + contexto
     else:
-        # Sem ativo aberto (telas de lista): a conversa ainda tem o macro do dia.
+        # Sem ativo nem tela conhecida: a conversa ainda tem o macro do dia.
         macro_data = market.macro()
         linhas = ["Nenhum ativo aberto no painel — o usuário está numa tela de lista.",
                   "MACRO DO DIA"]

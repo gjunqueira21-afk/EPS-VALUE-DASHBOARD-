@@ -28,16 +28,51 @@ REQUEST_TIMEOUT = 120
 CHUNK_SIZE = 1024 * 1024  # 1 MB
 
 
+def _remote_is_newer(url: str, dest_path: Path) -> bool:
+    """A origem mudou desde o arquivo local?
+
+    A CVM REPUBLICA exercícios retroativamente, então "o arquivo existe" não
+    significa "o arquivo está atual" — pular sempre servia dado velho em
+    silêncio (achado 00.4 do diagnóstico). Um HEAD compara Last-Modified com
+    o mtime local (fallback: Content-Length × tamanho). Na dúvida — servidor
+    sem os cabeçalhos, rede fora — fica com o local, que é o comportamento
+    antigo.
+    """
+    try:
+        head = requests.head(url, timeout=30, allow_redirects=True)
+    except requests.exceptions.RequestException:
+        return False
+    if head.status_code != 200:
+        return False
+
+    lm = head.headers.get("Last-Modified")
+    if lm:
+        try:
+            from email.utils import parsedate_to_datetime
+            remoto = parsedate_to_datetime(lm).timestamp()
+            return remoto > dest_path.stat().st_mtime
+        except (TypeError, ValueError):
+            pass
+
+    tamanho = head.headers.get("Content-Length")
+    if tamanho and tamanho.isdigit():
+        return int(tamanho) != dest_path.stat().st_size
+    return False
+
+
 def _download_file(url: str, dest_path: Path, force_download: bool = False) -> bool:
     """
     Baixa um arquivo da URL para dest_path.
 
     Retorna True se o download foi bem-sucedido, False caso contrário.
-    Usa cache: se o arquivo já existir e force_download=False, pula o download.
+    Usa cache com revalidação: arquivo existente só é reaproveitado se a
+    origem não estiver mais nova (Last-Modified/Content-Length).
     """
     if dest_path.exists() and not force_download:
-        logger.info("Cache encontrado, pulando download: %s", dest_path.name)
-        return True
+        if not _remote_is_newer(url, dest_path):
+            logger.info("Cache atual, pulando download: %s", dest_path.name)
+            return True
+        logger.info("Origem mais nova que o cache, rebaixando: %s", dest_path.name)
 
     logger.info("Iniciando download: %s -> %s", url, dest_path.name)
 

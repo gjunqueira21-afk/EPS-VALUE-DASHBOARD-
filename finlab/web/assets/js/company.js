@@ -249,6 +249,287 @@
     });
   }
 
+  /* ============================================ persistência das premissas */
+  /* Antes, F5 apagava todo o trabalho e não havia como compartilhar uma
+     tese. Agora as premissas sobrevivem por ticker, e viajam num link. */
+
+  // Só o que o usuário pode mexer — nada de dado de mercado, que precisa
+  // vir fresco do servidor a cada carga.
+  const EDITAVEIS = ['rf', 'erp', 'beta', 'premio_extra', 'spread_credito', 'wd',
+                     'tax', 'growth', 'g_terminal', 'rf_modo'];
+
+  function premissasEditadas() {
+    const out = {};
+    EDITAVEIS.forEach((k) => {
+      const v = state.a[k];
+      if (v === undefined || v === null) return;
+      const padrao = state.base[k];
+      const igual = Array.isArray(v)
+        ? JSON.stringify(v) === JSON.stringify(padrao)
+        : (isNum(v) && isNum(padrao) ? Math.abs(v - padrao) < 1e-12 : v === padrao);
+      if (!igual) out[k] = v;
+    });
+    if (state.fcfMode !== state.base.fcf_modo) out.fcf_modo = state.fcfMode;
+    if (state.fcfAjuste !== 0) out.fcf_ajuste = state.fcfAjuste;
+    return out;
+  }
+
+  function aplicarPremissas(delta) {
+    if (!delta || typeof delta !== 'object') return false;
+    let mudou = false;
+    EDITAVEIS.forEach((k) => {
+      if (!(k in delta)) return;
+      const v = delta[k];
+      if (k === 'growth' && Array.isArray(v) && v.every(isNum)) {
+        state.a.growth = v.slice(0, 5); mudou = true;
+      } else if (k === 'rf_modo' && typeof v === 'string') {
+        state.a.rf_modo = v; mudou = true;
+      } else if (isNum(v)) {
+        state.a[k] = v; mudou = true;
+      }
+    });
+    if (delta.fcf_modo === 'ultimo' || delta.fcf_modo === 'media3') {
+      state.fcfMode = delta.fcf_modo; mudou = true;
+    }
+    if (isNum(delta.fcf_ajuste)) { state.fcfAjuste = delta.fcf_ajuste; mudou = true; }
+    return mudou;
+  }
+
+  function chaveSalva() { return 'tese.' + state.ticker; }
+
+  function salvarPremissas() {
+    const delta = premissasEditadas();
+    if (Object.keys(delta).length) prefs.set(chaveSalva(), delta);
+    else prefs.set(chaveSalva(), null);
+    atualizarBarraTese();
+  }
+
+  /** Premissas na URL têm prioridade sobre as salvas: um link compartilhado
+   *  precisa abrir a tese de quem mandou, não a de quem recebe. */
+  function restaurarPremissas() {
+    let origem = null;
+    const q = new URLSearchParams(window.location.search).get('t');
+    if (q) {
+      try {
+        if (aplicarPremissas(JSON.parse(decodeURIComponent(escape(atob(q)))))) origem = 'link';
+      } catch (e) { /* link corrompido: ignora e segue no padrão */ }
+    }
+    if (!origem) {
+      const salvo = prefs.get(chaveSalva(), null);
+      if (salvo && aplicarPremissas(salvo)) origem = 'salvo';
+    }
+    state.origemPremissas = origem;
+    if (origem) state.cenario = null;
+    return origem;
+  }
+
+  function linkDaTese() {
+    const delta = premissasEditadas();
+    const base = window.location.origin + window.location.pathname
+      + '?ticker=' + encodeURIComponent(state.ticker);
+    if (!Object.keys(delta).length) return base;
+    const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(delta))));
+    return base + '&t=' + encodeURIComponent(b64);
+  }
+
+  function resumoTexto() {
+    const a = params();
+    const r = result();
+    const e = E.epv(a);
+    const f = state.data.fundamentals;
+    const g = E.growthSeries(a.growth, a.anos);
+    const L = [];
+    L.push(`${f.ticker} · ${f.name}`);
+    L.push(`Preço de tela: ${isNum(a.preco) ? fmt.money(a.preco) : '—'}`
+      + (f.last_year ? ` · exercício-base ${f.last_year}` : ''));
+    L.push('');
+    L.push('PREMISSAS');
+    L.push(`  Rf ${fmt.pct(a.rf, 2)} · ERP ${fmt.pct(a.erp, 2)} · beta ${fmt.num(a.beta, 2)}`
+      + ` · prêmio extra ${fmt.pct(a.premio_extra, 2)}`);
+    L.push(`  Kd = CDI + ${fmt.pct(a.spread_credito, 2)} · D/(D+E) ${fmt.pct(a.wd, 0)}`
+      + ` · imposto ${fmt.pct(a.tax, 1)}`);
+    L.push(`  FCL base ${fmt.big(a.fcf_base, 2)} (${state.fcfMode === 'ultimo' ? 'último exercício' : 'média 3 anos'}`
+      + (state.fcfAjuste ? `, ajuste ${fmt.pctSigned(state.fcfAjuste, 0)}` : '') + ')');
+    L.push(`  Crescimento: ${g.map((v) => fmt.pct(v, 1)).join(' → ')}`
+      + ` · perpetuidade ${fmt.pct(a.g_terminal, 2)}`);
+    L.push('');
+    L.push('RESULTADO');
+    L.push(`  WACC ${fmt.pct(r.wacc, 2)}`);
+    L.push(`  Preço justo (DCF) ${isNum(r.preco_justo) ? fmt.money(r.preco_justo) : '—'}`
+      + (isNum(r.upside) ? ` · upside ${fmt.pctSigned(r.upside)}` : ''));
+    L.push(`  EPV por ação ${isNum(e.por_acao) ? fmt.money(e.por_acao) : '—'}`);
+    L.push(`  Crescimento implícito no preço ${fmt.pct(E.crescimentoImplicito(a), 1)}`);
+    L.push(`  Peso da perpetuidade ${fmt.pct(r.peso_perpetuidade, 0)}`);
+    if (r.alertas.length) L.push(`  Alertas: ${r.alertas.join(', ')}`);
+    L.push('');
+    L.push(`Link desta tese: ${linkDaTese()}`);
+    L.push('Gab\'s FinLab · isto não é recomendação de investimento.');
+    return L.join('\n');
+  }
+
+  async function copiar(texto, botao) {
+    const original = botao.textContent;
+    try {
+      await navigator.clipboard.writeText(texto);
+      botao.textContent = '✓ copiado';
+    } catch (err) {
+      // Sem permissão de área de transferência: mostra para copiar à mão.
+      window.prompt('Copie com Ctrl+C:', texto);
+      botao.textContent = original;
+      return;
+    }
+    setTimeout(() => { botao.textContent = original; }, 1600);
+  }
+
+  function atualizarBarraTese() {
+    const barra = el('teseBar');
+    if (!barra) return;
+    const delta = premissasEditadas();
+    const n = Object.keys(delta).length;
+    barra.innerHTML = '';
+
+    barra.appendChild(h('span', { class: 'tese-status' }, n
+      ? `${n} premissa${n > 1 ? 's' : ''} sua${n > 1 ? 's' : ''}`
+      : 'premissas padrão do painel'));
+
+    if (state.origemPremissas === 'link') {
+      barra.appendChild(h('span', { class: 'tese-tag' }, '🔗 tese recebida por link'));
+    } else if (state.origemPremissas === 'salvo' && n) {
+      barra.appendChild(h('span', { class: 'tese-tag' }, '💾 restaurada desta máquina'));
+    }
+
+    barra.appendChild(h('span', { style: 'flex:1 1 auto' }));
+
+    barra.appendChild(h('button', {
+      class: 'btn ghost sm', title: 'Copia um link que abre o painel com estas premissas',
+      onclick: (ev) => copiar(linkDaTese(), ev.currentTarget)
+    }, '🔗 link da tese'));
+    barra.appendChild(h('button', {
+      class: 'btn ghost sm', title: 'Premissas e resultado em texto, para colar no comitê',
+      onclick: (ev) => copiar(resumoTexto(), ev.currentTarget)
+    }, '📋 copiar resumo'));
+    if (n) {
+      barra.appendChild(h('button', {
+        class: 'btn ghost sm', title: 'Volta a todas as premissas originais do painel',
+        onclick: () => {
+          state.a = JSON.parse(JSON.stringify(state.base));
+          state.fcfMode = state.base.fcf_modo || 'media3';
+          state.fcfAjuste = 0;
+          state.cenario = 'base';
+          state.origemPremissas = null;
+          prefs.set(chaveSalva(), null);
+          rebuildControls();
+          renderAll();
+        }
+      }, '↺ restaurar padrão'));
+    }
+  }
+
+  /* ==================================================== football field */
+
+  /** Todo método de avaliação num eixo de preço só.
+   *
+   *  Antes o analista lia quatro números em quatro cantos da tela — DCF no
+   *  KPI, EPV noutro KPI, múltiplos numa aba, consenso em outra — e tinha
+   *  que fazer a comparação de cabeça. Aqui a pergunta "quanto vale,
+   *  afinal?" tem uma resposta visual: faixas sobre o mesmo eixo, com o
+   *  preço de tela cruzando todas.
+   */
+  function faixasDeValor() {
+    const a = params();
+    const d = state.data;
+    const itens = [];
+    const preco = a.preco;
+
+    // DCF: a faixa entre o cenário pessimista e o otimista, com o base no meio.
+    const rBase = E.dcf(a);
+    if (isNum(rBase.preco_justo)) {
+      const pess = E.dcf(E.cenario(a, 'pessimista')).preco_justo;
+      const otim = E.dcf(E.cenario(a, 'otimista')).preco_justo;
+      const extremos = [pess, otim, rBase.preco_justo].filter(isNum);
+      itens.push({
+        label: 'DCF', color: '#67E8F9',
+        from: Math.min.apply(null, extremos), to: Math.max.apply(null, extremos),
+        point: rBase.preco_justo,
+        nota: 'faixa entre pessimista e otimista · ponto = premissas atuais'
+      });
+    }
+
+    // EPV: poder de lucro atual, sem crescimento. É um ponto, não uma faixa.
+    const e = E.epv(a);
+    if (isNum(e.por_acao)) {
+      itens.push({
+        label: 'EPV', color: '#A78BFA', from: e.por_acao, to: e.por_acao,
+        nota: 'lucro operacional normalizado, capitalizado ao WACC'
+      });
+    }
+
+    // Múltiplos de pares: mediana do setor aplicada ao lucro/PL da empresa.
+    const stats = d.sector_stats || {};
+    const mu = d.multiples || {};
+    const porMultiplo = [];
+    if (isNum(stats.pl) && isNum(mu.lpa) && mu.lpa > 0) porMultiplo.push(stats.pl * mu.lpa);
+    if (isNum(stats.pvp) && isNum(mu.vpa) && mu.vpa > 0) porMultiplo.push(stats.pvp * mu.vpa);
+    if (porMultiplo.length) {
+      itens.push({
+        label: 'Múltiplos de pares', color: '#F5B841',
+        from: Math.min.apply(null, porMultiplo), to: Math.max.apply(null, porMultiplo),
+        point: porMultiplo.length > 1
+          ? porMultiplo.reduce((x, y) => x + y, 0) / porMultiplo.length : porMultiplo[0],
+        nota: 'mediana P/L e P/VP do setor aplicadas a esta empresa'
+      });
+    }
+
+    // Consenso de analistas: só existe com token BRAPI.
+    const c = d.consenso || {};
+    if (isNum(c.alvo_medio)) {
+      const alvos = [c.alvo_baixo, c.alvo_alto].filter(isNum);
+      itens.push({
+        label: 'Consenso', color: '#34D399',
+        from: alvos.length ? Math.min.apply(null, alvos) : c.alvo_medio,
+        to: alvos.length ? Math.max.apply(null, alvos) : c.alvo_medio,
+        point: c.alvo_medio,
+        nota: `${c.analistas || '—'} analistas · ${c.fonte || 'BRAPI'}`
+      });
+    }
+
+    return { itens, preco };
+  }
+
+  function renderFootball() {
+    const box = el('chartFootball');
+    if (!box) return;
+    const { itens, preco } = faixasDeValor();
+    const painel = el('footballPanel');
+
+    // Com um método só não há o que comparar: o painel some em vez de
+    // fingir que uma barra sozinha é um football field.
+    if (itens.length < 2) {
+      if (painel) painel.hidden = true;
+      return;
+    }
+    if (painel) painel.hidden = false;
+
+    C.hbars(box, {
+      items: itens,
+      ref: isNum(preco) ? { value: preco, label: 'preço de tela ' + fmt.money(preco) } : null,
+      format: (v) => fmt.money(v),
+      ariaLabel: 'Preço justo por método de avaliação'
+    });
+
+    const leg = el('footballNota');
+    if (leg) {
+      const dentro = itens.filter((i) => isNum(preco)
+        && preco >= Math.min(i.from, i.to) && preco <= Math.max(i.from, i.to)).length;
+      leg.innerHTML = isNum(preco)
+        ? `O preço de tela está <b>dentro</b> da faixa de ${dentro} de ${itens.length} `
+          + 'métodos. Quanto mais métodos concordam, menos a tese depende de uma '
+          + 'premissa específica — e quanto mais larga a faixa do DCF, mais o valor '
+          + 'está no seu julgamento, não no negócio.'
+        : 'Sem cotação para comparar.';
+    }
+  }
+
   /* ============================================================= régua */
 
   // Mesmo domínio do slider do hero (empresa.html): uma escala mental só.
@@ -742,6 +1023,31 @@
       pontesEV(r, a)
     ]));
 
+    // Tornado: qual premissa move mais ------------------------------------
+    // A sidebar tem 15 controles de mesmo peso visual; isto responde onde
+    // vale gastar a discussão — e ordena a própria sidebar por impacto.
+    const tornadoBox = h('div', { class: 'chartbox', style: 'height:auto' });
+    host.appendChild(h('section', { class: 'panel' }, [
+      h('div', { class: 'panel-h' }, [
+        h('div', { class: 'ptitle' }, [h('b', {}, 'Qual premissa move o preço justo'),
+          ' · variação de cada uma, isoladamente']),
+        h('div', { class: 'psub' }, 'laranja = extremo baixo · azul = extremo alto')
+      ]),
+      tornadoBox,
+      h('div', {
+        class: 'note',
+        html: 'Cada barra move <b>uma</b> premissa de cada vez, mantendo as outras. '
+          + 'A de cima é onde a sua opinião mais importa; as de baixo quase não '
+          + 'mudam o resultado — discutir a terceira casa delas é tempo perdido.'
+      })
+    ]));
+    const sens = sensibilidades(a, r);
+    setTimeout(() => C.tornado(tornadoBox, {
+      items: sens, base: r.preco_justo,
+      format: (v) => fmt.money(v),
+      ariaLabel: 'Sensibilidade do preço justo a cada premissa'
+    }), 0);
+
     // Matriz de sensibilidade ---------------------------------------------
     // Grades centradas no cenário atual: a célula do meio é exatamente o
     // upside mostrado nos KPIs, e as vizinhas mostram a vizinhança da decisão.
@@ -769,14 +1075,59 @@
       colLabel: (v) => 'g ' + fmt.pct(v, 1),
       value: (rw, cl) => cells[`${rw}|${cl}`],
       format: (v) => fmt.pctSigned(v, 0),
+      // Neutro no upside ZERO, não no meio da amostra: a cor passa a marcar
+      // o ponto em que a decisão vira, e a borda clara é a iso-linha.
+      center: 0,
       highlight: { row: 0, col: gAtualT }
     });
 
     host.appendChild(h('div', {
       class: 'note',
-      html: 'Cada célula recalcula o DCF inteiro. A leitura útil é a <b>faixa</b>: se o upside '
-        + 'muda de sinal dentro da matriz, o preço justo depende mais da premissa do que do negócio.'
+      html: 'Cada célula recalcula o DCF inteiro. O <b>azul</b> é upside, o <b>laranja</b> é '
+        + 'downside, e a borda clara marca onde o sinal vira — a iso-linha do breakeven. '
+        + 'Se ela atravessa a matriz, o preço justo depende mais da premissa do que do negócio.'
     }));
+  }
+
+  /** Sensibilidade univariada: cada premissa nos seus extremos plausíveis,
+   *  com as demais paradas. A amplitude ordena o tornado — e a sidebar. */
+  function sensibilidades(a, r) {
+    if (!isNum(r.preco_justo)) return [];
+    const preco = (over) => {
+      const d = E.dcf(a, over);
+      return isNum(d.preco_justo) ? d.preco_justo : null;
+    };
+    const g0 = E.growthSeries(a.growth, a.anos)[0];
+    const cand = [
+      { key: 'growth', label: 'Crescimento do FCL',
+        lo: { growth: E.rampaCom(a, g0 - 0.05) }, hi: { growth: E.rampaCom(a, g0 + 0.05) },
+        nota: '±5 pontos no ano 1, movendo a rampa' },
+      { key: 'premio_extra', label: 'Prêmio de risco (WACC)',
+        lo: { premio_extra: (a.premio_extra || 0) + 0.02 },
+        hi: { premio_extra: (a.premio_extra || 0) - 0.02 },
+        nota: '±2 pontos no custo de capital' },
+      { key: 'g_terminal', label: 'Perpetuidade (g)',
+        lo: { g_terminal: Math.max(0, a.g_terminal - 0.01) },
+        hi: { g_terminal: Math.min(a.g_terminal + 0.01, a.rf, r.wacc - 0.005) },
+        nota: '±1 ponto no crescimento perpétuo' },
+      { key: 'fcf_base', label: 'FCL base',
+        lo: { fcf_base: a.fcf_base * 0.85 }, hi: { fcf_base: a.fcf_base * 1.15 },
+        nota: '±15% no fluxo que ancora tudo' },
+      { key: 'beta', label: 'Beta',
+        lo: { beta: a.beta + 0.25 }, hi: { beta: Math.max(0.1, a.beta - 0.25) },
+        nota: '±0,25 no beta' },
+      { key: 'rf', label: 'Juro livre de risco',
+        lo: { rf: a.rf + 0.015 }, hi: { rf: Math.max(0, a.rf - 0.015) },
+        nota: '±1,5 ponto na taxa longa' },
+      { key: 'wd', label: 'Estrutura de capital',
+        lo: { wd: Math.max(0, a.wd - 0.15) }, hi: { wd: Math.min(0.8, a.wd + 0.15) },
+        nota: '±15 pontos de dívida na estrutura' }
+    ];
+    return cand.map((c) => {
+      const baixo = preco(c.lo), alto = preco(c.hi);
+      return (isNum(baixo) && isNum(alto))
+        ? { key: c.key, label: c.label, baixo, alto, nota: c.nota } : null;
+    }).filter(Boolean);
   }
 
   function pontesEV(r, a) {
@@ -785,6 +1136,24 @@
     box.appendChild(h('div', {
       class: 'ptitle', style: 'margin-bottom:8px'
     }, [h('b', {}, 'Ponte até o equity')]));
+
+    // A cadeia causal do DCF ganha forma: cada barra flutua de onde a
+    // anterior parou, então dá para VER de onde o número vem — em vez de
+    // reconstruir a conta mentalmente a partir de uma lista alinhada.
+    const grafico = h('div', { class: 'chartbox', style: 'height:230px;margin-bottom:6px' });
+    box.appendChild(grafico);
+    setTimeout(() => C.waterfall(grafico, {
+      height: 230,
+      steps: [
+        { label: 'VP dos fluxos', value: r.soma_vp, color: '#38BDF8' },
+        { label: 'VP da perpetuidade', value: r.vp_terminal, color: '#A78BFA' },
+        { label: 'Enterprise value', value: r.ev, tipo: 'total', color: '#67E8F9' },
+        { label: 'Dívida líquida', value: -dl, color: dl > 0 ? '#FB923C' : '#34D399' },
+        { label: 'Equity value', value: r.equity_value, tipo: 'total', color: '#34D399' }
+      ],
+      format: (v) => fmt.bigShort(v, 1),
+      ariaLabel: 'Ponte do enterprise value até o equity value'
+    }), 0);
 
     const linha = (l, v, cor) => h('div', {
       style: 'display:flex;justify-content:space-between;gap:12px;font:500 12px/2 var(--mono);'
@@ -1274,9 +1643,11 @@
 
   /** Redesenha só o que depende das premissas. */
   function renderLive() {
+    salvarPremissas();
     syncControls();
     renderAlerts();
     renderKpis();
+    renderFootball();
     renderRegua();
     // ~500 DCFs por frame eram gastos desenhando uma aba escondida.
     if (state.tab === 'valuation') renderValuation();
@@ -1286,6 +1657,7 @@
   /** Quando o DCF não se aplica, some com a maquinaria do modelo em vez de
    *  exibir gráfico vazio e preço justo sem significado. */
   function modoSemDcf() {
+    el('footballPanel').hidden = true;
     el('heroPanel').hidden = true;
     el('kpis').hidden = true;
     el('controls').hidden = true;
@@ -1358,6 +1730,8 @@
       state.a = JSON.parse(JSON.stringify(data.assumptions));
       state.base = JSON.parse(JSON.stringify(data.assumptions));
       state.fcfMode = data.assumptions.fcf_modo || 'media3';
+      // Link tem prioridade sobre o que ficou salvo nesta máquina.
+      restaurarPremissas();
 
       // BDR: grandezas financeiras na moeda de reporte da companhia, e o
       // botão de voltar aponta para a tela de BDRs.

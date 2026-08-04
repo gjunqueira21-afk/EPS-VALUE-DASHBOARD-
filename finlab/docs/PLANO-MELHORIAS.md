@@ -51,19 +51,21 @@ ligado e degrada sem os parquets — o dado 1T26 aparece após rodar o pipeline
 Parecer 01 (dataviz) + estruturais do 02. Tudo em SVG próprio — o gargalo medido
 é DOM, não matemática (0,66 ms por DCF); **nenhuma biblioteca de gráfico**.
 
-- [ ] **1.1 Heatmap consertado** — neutro em upside = 0 + iso-linha de breakeven
+- [x] **1.1 Heatmap consertado** — neutro em upside = 0 + iso-linha de breakeven
       ("onde a tese vira de sinal"). *(01 §3.4 — crítico)*
-- [ ] **1.2 Football field** — `hbars()` novo: preço justo por método (DCF, EPV,
+- [x] **1.2 Football field** — `hbars()` novo: preço justo por método (DCF, EPV,
       múltiplos, consenso) num eixo comum, com o preço de tela cruzando as barras.
       Vira o topo do painel. *(01 §3.1 — maior ganho isolado)*
-- [ ] **1.3 Waterfall EV → equity → preço** — a cadeia causal do DCF hoje é
+- [x] **1.3 Waterfall EV → equity → preço** — a cadeia causal do DCF hoje é
       texto; virar ponte visual. *(01 §3.2)*
-- [ ] **1.4 Tornado de sensibilidade** — ranking univariado das premissas; usa o
+- [x] **1.4 Tornado de sensibilidade** — ranking univariado das premissas; usa o
       engine como está. Sidebar reordenada pelo impacto, 2ª ordem recolhida.
       *(01 §3.3, 02 §3.4)*
 - [ ] **1.5 Paleta acessível** — par semântico azul/laranja + segundo canal
       (posição/forma); a paleta atual não sobrevive a daltonismo. *(01 §4.1)*
-- [ ] **1.6 Estado que não evapora** — premissas por ticker no localStorage +
+      *Parcial:* as visualizações novas já nascem em azul/laranja e usam forma
+      (losango = ponto, faixa = intervalo); falta reverter a paleta antiga.
+- [x] **1.6 Estado que não evapora** — premissas por ticker no localStorage +
       restaurar padrão visível; premissas serializadas na query string
       ("🔗 link da tese"); "📋 copiar resumo". *(02 — stateless confirmado)*
 - [ ] **1.7 Cenários nomeados** — salvar, reencontrar e comparar em colunas.

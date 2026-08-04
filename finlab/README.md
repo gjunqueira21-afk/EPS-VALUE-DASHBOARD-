@@ -56,7 +56,7 @@ finlab/
 │       ├── engine.js   o motor de DCF/EPV — roda no navegador
 │       ├── charts.js   gráficos em SVG puro
 │       └── ...
-└── tests/              86 testes (pytest)
+└── tests/              92 testes (pytest)
 ```
 
 O front não carrega **nada** de CDN: fontes do sistema, gráficos em SVG escritos à mão.

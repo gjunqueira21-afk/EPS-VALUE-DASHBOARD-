@@ -22,28 +22,29 @@ valuation e a mesa de IA são o mesmo projeto: dar ao painel a noção de
 Os cinco achados verificados em código no parecer 00 + quick wins de custo ≤2h.
 Pequenos diffs, efeito desproporcional.
 
-- [ ] **0.1 Régua e KPI no mesmo modelo** — `curva()` roda crescimento constante
+- [x] **0.1 Régua e KPI no mesmo modelo** — `curva()` roda crescimento constante
       enquanto os KPIs usam a rampa de 5 anos; divergência chega a +40% no preço
       justo. Reconciliar: a curva desloca a rampa real em bloco (como o slider do
       hero já faz). *(00.1, 01 §2.1, 02 §0 — crítico)*
-- [ ] **0.2 Barreira para fluxo-base ≤ 0** — o motor cresce e perpetua FCL
+- [x] **0.2 Barreira para fluxo-base ≤ 0** — o motor cresce e perpetua FCL
       negativo sem aviso (caso MRVE3). Recusar como já recusa WACC ≤ g, com o
       aviso ACIMA do preço justo, não dentro de aba. *(00.2, 05 §5)*
-- [ ] **0.3 Ligar o trimestral (ITR)** — `cvm.py:39` fixa `_dfp`; o pipeline já
+- [x] **0.3 Ligar o trimestral (ITR)** — `cvm.py:39` fixa `_dfp`; o pipeline já
       baixa ITR. Parametrizar o sufixo e expor a série trimestral. Maior ganho de
       dado pelo menor diff do projeto. *(00.3, 03 §0)*
-- [ ] **0.4 Downloader revalida a origem** — `cvm_downloader.py:38` nunca
+- [x] **0.4 Downloader revalida a origem** — `cvm_downloader.py:38` nunca
       reconsulta; CVM republica retroativamente. Checar `Last-Modified`/tamanho
       antes de pular. *(00.4)*
-- [ ] **0.5 Quick wins UX** *(02 §5, todos ≤2h)*:
+- [x] **0.5 Quick wins UX** *(02 §5, todos ≤2h)*:
       domínio do slider = domínio do gráfico; chip de cenário com estado `.on` +
       cenário corrente no state; "desfazer" ao trocar cenário; alerta quando
       `g_terminal > rf`; `renderValuation()` só com a aba visível;
       `@media print`; marcar `.edited` também vindo do hero.
 
-**Critério de aceite:** ponto da régua = KPI em qualquer posição do slider;
-MRVE3 exibe aviso de regime em vez de preço justo absurdo; painel de empresa
-mostra dado 1T26.
+**Critério de aceite:** ponto da régua = KPI em qualquer posição do slider ✓;
+MRVE3 exibe aviso e recusa o preço justo sem significado ✓; o leitor de ITR está
+ligado e degrada sem os parquets — o dado 1T26 aparece após rodar o pipeline
+(`cd valuation_cvm && python -m src.main`), que agora também revalida a origem.
 
 ## Fase 1 — Visualização do valuation (≈2–3 semanas)
 

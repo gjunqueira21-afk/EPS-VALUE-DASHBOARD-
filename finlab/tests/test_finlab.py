@@ -521,6 +521,94 @@ def test_contexto_da_tela_de_bdrs_converte_setor_e_dy():
            "12m +30,0% | YTD -2,0% | DY +0,5% | liq R$ 12,0 mi" in ctx
 
 
+def test_leitor_da_cvm_aceita_itr_e_degrada_sem_ele(tmp_path, monkeypatch):
+    """O sufixo _dfp era fixo (achado 00.3): o pipeline gera *_itr.parquet e o
+    painel não lia. Com um ITR sintético, latest_quarter devolve o trimestre
+    mais recente; sem arquivo, devolve None sem quebrar nada."""
+    import pandas as pd
+
+    monkeypatch.setattr(cvm, "CVM_PROCESSED_DIR", tmp_path)
+    cvm._frames.cache_clear()
+    try:
+        # sem arquivos: nada de ITR, nada de exceção
+        assert cvm.quarterly_available() is False
+        assert cvm.latest_quarter("009512") is None
+
+        linhas = []
+        for fim, receita, lucro in (("2026-03-31", 100.0, 10.0),
+                                    ("2026-06-30", 220.0, 25.0)):
+            linhas += [
+                {"CD_CVM": "009512", "DENOM_CIA": "PETRO", "CNPJ_CIA": "x",
+                 "DT_FIM_EXERC": pd.Timestamp(fim), "DT_INI_EXERC": pd.Timestamp("2026-01-01"),
+                 "ANO_REFER": 2026, "CD_CONTA": "3.01",
+                 "DS_CONTA": "Receita de Venda de Bens e/ou Serviços",
+                 "VL_CONTA_AJUSTADO": receita},
+                {"CD_CVM": "009512", "DENOM_CIA": "PETRO", "CNPJ_CIA": "x",
+                 "DT_FIM_EXERC": pd.Timestamp(fim), "DT_INI_EXERC": pd.Timestamp("2026-01-01"),
+                 "ANO_REFER": 2026, "CD_CONTA": "3.11",
+                 "DS_CONTA": "Lucro/Prejuízo Consolidado do Período",
+                 "VL_CONTA_AJUSTADO": lucro},
+            ]
+        # janela avulsa (2T isolado) NÃO pode ser confundida com o acumulado
+        linhas.append({"CD_CVM": "009512", "DENOM_CIA": "PETRO", "CNPJ_CIA": "x",
+                       "DT_FIM_EXERC": pd.Timestamp("2026-06-30"),
+                       "DT_INI_EXERC": pd.Timestamp("2026-04-01"),
+                       "ANO_REFER": 2026, "CD_CONTA": "3.01",
+                       "DS_CONTA": "Receita de Venda de Bens e/ou Serviços",
+                       "VL_CONTA_AJUSTADO": 120.0})
+        pd.DataFrame(linhas).to_parquet(tmp_path / "dre_itr.parquet", index=False)
+        cvm._frames.cache_clear()
+
+        assert cvm.quarterly_available() is True
+        q = cvm.latest_quarter("009512")
+        assert q == {"fim": "2026-06-30", "receita": 220.0, "lucro": 25.0}
+        # outra empresa segue sem dado, sem exceção
+        assert cvm.latest_quarter("999999") is None
+    finally:
+        cvm._frames.cache_clear()
+
+
+def test_downloader_revalida_quando_a_origem_muda(tmp_path, monkeypatch):
+    """A CVM republica exercícios retroativamente; pular só porque o arquivo
+    existe servia dado velho em silêncio (achado 00.4)."""
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "valuation_cvm"))
+    dl = pytest.importorskip("src.cvm_downloader",
+                             reason="dependências do pipeline (tqdm) ausentes")
+
+    arq = tmp_path / "dfp.zip"
+    arq.write_bytes(b"conteudo-antigo")
+
+    class _Resp:
+        def __init__(self, headers, status=200):
+            self.headers = headers
+            self.status_code = status
+
+    # origem mais nova (Last-Modified no futuro) -> rebaixa
+    monkeypatch.setattr(dl.requests, "head",
+                        lambda *a, **k: _Resp({"Last-Modified": "Wed, 01 Jan 2225 00:00:00 GMT"}))
+    assert dl._remote_is_newer("http://x/dfp.zip", arq) is True
+
+    # origem antiga -> mantém o cache
+    monkeypatch.setattr(dl.requests, "head",
+                        lambda *a, **k: _Resp({"Last-Modified": "Wed, 01 Jan 2020 00:00:00 GMT"}))
+    assert dl._remote_is_newer("http://x/dfp.zip", arq) is False
+
+    # sem Last-Modified: decide pelo tamanho
+    monkeypatch.setattr(dl.requests, "head",
+                        lambda *a, **k: _Resp({"Content-Length": "999"}))
+    assert dl._remote_is_newer("http://x/dfp.zip", arq) is True
+    monkeypatch.setattr(dl.requests, "head",
+                        lambda *a, **k: _Resp({"Content-Length": str(arq.stat().st_size)}))
+    assert dl._remote_is_newer("http://x/dfp.zip", arq) is False
+
+    # rede fora ou sem cabeçalho: fica com o local (comportamento antigo)
+    def _boom(*a, **k):
+        raise dl.requests.exceptions.ConnectionError("offline")
+    monkeypatch.setattr(dl.requests, "head", _boom)
+    assert dl._remote_is_newer("http://x/dfp.zip", arq) is False
+
+
 def test_historico_corrompido_nao_derruba_o_painel(tmp_path, monkeypatch):
     """Duas instâncias do painel gravando junto corromperam o history.csv e
     TODA página de empresa passou a devolver 500. Uma linha ruim tem de ser

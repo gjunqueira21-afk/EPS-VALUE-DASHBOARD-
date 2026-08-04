@@ -31,12 +31,17 @@ MAX_YEARS = 10
 # Carregamento
 # ---------------------------------------------------------------------------
 
-@lru_cache(maxsize=1)
-def _frames() -> dict[str, pd.DataFrame]:
-    """Carrega os quatro demonstrativos uma única vez por processo."""
+@lru_cache(maxsize=4)
+def _frames(tipo: str = "dfp") -> dict[str, pd.DataFrame]:
+    """Carrega os quatro demonstrativos uma única vez por processo.
+
+    `tipo` é o sufixo do pipeline: "dfp" (anual) ou "itr" (trimestral). O
+    sufixo era fixo em _dfp — o achado 00.3 do diagnóstico: o pipeline em
+    valuation_cvm já baixa e processa o ITR, e o painel simplesmente não lia.
+    """
     out: dict[str, pd.DataFrame] = {}
     for st in STATEMENTS:
-        fp = CVM_PROCESSED_DIR / f"{st}_dfp.parquet"
+        fp = CVM_PROCESSED_DIR / f"{st}_{tipo}.parquet"
         if not fp.exists():
             out[st] = pd.DataFrame()
             continue
@@ -83,12 +88,54 @@ def available() -> bool:
     return any(not df.empty for df in _frames().values())
 
 
+def quarterly_available() -> bool:
+    """True quando o pipeline já gerou os parquets do ITR."""
+    return any(not df.empty for df in _frames("itr").values())
+
+
+def latest_quarter(cd_cvm: str) -> Optional[dict]:
+    """O trimestre mais recente publicado no ITR para a empresa.
+
+    Devolve {"fim": "AAAA-MM-DD", "receita": float|None, "lucro": float|None},
+    com os valores ACUMULADOS no exercício até aquela data — é assim que a
+    CVM publica a DRE do ITR. Sem ITR processado, devolve None e o painel
+    segue anual, como sempre foi.
+    """
+    dre = _company("dre", cd_cvm, "itr")
+    if dre.empty or "DT_FIM_EXERC" not in dre.columns:
+        return None
+    dre = dre.dropna(subset=["DT_FIM_EXERC"])
+    if dre.empty:
+        return None
+    # Quando o parquet distingue o período (DT_INI_EXERC), fica só o
+    # acumulado-padrão do ano — descarta janelas trimestrais avulsas.
+    if "DT_INI_EXERC" in dre.columns:
+        ini = pd.to_datetime(dre["DT_INI_EXERC"], errors="coerce")
+        comeco_de_ano = (ini.dt.month == 1) & (ini.dt.day == 1)
+        if comeco_de_ano.any():
+            dre = dre[comeco_de_ano]
+    fim = dre["DT_FIM_EXERC"].max()
+    tri = dre[dre["DT_FIM_EXERC"] == fim]
+
+    def valor(codes, keywords):
+        serie = _series(tri, codes=codes, keywords=keywords)
+        vals = list(serie.values())
+        return float(vals[0]) if vals else None
+
+    return {
+        "fim": str(pd.Timestamp(fim).date()),
+        "receita": valor(["3.01"], ["RECEITA DE VENDA", "RECEITAS DA INTERMEDIACAO"]),
+        "lucro": valor(["3.11", "3.13"], ["LUCRO/PREJUIZO CONSOLIDADO DO PERIODO",
+                                          "LUCRO OU PREJUIZO LIQUIDO"]),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Extração de contas
 # ---------------------------------------------------------------------------
 
-def _company(st: str, cd_cvm: str) -> pd.DataFrame:
-    df = _frames().get(st)
+def _company(st: str, cd_cvm: str, tipo: str = "dfp") -> pd.DataFrame:
+    df = _frames(tipo).get(st)
     if df is None or df.empty:
         return pd.DataFrame()
     return df[df["CD_CVM"] == str(cd_cvm).strip()]

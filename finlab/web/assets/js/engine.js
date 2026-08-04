@@ -31,6 +31,18 @@
     return out;
   }
 
+  /** A rampa atual deslocada em bloco para que o 1º ano seja `alvo`.
+   *
+   *  É o mesmo movimento do slider do hero. Régua, DCF reverso e cenário
+   *  reverso usam ISTO — nunca crescimento constante — para que o gráfico,
+   *  o ponto e o KPI contem uma única história. (Era o defeito nº 1 do
+   *  diagnóstico: a curva rodava um modelo e o card outro.) */
+  function rampaCom(a, alvo) {
+    const g = growthSeries(a.growth, a.anos || 5);
+    const delta = alvo - g[0];
+    return g.map((v) => v + delta);
+  }
+
   /**
    * DCF por fluxo de caixa livre da firma.
    * Retorna null em `preco_justo` quando faltar dado ou WACC ≤ g.
@@ -52,6 +64,11 @@
 
     if (!isNum(p.fcf_base)) { out.alertas.push('SEM_FCL_BASE'); return out; }
     if (!isNum(w) || w <= 0) { out.alertas.push('WACC_INVALIDO'); return out; }
+    // Fluxo-base ≤ 0 é recusado como WACC ≤ g: crescer e perpetuar um fluxo
+    // negativo devolve um "preço justo" que é aritmética, não avaliação
+    // (diagnóstico 00.2, caso MRVE3). O usuário normaliza o FCL ou troca de
+    // método — o motor não finge que o número significa algo.
+    if (p.fcf_base <= 0) { out.alertas.push('FCL_BASE_NAO_POSITIVO'); return out; }
 
     let fcf = p.fcf_base;
     let somaVP = 0;
@@ -135,8 +152,10 @@
    */
   function crescimentoImplicito(a) {
     if (!isNum(a.preco) || !isNum(a.shares) || !isNum(a.fcf_base)) return null;
+    // Devolve o 1º ano da rampa deslocada que precifica a tela — o mesmo
+    // eixo da régua e do slider, não uma taxa constante de outro modelo.
     const f = (g) => {
-      const r = dcf(a, { growth: [g] });
+      const r = dcf(a, { growth: rampaCom(a, g) });
       return isNum(r.preco_justo) ? r.preco_justo - a.preco : NaN;
     };
     return bisect(f, -0.35, 0.80, 90);
@@ -168,7 +187,7 @@
     for (let i = 0; i <= n; i++) {
       const x = from + ((to - from) * i) / n;
       let r;
-      if (driver === 'growth') r = dcf(a, { growth: [x] });
+      if (driver === 'growth') r = dcf(a, { growth: rampaCom(a, x) });
       else if (driver === 'wacc_extra') r = dcf(a, { premio_extra: x });
       else if (driver === 'g_terminal') r = dcf(a, { g_terminal: x });
       else r = dcf(a);
@@ -215,7 +234,7 @@
         });
       case 'implicito': {
         const gi = crescimentoImplicito(a);
-        return gi === null ? base : Object.assign(base, { growth: [gi, gi, gi, gi, gi] });
+        return gi === null ? base : Object.assign(base, { growth: rampaCom(a, gi) });
       }
       default:
         return base;
@@ -240,6 +259,6 @@
 
   global.FLEngine = {
     wacc, dcf, epv, curva, matriz, cenario, resumo,
-    crescimentoImplicito, waccBreakeven, growthSeries, bisect
+    crescimentoImplicito, waccBreakeven, growthSeries, rampaCom, bisect
   };
 })(window);

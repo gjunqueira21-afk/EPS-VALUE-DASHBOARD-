@@ -15,7 +15,9 @@
     base: null,     // premissas originais (para "restaurar")
     fcfMode: 'media3',
     fcfAjuste: 0,   // ajuste percentual sobre o FCL base
-    tab: 'valuation'
+    tab: 'valuation',
+    cenario: 'base',   // chip aceso na linha de cenários
+    desfazer: null     // estado guardado antes do último cenário aplicado
   };
 
   /* ================================================================ helpers */
@@ -38,6 +40,15 @@
   }
 
   function result() { return E.dcf(params()); }
+
+  /** Valor padrão (base do painel) de um controle, para comparar com o atual. */
+  function getBase(key) {
+    if (!state.base) return null;
+    if (/^g[0-4]$/.test(key)) {
+      return E.growthSeries(state.base.growth, 5)[Number(key.slice(1))];
+    }
+    return isNum(state.base[key]) ? state.base[key] : null;
+  }
 
   /* ========================================================= cabeçalho */
 
@@ -75,6 +86,7 @@
             d.sector_label,
             ' · CVM ', f.cd_cvm || '—',
             ' · exercício-base ', String(f.last_year || '—'),
+            d.itr && d.itr.fim ? ' · último ITR até ' + fmt.date(d.itr.fim) : '',
             f.financial ? ' · plano de contas de instituição financeira' : ''
           ].join(''))
         ]),
@@ -128,6 +140,18 @@
           + '). A fórmula de Gordon deixa de valer — reduza a perpetuidade ou aumente o custo de capital.'
       }));
     }
+    // Guarda-corpo canônico: na perpetuidade nenhuma empresa cresce acima da
+    // taxa livre de risco — se cresce, em algum horizonte ela "vira" a economia.
+    if (isNum(a.g_terminal) && isNum(a.rf) && a.g_terminal > a.rf) {
+      zone.appendChild(h('div', {
+        class: 'callout warn',
+        html: '<b>Perpetuidade acima da taxa livre de risco</b> ('
+          + fmt.pct(a.g_terminal) + ' &gt; Rf ' + fmt.pct(a.rf) + '). '
+          + 'Crescimento perpétuo acima do juro longo implica a empresa superando a '
+          + 'economia para sempre — premissa que nenhum comitê aceita. Considere um g '
+          + 'terminal até a inflação + PIB de longo prazo.'
+      }));
+    }
     if (r.alertas.includes('PERPETUIDADE_ACIMA_75PCT')) {
       zone.appendChild(h('div', {
         class: 'callout warn',
@@ -141,9 +165,10 @@
       const holding = /holding|participa/i.test(state.data.fundamentals.denom || '');
       zone.appendChild(h('div', {
         class: 'callout warn',
-        html: '<b>Fluxo de caixa livre base negativo (' + esc(fmt.big(base, 2)) + ').</b> '
-          + 'Um DCF sobre fluxo negativo devolve preço justo negativo por construção — o número '
-          + 'abaixo é aritmética, não avaliação. '
+        html: '<b>Fluxo de caixa livre base negativo (' + esc(fmt.big(base, 2)) + ') — '
+          + 'o painel não calcula preço justo com esta base.</b> '
+          + 'Crescer e perpetuar um fluxo negativo produziria um número sem significado, '
+          + 'então o DCF fica suspenso até a base virar positiva. '
           + (holding
             ? 'Esta empresa é uma holding: o caixa que importa são os dividendos das '
               + 'investidas, não o FCL consolidado do DFC. Avalie pela soma das partes, '
@@ -226,12 +251,31 @@
 
   /* ============================================================= régua */
 
+  // Mesmo domínio do slider do hero (empresa.html): uma escala mental só.
   const REGUA_MIN = -0.15;
-  const REGUA_MAX = 0.25;
+  const REGUA_MAX = 0.30;
 
   function renderRegua() {
     const a = params();
     const preco = a.preco;
+
+    // Fluxo-base não positivo: o motor recusa (alerta acima explica); a
+    // régua diz o porquê em vez de desenhar um gráfico vazio.
+    if (isNum(a.fcf_base) && a.fcf_base <= 0) {
+      el('chartRegua').innerHTML = '';
+      el('chartRegua').appendChild(h('div', { class: 'chart-vazio' }, [
+        h('b', {}, 'Sem régua: o fluxo de caixa livre base é negativo.'),
+        h('span', {}, ' Crescer e perpetuar um fluxo negativo não produz preço justo. '
+          + 'Use o slider "Normalizar o FCL base" na coluna ao lado, ou leia a '
+          + 'empresa pelo EPV e pelos múltiplos.')
+      ]));
+      el('heroVal').textContent = fmt.pct(E.growthSeries(a.growth, a.anos)[0], 1);
+      el('heroMarks').innerHTML = '';
+      return;
+    }
+
+    // A curva desloca a RAMPA real em bloco (E.rampaCom) — exatamente o que o
+    // slider faz. O ponto dourado é o resultado corrente, idêntico ao KPI.
     const pts = E.curva(a, 'growth', REGUA_MIN, REGUA_MAX, 90);
     const gi = E.crescimentoImplicito(a);
     const gAtual = E.growthSeries(a.growth, a.anos)[0];
@@ -242,7 +286,7 @@
     if (isNum(preco)) {
       // Fronteiras: crescimento onde o upside cruza -20%, 0% e +30%.
       const alvo = (mult) => E.bisect((g) => {
-        const r = E.dcf(a, { growth: [g] });
+        const r = E.dcf(a, { growth: E.rampaCom(a, g) });
         return isNum(r.preco_justo) ? r.preco_justo - preco * mult : NaN;
       }, REGUA_MIN, REGUA_MAX, 70);
 
@@ -262,7 +306,8 @@
       if (isNum(gm20)) marcadores.push({ x: gm20, color: '#F87171', label: '-20% ' + fmt.pct(gm20, 1) });
     }
 
-    const rAtual = E.dcf(a, { growth: [gAtual] });
+    // O MESMO cálculo dos KPIs: ponto e card nunca mais divergem.
+    const rAtual = E.dcf(a);
 
     // Escala vertical: a região que importa é a vizinhança do preço de tela.
     // Sem teto, o trecho de crescimento alto achata tudo; com teto fixo, uma
@@ -353,8 +398,17 @@
 
     CENARIOS.forEach(([key, label]) => {
       row.appendChild(h('button', {
-        class: 'chip',
+        // O chip aceso diz ONDE o usuário está. Qualquer slider apaga
+        // (state.cenario = null em schedule), porque aí já não é o cenário puro.
+        class: 'chip' + (state.cenario === key ? ' on' : ''),
         onclick: () => {
+          // Trocar de cenário descartava o trabalho sem volta; agora o estado
+          // anterior fica guardado e o chip ↩ desfaz.
+          state.desfazer = {
+            a: JSON.parse(JSON.stringify(state.a)),
+            fcfMode: state.fcfMode, fcfAjuste: state.fcfAjuste,
+            cenario: state.cenario
+          };
           if (key === 'base') {
             state.a = JSON.parse(JSON.stringify(state.base));
             state.fcfMode = state.base.fcf_modo;
@@ -362,11 +416,28 @@
           } else {
             state.a = E.cenario(params(), key);
           }
+          state.cenario = key;
           rebuildControls();
           renderAll();
         }
       }, label));
     });
+
+    if (state.desfazer) {
+      row.appendChild(h('button', {
+        class: 'chip', title: 'Volta às premissas de antes do último cenário',
+        onclick: () => {
+          const d = state.desfazer;
+          state.desfazer = null;
+          state.a = d.a;
+          state.fcfMode = d.fcfMode;
+          state.fcfAjuste = d.fcfAjuste;
+          state.cenario = d.cenario;
+          rebuildControls();
+          renderAll();
+        }
+      }, '↩ desfazer'));
+    }
   }
 
   /* =========================================================== controles */
@@ -569,6 +640,12 @@
       const v = getVal(key);
       if (isNum(v) && parseFloat(ref.range.value) !== v) ref.range.value = v;
       ref.cv.textContent = ref.fmt(v);
+      // Mudança vinda de fora do slider (hero, cenário) também marca o valor
+      // como editado — o âmbar significa "difere do padrão", não "você tocou".
+      const padrao = getBase(key);
+      if (isNum(padrao) && isNum(v)) {
+        ref.cv.classList.toggle('edited', Math.abs(v - padrao) > 1e-9);
+      }
     });
     const box = el('waccBox');
     if (!box) return;
@@ -1143,6 +1220,7 @@
         qsa('.tab').forEach((b) => b.classList.toggle('on', b === btn));
         state.tab = btn.dataset.tab;
         qsa('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== state.tab; });
+        if (state.tab === 'valuation') renderValuation();
         if (state.tab === 'fundamentos') renderFundamentos();
         if (state.tab === 'saude') renderSaude();
         if (state.tab === 'pares') renderPares();
@@ -1188,6 +1266,8 @@
 
   let raf = null;
   function schedule() {
+    // Qualquer edição manual sai do cenário puro: o chip aceso apaga.
+    if (state.cenario) { state.cenario = null; renderScenarios(); }
     if (raf) return;
     raf = requestAnimationFrame(() => { raf = null; renderLive(); });
   }
@@ -1198,7 +1278,8 @@
     renderAlerts();
     renderKpis();
     renderRegua();
-    renderValuation();
+    // ~500 DCFs por frame eram gastos desenhando uma aba escondida.
+    if (state.tab === 'valuation') renderValuation();
     window.FLAgents.updateAssumptions(state, params(), E.resumo(params()));
   }
 

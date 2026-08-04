@@ -129,12 +129,60 @@ def test_gordon_invalido_quando_wacc_nao_supera_a_perpetuidade(engine):
 def test_dcf_reverso_reproduz_o_preco_de_tela(engine):
     saida = engine(
         "const g = FLEngine.crescimentoImplicito(args.p);"
-        "const d = FLEngine.dcf(args.p, {growth:[g]});"
+        "const d = FLEngine.dcf(args.p, {growth: FLEngine.rampaCom(args.p, g)});"
         "return {g, preco: d.preco_justo};",
         {"p": PREMISSAS},
     )
     assert saida["g"] is not None
     assert saida["preco"] == pytest.approx(PREMISSAS["preco"], abs=1e-6)
+
+
+def test_regua_e_kpi_contam_a_mesma_historia(engine):
+    """O achado nº 1 do diagnóstico: a curva rodava crescimento constante
+    enquanto o KPI usava a rampa. Com uma rampa decrescente de verdade, o
+    ponto da curva em x = g[0] tem de ser EXATAMENTE o preço justo do KPI."""
+    p = dict(PREMISSAS, growth=[0.12, 0.10, 0.08, 0.06, 0.05])
+    saida = engine(
+        "const kpi = FLEngine.dcf(args.p).preco_justo;"
+        "const g0 = args.p.growth[0];"
+        "const pts = FLEngine.curva(args.p, 'growth', g0 - 0.01, g0 + 0.01, 2);"
+        "return {kpi, meio: pts[1].y, x: pts[1].x};",
+        {"p": p},
+    )
+    assert saida["x"] == pytest.approx(0.12, abs=1e-12)
+    assert saida["meio"] == pytest.approx(saida["kpi"], rel=1e-9)
+
+
+def test_rampa_deslocada_preserva_o_formato(engine):
+    p = dict(PREMISSAS, growth=[0.12, 0.10, 0.08, 0.06, 0.05])
+    rampa = engine("return FLEngine.rampaCom(args.p, 0.02);", {"p": p})
+    assert rampa == pytest.approx([0.02, 0.00, -0.02, -0.04, -0.05], abs=1e-12)
+
+
+def test_cenario_reverso_precifica_a_tela_com_a_rampa(engine):
+    p = dict(PREMISSAS, growth=[0.12, 0.10, 0.08, 0.06, 0.05])
+    saida = engine(
+        "const c = FLEngine.cenario(args.p, 'implicito');"
+        "const d = FLEngine.dcf(c);"
+        "const passo = c.growth.map((v, i) => i ? +(v - c.growth[i-1]).toFixed(10) : null);"
+        "return {preco: d.preco_justo, passo: passo.slice(1)};",
+        {"p": p},
+    )
+    assert saida["preco"] == pytest.approx(PREMISSAS["preco"], abs=1e-6)
+    # o formato da rampa original (-2, -2, -2, -1 pontos) sobrevive ao reverso
+    assert saida["passo"] == pytest.approx([-0.02, -0.02, -0.02, -0.01], abs=1e-9)
+
+
+def test_fluxo_base_negativo_e_recusado(engine):
+    saida = engine(
+        "const d = FLEngine.dcf(Object.assign({}, args.p, {fcf_base: -50}));"
+        "const z = FLEngine.dcf(Object.assign({}, args.p, {fcf_base: 0}));"
+        "return {preco: d.preco_justo, ev: d.ev, alertas: d.alertas, precoZero: z.preco_justo};",
+        {"p": PREMISSAS},
+    )
+    assert saida["preco"] is None and saida["ev"] is None
+    assert "FCL_BASE_NAO_POSITIVO" in saida["alertas"]
+    assert saida["precoZero"] is None
 
 
 def test_wacc_breakeven_zera_o_upside(engine):

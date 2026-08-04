@@ -46,6 +46,49 @@
     return tip;
   }
 
+  /* Rótulo de eixo horizontal: o primeiro e o último tick, se centralizados,
+     vazam metade da largura para fora do painel. Ancorar nas pontas resolve
+     sem mexer na posição do tick. */
+  function ancoraTick(i, total) {
+    if (i === 0) return 'start';
+    if (i === total - 1) return 'end';
+    return 'middle';
+  }
+
+  /* Margem esquerda para rótulos de categoria: cresce com o texto até um teto
+     (1/3 da largura), e o que não couber é cortado com reticência — melhor um
+     rótulo abreviado dentro do painel que um inteiro por cima do vizinho. */
+  const CHAR_W = 6.25;                     // ~largura do monoespaçado a 10.5px
+  function margemRotulos(labels, width, minimo) {
+    const teto = Math.max(minimo, Math.floor(width * 0.34));
+    const maior = labels.reduce((m, l) => Math.max(m, String(l).length), 0);
+    return { pad: Math.min(teto, Math.max(minimo, Math.round(maior * CHAR_W) + 16)),
+             max: Math.floor((Math.min(teto, Math.max(minimo, Math.round(maior * CHAR_W) + 16)) - 16) / CHAR_W) };
+  }
+  function corta(txt, max) {
+    const t = String(txt);
+    return t.length <= max ? t : t.slice(0, Math.max(1, max - 1)) + '…';
+  }
+
+  /* Quais ticks ganham rótulo: em painel estreito, "R$ 20,00 R$ 40,00 …" vira
+     um borrão de dígitos sobrepostos. Rotula de N em N, sempre incluindo as
+     pontas — a grade continua desenhada em todos. */
+  function ticksVisiveis(rotulos, largura) {
+    const n = rotulos.length;
+    if (n < 2) return new Set([0]);
+    const maior = rotulos.reduce((m, r) => Math.max(m, String(r).length), 0);
+    const espaco = largura / (n - 1);
+    const passo = Math.max(1, Math.ceil((maior * CHAR_W + 10) / Math.max(1, espaco)));
+    const idx = [];
+    for (let i = 0; i < n; i += passo) idx.push(i);
+    const ultimo = idx[idx.length - 1];
+    if (ultimo !== n - 1 && idx.length > 1) {
+      if (n - 1 - ultimo < passo) idx.pop();
+      idx.push(n - 1);
+    }
+    return new Set(idx);
+  }
+
   function frame(container, opts) {
     container.innerHTML = '';
     container.style.position = 'relative';
@@ -504,6 +547,28 @@
     if (!cells.length) return;
     const min = Math.min.apply(null, cells), max = Math.max.apply(null, cells);
 
+    // Escala DIVERGENTE ancorada em `center` (tipicamente upside = 0): a cor
+    // neutra marca o ponto em que a decisão vira, não o meio da amostra.
+    // Com a escala antiga, uma matriz inteiramente positiva pintava de
+    // vermelho a célula menos boa — sugerindo prejuízo onde não havia.
+    const centro = isNum(o.center) ? o.center : null;
+    const alcance = centro === null ? null
+      : Math.max(Math.abs(max - centro), Math.abs(centro - min), 1e-9);
+    const ISO = 'rgba(103,232,249,.85)';
+
+    function corCelula(v) {
+      if (centro === null) {                       // modo antigo: min..max
+        const t = (v - min) / (max - min || 1);
+        return t < 0.5
+          ? `rgba(248,113,113,${(0.30 * (1 - t * 2) + 0.06).toFixed(3)})`
+          : `rgba(52,211,153,${(0.30 * ((t - 0.5) * 2) + 0.06).toFixed(3)})`;
+      }
+      const t = clamp((v - centro) / alcance, -1, 1);
+      const a = (0.34 * Math.abs(t) + 0.05).toFixed(3);
+      // par azul/laranja: sobrevive a daltonismo e não usa vermelho×verde
+      return t >= 0 ? `rgba(56,189,248,${a})` : `rgba(251,146,60,${a})`;
+    }
+
     const table = document.createElement('table');
     table.style.width = '100%';
     table.style.fontSize = '11.5px';
@@ -522,23 +587,29 @@
     table.appendChild(thead);
 
     const tbody = document.createElement('tbody');
-    rows.forEach((r) => {
+    rows.forEach((r, i) => {
       const tr = document.createElement('tr');
       const th = document.createElement('td');
       th.className = 'left mut';
       th.textContent = o.rowLabel ? o.rowLabel(r) : String(r);
       tr.appendChild(th);
-      cols.forEach((c) => {
+      cols.forEach((c, j) => {
         const td = document.createElement('td');
         const v = o.value(r, c);
         td.textContent = isNum(v) ? (o.format ? o.format(v) : v.toFixed(1)) : '—';
         if (isNum(v)) {
-          const t = (v - min) / (max - min || 1);
-          // vermelho → âmbar → verde
-          const color = t < 0.5
-            ? `rgba(248,113,113,${(0.30 * (1 - t * 2) + 0.06).toFixed(3)})`
-            : `rgba(52,211,153,${(0.30 * ((t - 0.5) * 2) + 0.06).toFixed(3)})`;
-          td.style.background = color;
+          td.style.background = corCelula(v);
+          // Iso-linha: a borda marca onde o sinal VIRA entre células vizinhas.
+          // É a pergunta que a matriz existe para responder — "onde a tese
+          // deixa de valer?" — e antes ela ficava escondida no gradiente.
+          if (o.center !== undefined) {
+            const esq = j > 0 ? o.value(r, cols[j - 1]) : null;
+            const cima = i > 0 ? o.value(rows[i - 1], c) : null;
+            const cruzou = (a, b) => isNum(a) && isNum(b)
+              && ((a - o.center) * (b - o.center) < 0);
+            if (cruzou(v, esq)) td.style.borderLeft = '2px solid ' + ISO;
+            if (cruzou(v, cima)) td.style.borderTop = '2px solid ' + ISO;
+          }
         }
         if (o.highlight && o.highlight.row === r && o.highlight.col === c) {
           td.style.outline = '1.5px solid #67E8F9';
@@ -551,6 +622,346 @@
     });
     table.appendChild(tbody);
     container.appendChild(table);
+  }
+
+  /* ================================================== football field (hbars) */
+
+  /**
+   * Barras horizontais num eixo de preço comum — a pergunta "quanto vale,
+   * afinal?" respondida por todos os métodos de uma vez, em vez de quatro
+   * números soltos em cantos diferentes da tela.
+   *
+   * opts:
+   *   items: [{ label, from, to, color, point, nota }]   from/to em R$
+   *   ref:   { value, label, color }        linha vertical (preço de tela)
+   *   format(v), height, ariaLabel
+   */
+  function hbars(container, opts) {
+    if (!container) return;
+    const o = opts || {};
+    const items = (o.items || []).filter(
+      (i) => isNum(i.from) && isNum(i.to));
+    if (!items.length) { container.innerHTML = ''; return; }
+
+    const linha = 34;
+    const alturaPrevia = 10 + 26 + items.length * linha;
+    const height = o.height || alturaPrevia;
+    const { svg, width } = frame(container, Object.assign({}, o, { height }));
+    const rot = margemRotulos(items.map((i) => i.label), width, o.labelWidth || 96);
+    const pad = { t: 10, r: 22, b: 26, l: rot.pad };
+    const W = width - pad.l - pad.r;
+
+    const vals = items.flatMap((i) => [i.from, i.to])
+      .concat(isNum(o.ref && o.ref.value) ? [o.ref.value] : [])
+      .concat(items.filter((i) => isNum(i.point)).map((i) => i.point));
+    const escala = niceTicks(Math.min.apply(null, vals),
+                             Math.max.apply(null, vals), 5);
+    const sx = (v) => pad.l + ((v - escala.min) / (escala.max - escala.min || 1)) * W;
+
+    // grade + eixo de valores
+    const rotTick = escala.ticks.map((t) => (o.format ? o.format(t) : String(t)));
+    const mostra = ticksVisiveis(rotTick, W);
+    escala.ticks.forEach((t, k) => {
+      const x = sx(t);
+      svg.appendChild(el('line', {
+        x1: x, x2: x, y1: pad.t, y2: pad.t + items.length * linha,
+        stroke: COLORS.grid, 'stroke-width': 1
+      }));
+      if (!mostra.has(k)) return;
+      const lb = el('text', {
+        x, y: height - 8, fill: COLORS.text, 'font-size': 10,
+        'text-anchor': ancoraTick(k, escala.ticks.length),
+        'font-family': 'ui-monospace, monospace'
+      });
+      lb.textContent = rotTick[k];
+      svg.appendChild(lb);
+    });
+
+    const tip = ensureTip(container);
+
+    items.forEach((it, i) => {
+      const y = pad.t + i * linha + linha / 2;
+      const a = sx(Math.min(it.from, it.to));
+      const b = sx(Math.max(it.from, it.to));
+      const larg = Math.max(3, b - a);
+
+      const lbl = el('text', {
+        x: pad.l - 10, y: y + 3.5, fill: COLORS.text, 'font-size': 10.5,
+        'text-anchor': 'end', 'font-family': 'ui-monospace, monospace'
+      });
+      lbl.textContent = corta(it.label, rot.max);
+      lbl.appendChild(el('title')).textContent = it.label;
+      svg.appendChild(lbl);
+
+      const cor = it.color || COLORS.brand;
+      // Estimativa pontual (EPV, alvo único) não é uma faixa: vira losango,
+      // que se lê como "um número", em vez de uma barra fina que parece
+      // faixa estreita — e some no meio do gráfico.
+      if (larg <= 4) {
+        const x = sx(it.from), s = 7;
+        svg.appendChild(el('path', {
+          d: `M${x} ${y - s} L${x + s} ${y} L${x} ${y + s} L${x - s} ${y} Z`,
+          fill: cor, opacity: 0.9, stroke: '#0A1120', 'stroke-width': 1.5
+        }));
+      } else {
+        svg.appendChild(el('rect', {
+          x: a, y: y - 9, width: larg, height: 18, rx: 4, fill: cor, opacity: 0.55
+        }));
+        // Ponto central: o cenário-base dentro da faixa pessimista/otimista.
+        if (isNum(it.point)) {
+          svg.appendChild(el('circle', {
+            cx: sx(it.point), cy: y, r: 4.5,
+            fill: cor, stroke: '#0A1120', 'stroke-width': 2
+          }));
+        }
+      }
+
+      const alvo = el('rect', {
+        x: pad.l, y: y - linha / 2, width: W, height: linha,
+        fill: 'transparent', style: 'cursor:default'
+      });
+      alvo.addEventListener('mousemove', (ev) => {
+        const r = container.getBoundingClientRect();
+        tip.innerHTML = `<span class="k">${it.label}</span><br>`
+          + (Math.abs(it.from - it.to) < 1e-9
+            ? (o.format ? o.format(it.from) : it.from)
+            : `${o.format ? o.format(it.from) : it.from} — ${o.format ? o.format(it.to) : it.to}`)
+          + (it.nota ? `<br><span class="k">${it.nota}</span>` : '');
+        tip.classList.add('on');
+        tip.style.left = Math.min(r.width - 190, ev.clientX - r.left + 12) + 'px';
+        tip.style.top = (y - 10) + 'px';
+      });
+      alvo.addEventListener('mouseleave', () => tip.classList.remove('on'));
+      svg.appendChild(alvo);
+    });
+
+    // referência (preço de tela) atravessando todas as barras
+    if (o.ref && isNum(o.ref.value)) {
+      const x = sx(o.ref.value);
+      svg.appendChild(el('line', {
+        x1: x, x2: x, y1: pad.t - 4, y2: pad.t + items.length * linha + 2,
+        stroke: o.ref.color || '#E6ECF5', 'stroke-width': 1.6, 'stroke-dasharray': '5 4'
+      }));
+      // O rótulo da referência troca de lado conforme a largura real do texto,
+      // não conforme um palpite fixo: um "preço de tela R$ 55,00" ocupa o dobro
+      // de um "R$ 55" e vazava do painel em telas estreitas.
+      const REF_CHAR = 6.1;                  // monoespaçado a 10px, em negrito
+      const texto = corta(o.ref.label || '',
+                          Math.floor((width - 8) / REF_CHAR));
+      const larg = texto.length * REF_CHAR;
+      const cabeDireita = x + 6 + larg <= width - 4;
+      const lb = el('text', {
+        x: cabeDireita ? Math.max(4, Math.min(x + 6, width - 4 - larg))
+                       : Math.min(width - 4, Math.max(x - 6, 4 + larg)),
+        y: pad.t + 4, fill: o.ref.color || '#E6ECF5',
+        'font-size': 10, 'font-weight': 700, 'font-family': 'ui-monospace, monospace',
+        'text-anchor': cabeDireita ? 'start' : 'end'
+      });
+      lb.textContent = texto;
+      lb.appendChild(el('title')).textContent = o.ref.label || '';
+      svg.appendChild(lb);
+    }
+  }
+
+  /* ==================================================== waterfall / bridge == */
+
+  /**
+   * Ponte de valor: cada passo soma ou subtrai do acumulado, e a barra
+   * flutua a partir de onde o passo anterior parou. É a cadeia causal do
+   * DCF (EV → equity → preço), que antes só existia como lista de números.
+   *
+   * opts:
+   *   steps: [{ label, value, tipo:'soma'|'total', color }]
+   *   format(v), height
+   */
+  function waterfall(container, opts) {
+    if (!container) return;
+    const o = opts || {};
+    const steps = (o.steps || []).filter((s) => isNum(s.value));
+    if (!steps.length) { container.innerHTML = ''; return; }
+
+    // Acumula para descobrir de onde cada barra parte e onde termina.
+    let acc = 0;
+    const barras = steps.map((s) => {
+      if (s.tipo === 'total') {
+        acc = s.value;
+        return { s, de: 0, ate: s.value, total: true };
+      }
+      const de = acc;
+      acc += s.value;
+      return { s, de, ate: acc, total: false };
+    });
+
+    const height = o.height || 260;
+    const { svg, width } = frame(container, Object.assign({}, o, { height }));
+    const pad = { t: 18, r: 14, b: 44, l: 62 };
+    const W = width - pad.l - pad.r;
+    const H = height - pad.t - pad.b;
+
+    const vals = barras.flatMap((b) => [b.de, b.ate]).concat([0]);
+    const escala = niceTicks(Math.min.apply(null, vals),
+                             Math.max.apply(null, vals), 5);
+    const sy = (v) => pad.t + H - ((v - escala.min) / (escala.max - escala.min || 1)) * H;
+    const passo = W / barras.length;
+    const larg = Math.min(64, passo * 0.62);
+
+    escala.ticks.forEach((t) => {
+      const y = sy(t);
+      svg.appendChild(el('line', {
+        x1: pad.l, x2: pad.l + W, y1: y, y2: y,
+        stroke: Math.abs(t) < 1e-12 ? COLORS.zero : COLORS.grid,
+        'stroke-width': Math.abs(t) < 1e-12 ? 1.2 : 1
+      }));
+      const lb = el('text', {
+        x: pad.l - 8, y: y + 3.5, fill: COLORS.text, 'font-size': 10,
+        'text-anchor': 'end', 'font-family': 'ui-monospace, monospace'
+      });
+      lb.textContent = o.format ? o.format(t) : String(t);
+      svg.appendChild(lb);
+    });
+
+    barras.forEach((b, i) => {
+      const cx = pad.l + passo * i + passo / 2;
+      const y1 = sy(b.de), y2 = sy(b.ate);
+      const topo = Math.min(y1, y2);
+      const alt = Math.max(2, Math.abs(y2 - y1));
+      const cor = b.s.color || (b.total ? '#67E8F9' : (b.s.value >= 0 ? '#34D399' : '#F87171'));
+
+      svg.appendChild(el('rect', {
+        x: cx - larg / 2, y: topo, width: larg, height: alt, rx: 3,
+        fill: cor, opacity: b.total ? 0.85 : 0.6
+      }));
+      // conector até a próxima barra: o olho segue o acumulado
+      if (i < barras.length - 1 && !barras[i + 1].total) {
+        svg.appendChild(el('line', {
+          x1: cx + larg / 2, x2: pad.l + passo * (i + 1) + passo / 2 - larg / 2,
+          y1: sy(b.ate), y2: sy(b.ate),
+          stroke: COLORS.axis, 'stroke-width': 1, 'stroke-dasharray': '3 3'
+        }));
+      }
+
+      const val = el('text', {
+        // nas pontas o valor é ancorado para dentro, senão vaza pela lateral
+        x: clamp(cx, pad.l + 2, pad.l + W - 2), y: topo - 6, fill: cor,
+        'font-size': 10, 'font-weight': 700,
+        'text-anchor': i === 0 ? 'start' : (i === barras.length - 1 ? 'end' : 'middle'),
+        'font-family': 'ui-monospace, monospace'
+      });
+      val.textContent = o.format ? o.format(b.s.value) : String(b.s.value);
+      svg.appendChild(val);
+
+      // rótulo em até duas linhas, para caber sem girar o texto
+      const palavras = String(b.s.label).split(' ');
+      const meio = Math.ceil(palavras.length / 2);
+      const linhas = palavras.length > 2
+        ? [palavras.slice(0, meio).join(' '), palavras.slice(meio).join(' ')]
+        : [b.s.label];
+      linhas.forEach((txt, k) => {
+        const lb = el('text', {
+          x: clamp(cx, pad.l + 2, pad.l + W - 2), y: height - 26 + k * 11,
+          fill: COLORS.text, 'font-size': 9.5,
+          'text-anchor': i === 0 ? 'start' : (i === barras.length - 1 ? 'end' : 'middle'),
+          'font-family': 'ui-monospace, monospace'
+        });
+        lb.textContent = corta(txt, 18);
+        svg.appendChild(lb);
+      });
+    });
+  }
+
+  /* ============================================================== tornado == */
+
+  /**
+   * Sensibilidade univariada ordenada por impacto: responde "qual premissa
+   * move mais o preço justo?" — a pergunta que decide onde vale discutir.
+   *
+   * opts:
+   *   items: [{ label, baixo, alto, nota }]   preço justo nos extremos
+   *   base:  valor central (preço justo atual)
+   *   format(v), height
+   */
+  function tornado(container, opts) {
+    if (!container) return;
+    const o = opts || {};
+    const items = (o.items || []).filter((i) => isNum(i.baixo) && isNum(i.alto));
+    if (!items.length || !isNum(o.base)) { container.innerHTML = ''; return; }
+
+    const ordenados = items.slice().sort(
+      (a, b) => Math.abs(b.alto - b.baixo) - Math.abs(a.alto - a.baixo));
+
+    const linha = 30;
+    const height = o.height || (12 + 26 + ordenados.length * linha);
+    const { svg, width } = frame(container, Object.assign({}, o, { height }));
+    const rot = margemRotulos(ordenados.map((i) => i.label), width, o.labelWidth || 96);
+    const pad = { t: 12, r: 18, b: 26, l: rot.pad };
+    const W = width - pad.l - pad.r;
+
+    const vals = ordenados.flatMap((i) => [i.baixo, i.alto]).concat([o.base]);
+    const escala = niceTicks(Math.min.apply(null, vals),
+                             Math.max.apply(null, vals), 5);
+    const sx = (v) => pad.l + ((v - escala.min) / (escala.max - escala.min || 1)) * W;
+
+    const rotTick = escala.ticks.map((t) => (o.format ? o.format(t) : String(t)));
+    const mostra = ticksVisiveis(rotTick, W);
+    escala.ticks.forEach((t, k) => {
+      const x = sx(t);
+      svg.appendChild(el('line', {
+        x1: x, x2: x, y1: pad.t, y2: pad.t + ordenados.length * linha,
+        stroke: COLORS.grid, 'stroke-width': 1
+      }));
+      if (!mostra.has(k)) return;
+      const lb = el('text', {
+        x, y: height - 8, fill: COLORS.text, 'font-size': 10,
+        'text-anchor': ancoraTick(k, escala.ticks.length),
+        'font-family': 'ui-monospace, monospace'
+      });
+      lb.textContent = rotTick[k];
+      svg.appendChild(lb);
+    });
+
+    const xBase = sx(o.base);
+    const tip = ensureTip(container);
+
+    ordenados.forEach((it, i) => {
+      const y = pad.t + i * linha + linha / 2;
+      const lbl = el('text', {
+        x: pad.l - 10, y: y + 3.5, fill: COLORS.text, 'font-size': 10.5,
+        'text-anchor': 'end', 'font-family': 'ui-monospace, monospace'
+      });
+      lbl.textContent = corta(it.label, rot.max);
+      lbl.appendChild(el('title')).textContent = it.label;
+      svg.appendChild(lbl);
+
+      // duas metades a partir do centro: azul para cima, laranja para baixo
+      [[it.baixo, '#FB923C'], [it.alto, '#38BDF8']].forEach(([v, cor]) => {
+        const x = sx(v);
+        const a = Math.min(x, xBase), larg = Math.max(2, Math.abs(x - xBase));
+        svg.appendChild(el('rect', {
+          x: a, y: y - 8, width: larg, height: 16, rx: 3, fill: cor, opacity: 0.62
+        }));
+      });
+
+      const alvo = el('rect', {
+        x: pad.l, y: y - linha / 2, width: W, height: linha, fill: 'transparent'
+      });
+      alvo.addEventListener('mousemove', (ev) => {
+        const r = container.getBoundingClientRect();
+        const f = o.format || ((v) => String(v));
+        tip.innerHTML = `<span class="k">${it.label}</span><br>`
+          + `${f(it.baixo)} — ${f(it.alto)}`
+          + (it.nota ? `<br><span class="k">${it.nota}</span>` : '');
+        tip.classList.add('on');
+        tip.style.left = Math.min(r.width - 200, ev.clientX - r.left + 12) + 'px';
+        tip.style.top = (y - 10) + 'px';
+      });
+      alvo.addEventListener('mouseleave', () => tip.classList.remove('on'));
+      svg.appendChild(alvo);
+    });
+
+    svg.appendChild(el('line', {
+      x1: xBase, x2: xBase, y1: pad.t - 2, y2: pad.t + ordenados.length * linha + 2,
+      stroke: '#E6ECF5', 'stroke-width': 1.6
+    }));
   }
 
   /* ============================================================ barra 100% == */
@@ -571,5 +982,6 @@
     container.appendChild(bar);
   }
 
-  global.FLChart = { line, bars, spark, ring, heat, stack, niceTicks, COLORS };
+  global.FLChart = { line, bars, spark, ring, heat, stack, hbars, waterfall, tornado,
+                     niceTicks, COLORS };
 })(window);

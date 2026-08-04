@@ -674,6 +674,25 @@ textarea { font-family: var(--sans); resize: vertical; min-height: 64px; line-he
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 
+/* ---------------------------------------------------- barra da tese */
+/* Diz de quem são as premissas na tela e dá as saídas: link e resumo. */
+
+.tese-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 0 0 14px; padding: 8px 12px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--panel);
+}
+.tese-bar:empty { display: none; }
+.tese-status {
+  font: 600 10.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase;
+  color: var(--dim);
+}
+.tese-tag {
+  font: 500 10.5px/1 var(--mono); color: var(--brand);
+  border: 1px solid rgba(103, 232, 249, .35); border-radius: 999px; padding: 5px 9px;
+  background: rgba(103, 232, 249, .08);
+}
+
 /* ------------------------------------------------------------- impressão */
 /* Ctrl+P vira um entregável decente: fundo claro, sem chrome de interação. */
 @media print {
@@ -681,7 +700,7 @@ textarea { font-family: var(--sans); resize: vertical; min-height: 64px; line-he
           --paper: #16202e; --dim: #45536b; --dim2: #5d6b82;
           --line: rgba(30, 45, 70, .25); --line2: rgba(30, 45, 70, .4); }
   body { background: #fff !important; background-image: none !important; }
-  .topbar-actions, .toolbar, .chat-fab, .chat-panel, .tabs, .site-nav,
+  .topbar-actions, .toolbar, .chat-fab, .chat-panel, .tabs, .site-nav, .tese-bar,
   #btnLLM, #btnRefresh, .search-box, input[type="range"], .chip, .btn { display: none !important; }
   .panel, .kpi, .sector-block { break-inside: avoid; box-shadow: none !important; }
   .layout { grid-template-columns: 1fr !important; }

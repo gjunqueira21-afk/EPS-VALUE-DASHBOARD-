@@ -74,8 +74,12 @@ Parecer 01 (dataviz) + estruturais do 02. Tudo em SVG próprio — o gargalo med
 - [x] **1.6 Estado que não evapora** — premissas por ticker no localStorage +
       restaurar padrão visível; premissas serializadas na query string
       ("🔗 link da tese"); "📋 copiar resumo". *(02 — stateless confirmado)*
-- [ ] **1.7 Cenários nomeados** — salvar, reencontrar e comparar em colunas.
+- [x] **1.7 Cenários nomeados** — salvar, reencontrar e comparar em colunas.
       *(02 estrutural)*
+      O cenário guarda o DELTA contra o padrão, não uma cópia das premissas:
+      quando a base da CVM muda, ele continua significando a mesma tese em
+      cima dos números novos. Até oito por ticker, com tabela comparativa na
+      aba de valuation.
 - [x] **1.8 DCF reverso como dot plot** vs. crescimento histórico realizado.
       *(01 §3.5)*
       Uma linha por métrica (receita, EBITDA, FCL), um ponto por janela de 3

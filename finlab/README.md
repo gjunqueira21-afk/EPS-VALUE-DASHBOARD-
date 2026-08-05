@@ -112,16 +112,29 @@ Todo fechamento que o painel vê é gravado em `finlab/data/history.csv`. As jan
 
 ### Atualizar a base da CVM
 
-O FinLab lê os parquets gerados pelo pipeline que já existia neste repositório:
+O FinLab lê os parquets gerados pelo pipeline que já existia neste repositório.
+No Windows, chamando o Python do `.venv` direto pelo caminho (evita a política de
+execução do PowerShell, que costuma barrar o `Activate.ps1`):
 
-```bash
+```powershell
+# na pasta do repositório
+.\.venv\Scripts\python.exe -m pip install tqdm
 cd valuation_cvm
-python -m src.main --start-year 2016 --end-year 2026
+..\.venv\Scripts\python.exe -m src.main --start-year 2016 --end-year 2026
 ```
 
-O `--end-year` importa: o padrão é 2025, e sem passar o ano corrente o pipeline
-não busca nem a DFP nem o ITR do ano — a aba *Fundamentos* fica só com o anual.
-A mesma execução gera `*_dfp.parquet` (anual) e `*_itr.parquet` (trimestral).
+Duas pegadinhas:
+
+* **`tqdm` não vem no `.venv`.** O `iniciar.bat` instala só `finlab/requirements.txt`,
+  que é o necessário para o painel; o downloader do pipeline importa `tqdm`. Sem ele,
+  a execução morre num `ModuleNotFoundError` antes de baixar qualquer coisa.
+* **O `--end-year` importa.** O padrão é 2025, e sem passar o ano corrente o pipeline
+  não busca nem a DFP nem o ITR do ano — a aba *Fundamentos* fica só com o anual.
+
+A mesma execução gera `*_dfp.parquet` (anual) e `*_itr.parquet` (trimestral). Baixar
+uma década inteira dos dois tipos leva bastante tempo e disco; para só acender o
+trimestral, `--start-year 2023` já cobre os 12 trimestres que o painel mostra — mas
+encurta o histórico anual dos gráficos e dos múltiplos.
 
 ### Como o trimestral é montado
 

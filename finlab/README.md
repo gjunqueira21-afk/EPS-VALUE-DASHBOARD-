@@ -57,7 +57,7 @@ finlab/
 │       ├── engine.js   o motor de DCF/EPV — roda no navegador
 │       ├── charts.js   gráficos em SVG puro
 │       └── ...
-└── tests/              130 testes (pytest)
+└── tests/              135 testes (pytest)
 ```
 
 O front não carrega **nada** de CDN: fontes do sistema, gráficos em SVG escritos à mão.
@@ -292,7 +292,7 @@ pagam dividendo?"*.
 
 **Quem responde** se escolhe no rodapé da caixa:
 
-- **🧠 Mesa inteira** (padrão) — os quatro agentes respondem em sequência, cada um pela
+- **🧠 Mesa inteira** (padrão) — o Radar de Contexto abre e os demais respondem, cada um pela
   sua especialidade e com o crachá do nome, e as falas aparecem uma a uma conforme
   chegam. No fim, uma **Conclusão da mesa** sintetiza: onde eles convergem, onde
   discordam e o que observar. São 5 chamadas ao provedor por pergunta — é a rodada
@@ -327,7 +327,7 @@ São leitura crítica dos números que estão na tela.
 python -m pytest finlab/tests -q
 ```
 
-130 testes cobrindo extração contábil da CVM (incluindo as armadilhas de escala do LPA e
+135 testes cobrindo extração contábil da CVM (incluindo as armadilhas de escala do LPA e
 das units), consistência dos múltiplos, as curvas do score, as premissas de valuation,
 o proxy de LLM nos três formatos de API, a desacumulação do ITR, o motor de DCF contra
 referência independente e

@@ -1667,3 +1667,77 @@ def test_ltm_vazio_sem_itr(tmp_path, monkeypatch):
         assert cvm.ltm_series("") == {}
     finally:
         cvm._frames.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# Radar de Contexto (busca ao vivo) e camada de momento
+# ---------------------------------------------------------------------------
+
+def test_busca_ao_vivo_so_no_provedor_que_tem_e_no_agente_que_pede():
+    """A busca externa é opt-in duplo: o provedor precisa suportar E o agente
+    precisa pedir. Mandar `search_parameters` para quem não conhece o campo é
+    erro 400 garantido."""
+    xai, openai = agents.PROVIDERS["xai"], agents.PROVIDERS["openai"]
+
+    com = agents._corpo_openai(xai, "grok-4", 0.3, 100, [], buscar=True)
+    assert agents.BUSCA_CAMPO in com
+    assert com[agents.BUSCA_CAMPO]["sources"], "a busca precisa declarar as fontes"
+
+    assert agents.BUSCA_CAMPO not in agents._corpo_openai(xai, "grok-4", 0.3, 100, [], buscar=False)
+    assert agents.BUSCA_CAMPO not in agents._corpo_openai(openai, "gpt", 0.3, 100, [], buscar=True)
+
+
+def test_radar_abre_a_rodada_e_e_o_unico_com_busca():
+    """Só um agente enxerga fora do painel — e é o que abre a rodada."""
+    com_busca = [k for k, a in agents.AGENTS.items() if a.get("busca_ao_vivo")]
+    assert com_busca == ["contexto"]
+    assert agents.AGENTS["contexto"].get("abre_rodada") is True
+    # o prompt exige as duas seções separadas, que é o ponto do desenho
+    sistema = agents.AGENTS["contexto"]["system"]
+    assert "FATO PUBLICADO" in sistema and "CONVERSA NÃO VERIFICADA" in sistema
+    assert "DATA e LINK" in sistema
+    # e proíbe o que estragaria a mesa
+    assert "sentimento numérico" in sistema
+    assert "Nunca opine sobre preço justo" in sistema
+
+
+def test_momento_entra_no_contexto_com_evidencia_datada():
+    """Sem isto o agente lia média de 3 anos de uma empresa em turnaround e
+    tratava como run-rate — o erro que a classificação existe para evitar."""
+    payload = {
+        "fundamentals": {"last_year": 2025},
+        "regime": {
+            "codigo": "R3", "rotulo": "Turnaround", "confianca": "media",
+            "modificador": {"codigo": "R4", "rotulo": "Reestruturação de portfólio"},
+            "quebra": "o histórico deixa de ser âncora",
+            "fluxo": "12 meses móveis do core",
+            "evidencias": [{"exercicio": 2025, "texto": "prejuízo no exercício"}],
+        },
+        "trimestral": {"pontos": [
+            {"rotulo": "4T24", "receita": 1e9, "lucro_liquido": 1e8, "derivado": True},
+            {"rotulo": "1T25", "receita": 1.1e9, "lucro_liquido": 1.2e8},
+        ]},
+        "ltm": {"fim": "2025-03-31", "campos": {"receita": 4e9, "lucro_liquido": 4e8, "fcl": 2e8}},
+    }
+    texto = "\n".join(agents._bloco_momento(payload))
+    assert "R3 · Turnaround" in texto and "com R4" in texto
+    assert "[2025] prejuízo no exercício" in texto
+    assert "4T24" in texto and "derivado da DFP" in texto
+    assert "A mesa enxerga a contabilidade até 2025-03-31" in texto
+    # e diz ao modelo o que ele NÃO sabe
+    assert "SÓ contábil" in texto
+
+
+def test_sem_regime_o_contexto_manda_nao_presumir_normal():
+    """A regra 1 do parecer também vale para o que o agente lê."""
+    texto = "\n".join(agents._bloco_momento(
+        {"fundamentals": {"last_year": 2025},
+         "regime": {"codigo": None, "motivo": "só 2 exercícios"}}))
+    assert "Sem classificação" in texto
+    assert "Não presuma operação normal" in texto
+
+
+def test_bloco_de_momento_cala_quando_nao_ha_dado():
+    """Cabeçalho vazio é convite para o modelo preencher sozinho."""
+    assert agents._bloco_momento({}) == []
+    assert agents._bloco_momento({"fundamentals": {}}) == []

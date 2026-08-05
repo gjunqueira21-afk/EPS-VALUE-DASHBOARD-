@@ -60,6 +60,17 @@ PROVIDERS = {
         "models": ["deepseek-chat", "deepseek-reasoner"],
         "docs": "https://platform.deepseek.com/api_keys",
     },
+    # A xAI fala o dialeto OpenAI, então entra pelo mesmo caminho. O que ela
+    # tem de diferente é a busca ao vivo no X, ligada por `search_parameters`
+    # — ver BUSCA_AO_VIVO e a nota em _corpo_openai.
+    "xai": {
+        "label": "xAI (Grok)",
+        "url": "https://api.x.ai/v1/chat/completions",
+        "style": "openai",
+        "models": ["grok-4", "grok-4-fast", "grok-3"],
+        "docs": "https://console.x.ai",
+        "busca_ao_vivo": True,
+    },
 }
 
 
@@ -82,6 +93,40 @@ _COMUM = (
 )
 
 AGENTS = {
+    # Abre a rodada: é o único que enxerga fora do painel, e o que ele traz
+    # entra no contexto dos outros. Por isso o prompt é quase todo sobre o que
+    # NÃO fazer — conteúdo de rede social é assimétrico, e quem posta sobre
+    # small cap muitas vezes está posicionado.
+    "contexto": {
+        "label": "Radar de Contexto",
+        "icon": "📡",
+        "desc": "Varre o X e a imprensa: o que está sendo dito sobre a empresa agora.",
+        "abre_rodada": True,
+        "busca_ao_vivo": True,
+        "system": _COMUM + (
+            "\nSeu papel: levantar o que está sendo DITO sobre a empresa agora, no X e na "
+            "imprensa, para a mesa saber o que existe fora das demonstrações.\n"
+            "Você é o único agente com acesso a fontes externas. Os outros vão ler a sua "
+            "saída, então ela precisa ser honesta sobre o próprio grau de certeza.\n"
+            "\nRegras deste agente, que substituem a proibição de usar fonte externa:\n"
+            "• Toda afirmação vem com DATA e LINK. Sem link, não entra.\n"
+            "• Separe em duas seções, nesta ordem e sem misturar:\n"
+            "  **FATO PUBLICADO** — fato relevante, comunicado ao mercado, release de "
+            "resultado, matéria de veículo jornalístico identificado.\n"
+            "  **CONVERSA NÃO VERIFICADA** — post, comentário, boato, opinião de perfil. "
+            "Aqui você diz explicitamente que é conversa, e nunca a converte em fato.\n"
+            "• Nada de sentimento numérico (\"70% positivo\"). Número inventa precisão que a "
+            "amostra não tem.\n"
+            "• Se um assunto só existe em perfis anônimos ou aparece coordenado, diga isso.\n"
+            "• Se não encontrar nada relevante, escreva \"nada novo relevante no período\". "
+            "Não preencha espaço.\n"
+            "• Nunca opine sobre preço justo, nem proponha premissa. Isso é dos outros.\n"
+            "\nFormato, em no máximo 220 palavras: as duas seções em lista, cada item "
+            "começando pela data (dd/mm), depois a afirmação em uma linha, depois o link. "
+            "Feche com **O QUE CONFERIR**: até três perguntas que a mesa deveria checar "
+            "contra as demonstrações."
+        ),
+    },
     "equity": {
         "label": "Analista de Ações BR",
         "icon": "📊",
@@ -484,8 +529,34 @@ class LLMError(Exception):
     pass
 
 
+# A busca ao vivo da xAI é opt-in por chamada. Deixamos o nome do campo e o
+# formato em constantes porque não dá para validar contra a documentação a
+# partir deste ambiente: se a xAI renomear algo, muda-se aqui e nada mais
+# quebra. `mode: auto` deixa o modelo decidir se precisa buscar — perguntar
+# sobre uma empresa sem assunto novo não deve gastar busca.
+BUSCA_CAMPO = "search_parameters"
+BUSCA_AO_VIVO = {
+    "mode": "auto",
+    "sources": [{"type": "x"}, {"type": "news"}],
+    "max_search_results": 20,
+    "return_citations": True,
+}
+
+
+def _corpo_openai(cfg: dict, model: str, temperature: float, max_tokens: int,
+                  mensagens: list, buscar: bool = False) -> dict:
+    """Corpo da requisição no dialeto OpenAI, com a busca ao vivo quando o
+    provedor suporta E o agente pediu."""
+    corpo = {"model": model, "temperature": temperature,
+             "max_tokens": max_tokens, "messages": mensagens}
+    if buscar and cfg.get("busca_ao_vivo"):
+        corpo[BUSCA_CAMPO] = dict(BUSCA_AO_VIVO)
+    return corpo
+
+
 def chat(provider: str, api_key: str, model: str, system: str, user: str,
-         temperature: float = 0.3, max_tokens: int = 1400) -> str:
+         temperature: float = 0.3, max_tokens: int = 1400,
+         buscar: bool = False) -> str:
     cfg = PROVIDERS.get(provider)
     if not cfg:
         raise LLMError(f"Provedor desconhecido: {provider}")
@@ -501,9 +572,9 @@ def chat(provider: str, api_key: str, model: str, system: str, user: str,
                          "Content-Type": "application/json",
                          "HTTP-Referer": "https://github.com/gjunqueira21-afk/eps-value-dashboard-",
                          "X-Title": "Gab's FinLab"},
-                json={"model": model, "temperature": temperature, "max_tokens": max_tokens,
-                      "messages": [{"role": "system", "content": system},
-                                   {"role": "user", "content": user}]},
+                json=_corpo_openai(cfg, model, temperature, max_tokens,
+                                   [{"role": "system", "content": system},
+                                    {"role": "user", "content": user}], buscar),
                 timeout=max(HTTP_TIMEOUT, 120),
             )
             data = _json_or_raise(resp)
@@ -812,7 +883,86 @@ def build_context(payload: dict, assumptions: dict, resultado: dict, macro: dict
         f"  EPV (poder de lucro): R$ {resultado.get('epv_por_acao')} por ação",
         f"  Crescimento implícito no preço atual (DCF reverso): {pc(resultado.get('g_implicito'))}",
     ]
+    linhas += _bloco_momento(payload)
     return "\n".join(linhas)
+
+
+def _bloco_momento(payload: dict) -> list[str]:
+    """Regime e trimestre corrente — a camada L3 do parecer 04.
+
+    Sem isto o agente lia médias de 3 anos de uma empresa em turnaround e
+    tratava como run-rate, que é exatamente o erro que a classificação de
+    regime existe para evitar. A evidência vai junto e datada: o parecer 05 é
+    explícito em que opinião sobre regime sem âncora não vale nada.
+
+    Cada bloco só aparece quando há dado. Silêncio é melhor que um cabeçalho
+    vazio, que o modelo tende a preencher sozinho.
+    """
+    linhas: list[str] = []
+
+    reg = payload.get("regime") or {}
+    if reg.get("codigo"):
+        mod = reg.get("modificador") or {}
+        linhas += [
+            "",
+            "MOMENTO DA EMPRESA (lido das demonstrações, não de notícia)",
+            f"  Regime: {reg['codigo']} · {reg.get('rotulo')}"
+            + (f" com {mod.get('codigo')} · {mod.get('rotulo')}" if mod else "")
+            + f" | confiança {reg.get('confianca')}",
+            f"  O que isso quebra no valuation: {reg.get('quebra')}",
+            f"  Tratamento indicado do fluxo-base: {reg.get('fluxo')}",
+        ]
+        for e in (reg.get("evidencias") or [])[:6]:
+            linhas.append(f"  · [{e.get('exercicio')}] {e.get('texto')}")
+        linhas.append(
+            "  Esta leitura é SÓ contábil: guidance, troca de gestão, call e fato "
+            "relevante não entram. Não afirme nada sobre eles.")
+    elif reg:
+        linhas += ["", "MOMENTO DA EMPRESA",
+                   f"  Sem classificação de regime: {reg.get('motivo')}",
+                   "  Não presuma operação normal por omissão."]
+
+    tri = (payload.get("trimestral") or {}).get("pontos") or []
+    if tri:
+        ultimos = tri[-4:]
+        linhas += ["", "TRIMESTRES (ITR da CVM, já desacumulados)"]
+        for p in ultimos:
+            rec, luc = p.get("receita"), p.get("lucro_liquido")
+            linhas.append(
+                f"  {p.get('rotulo')}: receita {_bi_simples(rec)} | "
+                f"lucro {_bi_simples(luc)}"
+                + ("  (4T derivado da DFP, não publicado no ITR)" if p.get("derivado") else ""))
+
+    ltm = payload.get("ltm") or {}
+    if ltm.get("campos"):
+        c = ltm["campos"]
+        linhas += [
+            f"  Últimos 12 meses até {ltm.get('fim')}: receita {_bi_simples(c.get('receita'))} | "
+            f"lucro {_bi_simples(c.get('lucro_liquido'))} | FCL {_bi_simples(c.get('fcl'))}",
+        ]
+
+    if linhas:
+        linhas.append("")
+        linhas.append(f"  A mesa enxerga a contabilidade até {_cobertura(payload)}.")
+    return linhas
+
+
+def _bi_simples(v) -> str:
+    if not isinstance(v, (int, float)):
+        return "sem dado"
+    return f"R$ {v / 1e9:.2f} bi".replace(".", ",")
+
+
+def _cobertura(payload: dict) -> str:
+    """A data mais recente que o painel de fato enxerga."""
+    ltm = payload.get("ltm") or {}
+    if ltm.get("fim"):
+        return ltm["fim"]
+    itr = payload.get("itr") or {}
+    if itr.get("fim"):
+        return itr["fim"]
+    ano = (payload.get("fundamentals") or {}).get("last_year")
+    return f"o exercício de {ano}" if ano else "data desconhecida"
 
 
 def parse_assumption_json(text: str) -> Optional[dict]:

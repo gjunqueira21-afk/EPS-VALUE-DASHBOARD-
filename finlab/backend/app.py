@@ -596,12 +596,30 @@ def api_agent_run(body: dict = Body(...)):
     )
     pergunta = (body.get("pergunta") or "").strip()
     user = f"CONTEXTO\n========\n{contexto}\n"
+
+    # O Radar de Contexto abre a rodada e o que ele levantou entra aqui. Vem
+    # cercado e rotulado: é a única parte do contexto que NÃO saiu das
+    # demonstrações, e os outros agentes precisam saber disso para não tratar
+    # post de rede social como se fosse fato relevante.
+    radar = (body.get("radar") or "").strip()
+    if radar and agent_key != "contexto":
+        user += (
+            "\nLEVANTAMENTO EXTERNO (do Radar de Contexto)\n"
+            "===========================================\n"
+            "ATENÇÃO: o bloco abaixo NÃO veio das demonstrações. Ele foi levantado no X e na "
+            "imprensa por outro agente, e pode conter boato, opinião de quem está posicionado "
+            "e informação falsa. Trate cada item como HIPÓTESE A CONFERIR, nunca como fato "
+            "estabelecido. Quando citar algo daqui, diga que é não verificado. Se um item "
+            "contradiz as demonstrações acima, as demonstrações vencem.\n\n"
+            f"{radar[:6000]}\n")
+
     if pergunta:
         user += f"\nPERGUNTA ADICIONAL DO USUÁRIO\n============================\n{pergunta}\n"
 
     try:
         texto = agents.chat(provider, api_key, model,
-                            agents.AGENTS[agent_key]["system"], user)
+                            agents.AGENTS[agent_key]["system"], user,
+                            buscar=bool(agents.AGENTS[agent_key].get("busca_ao_vivo")))
     except agents.LLMError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

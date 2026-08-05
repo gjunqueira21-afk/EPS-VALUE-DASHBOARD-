@@ -1,4 +1,4 @@
-/* Mesa de IA: quatro agentes especializados comentando a empresa a partir
+/* Mesa de IA: agentes especializados comentando a empresa a partir
    do mesmo contexto que está na tela. Cada agente pode usar um slot de LLM
    diferente; a chave nunca sai do navegador exceto na chamada ao proxy local. */
 (function (global) {
@@ -67,6 +67,7 @@
           slot: { provider: slot.provider, api_key: slot.api_key, model: slot.model },
           assumptions: ctx.params,
           resultado: ctx.resumo,
+          radar: agentKey === 'contexto' ? '' : (saidas.contexto || ''),
           pergunta
         })
       });
@@ -148,7 +149,7 @@
     host.appendChild(h('section', { class: 'panel' }, [
       h('div', { class: 'panel-h' }, [
         h('div', { class: 'ptitle' }, [h('b', {}, 'Mesa de análise'),
-          ' · quatro papéis lendo os mesmos números da tela']),
+          ' · o Radar abre e os demais leem os mesmos números']),
         h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' }, [
           h('button', {
             class: 'btn ghost sm',
@@ -163,10 +164,11 @@
       h('div', {
         class: 'note',
         html: prontos.length
-          ? `<b>${prontos.length}</b> de 4 agentes com chave própria; os demais herdam a do `
-            + 'primeiro. Todos recebem o mesmo contexto: fundamentos da CVM, múltiplos, macro do '
-            + 'dia, suas premissas atuais e o resultado do modelo. Eles interpretam — não têm '
-            + 'acesso a notícias nem a dados fora desta tela.'
+          ? `<b>${prontos.length}</b> agente(s) com chave própria; os demais herdam a do `
+            + 'primeiro. Todos recebem o mesmo contexto da tela — fundamentos da CVM, '
+            + 'múltiplos, macro do dia, suas premissas e o resultado do modelo. O <b>Radar de '
+            + 'Contexto</b> é a exceção: ele roda primeiro, é o único que busca fora do painel, '
+            + 'e o que levanta chega aos outros marcado como <b>não verificado</b>.'
           : 'Nenhum agente configurado ainda. Clique em <b>⚙ A mesa</b> e cadastre pelo menos uma '
             + 'chave (OpenRouter, OpenAI, Anthropic, Google, Groq ou DeepSeek).'
       })
@@ -210,24 +212,77 @@
       ? `demonstrações anuais do papel de origem via ${esc(f.fonte || 'Yahoo Finance')}, `
         + `em ${esc(f.currency || 'USD')}`
       : 'demonstrações anuais da CVM (com a defasagem natural)';
+    // Banner de cobertura: a pergunta "até quando a mesa enxerga?" precisa de
+    // resposta ANTES da leitura, não depois. Enquanto a nota dizia "sem acesso
+    // a trimestral" mesmo depois de o ITR entrar, ela estava mentindo por
+    // desatualização — o pior tipo de aviso.
+    const ltm = (state.data && state.data.ltm) || {};
+    const tri = ((state.data && state.data.trimestral) || {}).pontos || [];
+    const reg = (state.data && state.data.regime) || {};
+    const ate = ltm.fim ? fmt.date(ltm.fim)
+      : (f.last_year ? 'o exercício de ' + f.last_year : 'data desconhecida');
+
     host.appendChild(h('div', {
       class: 'note warn',
-      html: '<b>Limites do que você lê aqui.</b> Os agentes só enxergam o contexto desta tela: '
-        + origem + ', preço, múltiplos e macro do dia. '
-        + 'Não têm acesso a resultado trimestral, guidance, fato relevante nem notícia. '
+      html: '<b>Até onde a mesa enxerga.</b> Contabilidade até <b>' + esc(ate) + '</b> — '
+        + origem
+        + (tri.length ? ', mais os trimestres do ITR já desacumulados' : '')
+        + (reg.codigo
+          ? `, e o regime <b>${esc(reg.codigo)} · ${esc(reg.rotulo)}</b> com as evidências datadas`
+          : '')
+        + ', preço, múltiplos e macro do dia.<br>'
+        + 'Continuam <b>sem</b> guidance, transcrição de call, fato relevante e notícia. '
+        + (reg.codigo
+          ? 'A classificação de regime é só contábil, então eles não devem afirmar nada '
+            + 'sobre intenção declarada da gestão. '
+          : '')
         + 'Trate as respostas como leitura crítica dos números — nunca como recomendação.'
     }));
   }
 
+  /**
+   * A rodada inteira, em paralelo entre provedores e em fila dentro de cada um.
+   *
+   * Era `for await` puro: a espera da mesa somava as quatro chamadas, mesmo
+   * quando cada agente usava um provedor diferente e não havia disputa
+   * nenhuma. Agora a latência é a do provedor mais lento, não a soma.
+   *
+   * A fila por provedor continua existindo de propósito — quatro agentes na
+   * mesma chave estouram rate limit, que era o motivo do sequencial original.
+   * Quem usa uma chave só não fica mais lento que antes; quem espalhou entre
+   * provedores ganha o paralelismo.
+   */
   async function rodarTodos(state, btn) {
-    const cards = Array.from(document.querySelectorAll('[data-panel="ia"] .agent-card'));
+    let cards = Array.from(document.querySelectorAll('[data-panel="ia"] .agent-card'));
     btn.disabled = true;
     const rotulo = btn.textContent;
     btn.innerHTML = '<span class="spinner"></span> rodando…';
-    for (const card of cards) {
-      const key = card.querySelector('button[data-run]').dataset.run;
-      await run(key, state, card);      // sequencial: evita estourar rate limit
+
+    // O Radar abre a rodada sozinho: o que ele levanta entra no contexto dos
+    // outros, então precisa ter terminado antes de eles começarem.
+    const radar = cards.find(
+      (c) => c.querySelector('button[data-run]').dataset.run === 'contexto');
+    if (radar) {
+      await run('contexto', state, radar);
+      cards = cards.filter((c) => c !== radar);
     }
+
+    const filas = new Map();
+    cards.forEach((card) => {
+      const key = card.querySelector('button[data-run]').dataset.run;
+      const slot = slotFor(key);
+      // Sem slot o run() já mostra o aviso; agrupamos por provedor+chave,
+      // porque o limite é da credencial, não do fornecedor em abstrato.
+      const fila = slot ? `${slot.provider}:${slot.api_key}` : 'sem-slot';
+      if (!filas.has(fila)) filas.set(fila, []);
+      filas.get(fila).push({ key, card });
+    });
+
+    // allSettled: um provedor fora do ar não pode abortar a rodada dos outros.
+    await Promise.allSettled(Array.from(filas.values()).map(async (fila) => {
+      for (const { key, card } of fila) await run(key, state, card);
+    }));
+
     btn.disabled = false;
     btn.textContent = rotulo;
   }

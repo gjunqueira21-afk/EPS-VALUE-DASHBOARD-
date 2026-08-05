@@ -89,6 +89,40 @@
     return new Set(idx);
   }
 
+  /* ============================================== redesenho estrutural ==== */
+
+  /**
+   * Avisa quando a largura de desenho de algum gráfico deixou de valer.
+   *
+   * O SVG é escrito com viewBox fixo e preserveAspectRatio "none": ele estica
+   * junto com a caixa. Isso é ótimo para desenhar uma vez, e péssimo quando a
+   * janela muda de tamanho — a 1366px o gráfico desenhava certo, arrastado
+   * para 626px o mesmo desenho aparecia esmagado, com os rótulos deformados.
+   *
+   * O redesenho é ESTRUTURAL: caro, e só faz sentido quando a geometria mudou.
+   * Por isso o gatilho é a largura de fato ter mudado além de um limiar, e não
+   * qualquer evento de resize — arrastar a borda da janela dispara dezenas.
+   */
+  function observarLargura(aoMudar, opts) {
+    const o = opts || {};
+    const limiar = o.limiar || 12;      // ruído de scrollbar não conta
+    const espera = o.espera || 160;
+    if (typeof ResizeObserver === 'undefined') return () => {};
+
+    let larguraAnterior = null;
+    let timer = null;
+    const obs = new ResizeObserver((entries) => {
+      const largura = Math.round(entries[0].contentRect.width);
+      if (larguraAnterior === null) { larguraAnterior = largura; return; }
+      if (Math.abs(largura - larguraAnterior) < limiar) return;
+      larguraAnterior = largura;
+      clearTimeout(timer);
+      timer = setTimeout(() => aoMudar(largura), espera);
+    });
+    obs.observe(o.alvo || document.body);
+    return () => { clearTimeout(timer); obs.disconnect(); };
+  }
+
   function frame(container, opts) {
     container.innerHTML = '';
     container.style.position = 'relative';
@@ -1007,5 +1041,5 @@
   }
 
   global.FLChart = { line, bars, spark, ring, heat, stack, hbars, waterfall, tornado,
-                     niceTicks, COLORS };
+                     niceTicks, observarLargura, COLORS };
 })(window);

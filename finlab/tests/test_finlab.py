@@ -1375,3 +1375,145 @@ def test_painel_segue_anual_sem_itr(tmp_path, monkeypatch):
         assert cvm.quarterly_series("") == {"pontos": [], "campos": []}
     finally:
         cvm._frames.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# Classificação de regime
+# ---------------------------------------------------------------------------
+
+def _fund(anos, **series):
+    """Fundamentals mínimo no formato de cvm.annual_series."""
+    return {"years": list(anos), "series": {k: list(v) for k, v in series.items()}}
+
+
+def test_regime_sem_dado_nao_vira_operacao_normal():
+    """A regra 1 do parecer: sem base para classificar, o painel diz que não
+    sabe. Chutar R0 é pior que calar — R0 é justamente a hipótese que autoriza
+    usar a média histórica como fluxo-base."""
+    from finlab.backend import regime
+
+    curto = regime.classificar(_fund([2024, 2025], lucro_liquido=[10.0, 12.0]))
+    assert curto["codigo"] is None
+    assert "3 exercícios" in curto["motivo"]
+
+    vazio = regime.classificar(_fund([2020, 2021, 2022, 2023, 2024],
+                                     receita=[1.0] * 5))
+    assert vazio["codigo"] is None
+    assert regime.classificar(None)["codigo"] is None
+
+
+def test_regime_exige_dois_exercicios_para_expansao():
+    """Um ano de capex alto é troca de frota. Regime pede confirmação."""
+    from finlab.backend import regime
+
+    anos = [2021, 2022, 2023, 2024, 2025]
+    base = dict(receita=[100.0] * 5, depreciacao=[5.0] * 5,
+                lucro_liquido=[10.0] * 5, imobilizado=[50, 55, 60, 70, 85],
+                patrimonio_liquido=[100.0] * 5)
+
+    um_ano = regime.classificar(_fund(anos, capex=[-5, -5, -5, -5, -30], **base))
+    assert um_ano["codigo"] == "R0"
+
+    dois = regime.classificar(_fund(anos, capex=[-5, -5, -5, -30, -30], **base))
+    assert dois["codigo"] == "R1"
+
+
+def test_regime_nao_confunde_empresa_leve_em_ativo_com_expansao():
+    """Numa incorporadora a depreciação é quase nada, então capex/depreciação
+    dispara sem que exista expansão: a MRV aparecia com 'capex de 7,2× a
+    depreciação' investindo 4,7% da receita. A materialidade contra a receita
+    é o que separa os dois casos."""
+    from finlab.backend import regime
+
+    anos = [2021, 2022, 2023, 2024, 2025]
+    base = dict(receita=[100.0] * 5, lucro_liquido=[10.0] * 5,
+                patrimonio_liquido=[100.0] * 5, imobilizado=[10, 11, 12, 13, 14])
+
+    # capex 5× a depreciação, mas só 4% da receita: não é regime de capex
+    leve = regime.classificar(_fund(anos, capex=[-4.0] * 5, depreciacao=[0.8] * 5, **base))
+    assert leve["codigo"] == "R0"
+
+    # mesma razão, capex de 20% da receita: aí sim
+    pesada = regime.classificar(_fund(anos, capex=[-20.0] * 5, depreciacao=[4.0] * 5, **base))
+    assert pesada["codigo"] == "R1"
+
+
+def test_regime_ignora_arrumacao_de_portfolio():
+    """Toda companhia mexe no portfólio; regime é outra coisa. Um item de 79 M
+    sobre lucro de 921 M (o caso Totvs) não é reestruturação."""
+    from finlab.backend import regime
+
+    anos = [2021, 2022, 2023, 2024, 2025]
+    base = dict(receita=[5000.0] * 5, capex=[-50.0] * 5, depreciacao=[40.0] * 5,
+                patrimonio_liquido=[3000.0] * 5, lucro_liquido=[921.0] * 5)
+
+    pequeno = regime.classificar(_fund(anos, descontinuadas=[0, 0, 0, 0, 79.0], **base))
+    assert pequeno["codigo"] == "R0"
+
+    grande = regime.classificar(_fund(anos, descontinuadas=[0, 0, 0, 0, 900.0], **base))
+    assert grande["codigo"] == "R4"
+
+
+def test_regime_pega_patrimonio_negativo_mesmo_com_lucro():
+    """A Azul voltou ao azul em 2025 por 0,12 bi carregando patrimônio de
+    −29 bi. Sem este sinal saía classificada como operação normal."""
+    from finlab.backend import regime
+
+    anos = [2021, 2022, 2023, 2024, 2025]
+    r = regime.classificar(_fund(
+        anos, receita=[16, 17, 18, 19, 21], lucro_liquido=[-0.7, -0.7, -2.4, -9.1, 0.12],
+        patrimonio_liquido=[-19, -19, -21, -30, -29],
+        capex=[-1.0] * 5, depreciacao=[-1.0] * 5))
+    assert r["codigo"] == "R3"
+    assert "patrimônio líquido negativo" in r["evidencias"][0]["texto"]
+    assert r["evidencias"][0]["estrutural"] is True
+
+
+def test_regime_escolhe_principal_por_precedencia_e_guarda_modificador():
+    """A realidade combina: o caso GPA é turnaround COM desinvestimento. O
+    principal é o que mais destrói a base do modelo; o outro vira modificador
+    em vez de sumir."""
+    from finlab.backend import regime
+
+    anos = [2021, 2022, 2023, 2024, 2025]
+    r = regime.classificar(_fund(
+        anos, receita=[100.0] * 5, lucro_liquido=[5, 5, 5, -20.0, -10.0],
+        descontinuadas=[0, 0, 0, -30.0, -25.0], patrimonio_liquido=[50.0] * 5,
+        capex=[-2.0] * 5, depreciacao=[-2.0] * 5))
+    assert r["codigo"] == "R3"
+    assert r["modificador"]["codigo"] == "R4"
+    # a evidência do modificador vem junto: o usuário vê as duas leituras
+    assert {e["regime"] for e in r["evidencias"]} == {"R3", "R4"}
+
+
+def test_regime_toda_evidencia_tem_data_e_o_texto_diz_a_conta():
+    """Evidência sem data é opinião. E o painel promete mostrar a origem de
+    todo número — inclusive os que ele mesmo inferiu."""
+    from finlab.backend import regime
+
+    anos = [2021, 2022, 2023, 2024, 2025]
+    r = regime.classificar(_fund(
+        anos, receita=[100.0] * 5, lucro_liquido=[5.0] * 5, patrimonio_liquido=[50.0] * 5,
+        capex=[-20.0] * 5, depreciacao=[-4.0] * 5, imobilizado=[10, 20, 30, 40, 50]))
+    assert r["evidencias"]
+    for e in r["evidencias"]:
+        assert isinstance(e["exercicio"], int) and 1990 < e["exercicio"] < 2100
+        assert e["texto"] and e["regime"] == r["codigo"]
+    # a confiança nunca promete mais do que a leitura contábil sustenta
+    assert r["confianca"] in ("baixa", "media")
+
+
+def test_regime_nao_derruba_o_painel_com_serie_torta():
+    """Série malformada é rotina em dado público. O classificador degrada
+    para 'sem classificação', nunca levanta exceção."""
+    from finlab.backend import regime
+
+    anos = [2021, 2022, 2023, 2024, 2025]
+    for torta in (
+        _fund(anos, lucro_liquido=[None, None, None, None, None]),
+        _fund(anos, lucro_liquido=["x", None, 3.0, None, 1.0], receita=[None] * 5),
+        _fund(anos, fco=[1.0] * 5, capex=[0.0] * 5, depreciacao=[0.0] * 5,
+              receita=[0.0] * 5, lucro_liquido=[0.0] * 5),
+    ):
+        r = regime.classificar(torta)
+        assert r["codigo"] in (None, "R0", "R1", "R2", "R3", "R4", "R5")

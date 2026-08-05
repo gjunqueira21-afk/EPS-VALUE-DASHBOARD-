@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import (agents, b3data, bdrs, cache, cvm, etfs, market, metrics,
-               scoring, universe, valuation)
+               regime, scoring, universe, valuation)
 from .settings import DEMO_MODE, TTL_CVM, TTL_QUOTE, WEB_DIR
 
 app = FastAPI(title="Gab's FinLab", version="2.0", docs_url="/api/docs")
@@ -43,7 +43,11 @@ async def _sem_cache_heuristico(request, call_next):
 # ---------------------------------------------------------------------------
 
 def _fundamentals(ticker: str) -> dict:
-    return cache.memoize(f"fund:v3:{ticker}", TTL_CVM, lambda: metrics.fundamentals(ticker)) or {}
+    # A versão na chave sobe SEMPRE que o formato do payload muda. O cache vive
+    # em disco com TTL de 24 h: sem o bump, quem der git pull passa um dia
+    # inteiro vendo o painel novo alimentado pelo blob antigo — que aqui
+    # significaria classificar o regime sem os campos que o classificador lê.
+    return cache.memoize(f"fund:v4:{ticker}", TTL_CVM, lambda: metrics.fundamentals(ticker)) or {}
 
 
 def _overview_rows() -> dict:
@@ -210,6 +214,7 @@ def api_company(ticker: str):
         "consenso": _consenso(brapi),
         "itr": cvm.latest_quarter(comp.cd_cvm),
         "trimestral": cvm.quarterly_series(comp.cd_cvm),
+        "regime": regime.classificar(fund),
         "source": snap.get("price_source"),
     }
 

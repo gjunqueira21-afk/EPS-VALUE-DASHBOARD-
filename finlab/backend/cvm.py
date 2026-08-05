@@ -419,9 +419,21 @@ def annual_series(cd_cvm: str, max_years: int = MAX_YEARS) -> dict:
                                    "RESULTADO OPERACIONAL"])
     res_fin = _series(dre, ["3.06"], ["RESULTADO FINANCEIRO"])
     lucro_liq = _series(dre, *CONTA_LUCRO)
+    # Operações descontinuadas: quando vem diferente de zero, a companhia
+    # segregou uma operação que está saindo — o sinal mais verificável de
+    # reestruturação de portfólio.
+    #
+    # Casada SÓ por descrição, de propósito. O código muda de plano de contas:
+    # é 3.10 na indústria e 3.12 em seguradora, e confiar no número faz o
+    # leitor pegar, na BB Seguridade, uma conta que vale bilhões e não tem
+    # nada a ver com desinvestimento. A descrição é padronizada pela CVM nos
+    # dois planos; o código, não.
+    descont = _series(dre, None, ["OPERACOES DESCONTINUADAS"])
 
     # --- Balanço ---------------------------------------------------------
     ativo = _series(bpa, ["1"], ["ATIVO TOTAL"])
+    imobilizado = _series(bpa, ["1.02.03"], ["IMOBILIZADO"])
+    intangivel = _series(bpa, ["1.02.04"], ["INTANGIVEL"])
     caixa = _series(bpa, ["1.01.01"], ["CAIXA E EQUIVALENTES"])
     aplic = _series(bpa, ["1.01.02"], ["APLICACOES FINANCEIRAS", "TITULOS E VALORES MOBILIARIOS"])
     passivo = _series(bpp, ["2"], ["PASSIVO TOTAL"])
@@ -452,7 +464,10 @@ def annual_series(cd_cvm: str, max_years: int = MAX_YEARS) -> dict:
         "depreciacao": {y: abs(v) for y, v in deprec.items()},
         "resultado_financeiro": res_fin,
         "lucro_liquido": lucro_liq,
+        "descontinuadas": descont,
         "ativo_total": ativo,
+        "imobilizado": imobilizado,
+        "intangivel": intangivel,
         "passivo_total": passivo,
         "patrimonio_liquido": pl,
         "caixa": caixa,

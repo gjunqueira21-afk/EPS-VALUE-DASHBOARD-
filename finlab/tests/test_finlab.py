@@ -1741,3 +1741,43 @@ def test_bloco_de_momento_cala_quando_nao_ha_dado():
     """Cabeçalho vazio é convite para o modelo preencher sozinho."""
     assert agents._bloco_momento({}) == []
     assert agents._bloco_momento({"fundamentals": {}}) == []
+
+
+def test_a_mesa_delibera_em_ondas_e_so_quem_fecha_le_os_outros():
+    """Quatro leituras paralelas que nunca se cruzam não são uma mesa — são
+    quatro monólogos, e sobra para o usuário achar onde elas discordam."""
+    por_chave = {a["key"]: a for a in agents.agent_list()}
+
+    # o Radar abre; o corpo da mesa vem junto; Cético e Moderador fecham nessa ordem
+    assert por_chave["contexto"]["abre_rodada"] is True
+    assert por_chave["cetico"]["ordem"] == 1
+    assert por_chave["moderador"]["ordem"] == 2
+    assert por_chave["equity"]["ordem"] == 0 and por_chave["gestor"]["ordem"] == 0
+
+    # só quem fecha recebe as falas: dar o blackboard ao corpo da mesa faria
+    # os quatro se ecoarem em vez de opinarem de forma independente
+    leem = {k for k, a in por_chave.items() if a["le_a_mesa"]}
+    assert leem == {"cetico", "moderador"}
+
+
+def test_cetico_ataca_afirmacao_e_pode_nao_ter_o_que_contestar():
+    """Cético que inventa disputa para parecer útil é pior que cético nenhum."""
+    s = agents.AGENTS["cetico"]["system"]
+    assert "NÃO produz tese própria" in s
+    assert "nada a contestar" in s
+    assert "Não invente disputa" in s
+    # a prioridade certa: número fora do contexto é o erro mais grave
+    assert "Número que não está no CONTEXTO" in s
+    assert "Conversa tratada como fato" in s
+    assert "Média histórica usada fora do regime" in s
+
+
+def test_moderador_mapeia_disputa_em_vez_de_fabricar_consenso():
+    """O parecer pede mapa de convergência/disputa NO LUGAR da síntese de
+    consenso: média de opiniões esconde exatamente o que interessa."""
+    s = agents.AGENTS["moderador"]["system"]
+    assert "NÃO é um sintetizador de consenso" in s
+    assert "CONVERGÊNCIA" in s and "DISPUTA" in s and "O QUE A MESA NÃO SABE" in s
+    # a parte acionável: o que resolveria a discordância
+    assert "o que decidiria" in s
+    assert "Nunca produza recomendação" in s

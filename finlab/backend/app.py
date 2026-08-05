@@ -613,6 +613,21 @@ def api_agent_run(body: dict = Body(...)):
             "contradiz as demonstrações acima, as demonstrações vencem.\n\n"
             f"{radar[:6000]}\n")
 
+    # Cético e Moderador leem a rodada: sem as falas, não há o que contestar
+    # nem o que mapear. Vem depois do contexto de propósito — o que os agentes
+    # disseram é matéria de discussão, não fonte.
+    falas = body.get("falas") or {}
+    if falas and agents.AGENTS[agent_key].get("le_a_mesa"):
+        blocos = []
+        for chave, texto in falas.items():
+            nome = (agents.AGENTS.get(chave) or {}).get("label", chave)
+            if texto and chave != agent_key:
+                blocos.append(f"--- {nome} ---\n{str(texto)[:4000]}")
+        if blocos:
+            user += ("\nFALAS DA MESA\n=============\n"
+                     "O que os outros agentes escreveram nesta rodada. Isto é OPINIÃO deles, "
+                     "não dado: o CONTEXTO acima é que manda.\n\n" + "\n\n".join(blocos) + "\n")
+
     if pergunta:
         user += f"\nPERGUNTA ADICIONAL DO USUÁRIO\n============================\n{pergunta}\n"
 

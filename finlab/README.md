@@ -46,6 +46,7 @@ finlab/
 │   ├── market.py       cotações e macro, com três provedores encadeados
 │   ├── metrics.py      margens, retornos, alavancagem, múltiplos
 │   ├── scoring.py      a nota de saúde financeira (0–100)
+│   ├── regime.py       em que momento a empresa está (R0–R5), com evidência
 │   ├── valuation.py    premissas iniciais: WACC, crescimento, fluxo base
 │   ├── agents.py       prompts dos analistas, proxy multi-provedor e conversa
 │   └── app.py          rotas HTTP
@@ -56,7 +57,7 @@ finlab/
 │       ├── engine.js   o motor de DCF/EPV — roda no navegador
 │       ├── charts.js   gráficos em SVG puro
 │       └── ...
-└── tests/              110 testes (pytest)
+└── tests/              118 testes (pytest)
 ```
 
 O front não carrega **nada** de CDN: fontes do sistema, gráficos em SVG escritos à mão.
@@ -145,6 +146,40 @@ do exercício fechado da DFP menos o acumulado até o 3T, e aparece **hachurado*
 para deixar claro que é derivado, não publicado. A linha de *últimos 12 meses* é a
 soma móvel de quatro trimestres consecutivos; onde falta trimestre, ela não é
 desenhada em vez de somar períodos distantes.
+
+---
+
+## Em que momento a empresa está
+
+O painel de valuation nasceu assumindo um único mundo: empresa em operação normal, cuja
+média de 3 anos de FCO − capex é uma estimativa honesta do run-rate. Esse é o **R0** — e é
+o único regime em que a premissa se sustenta. Numa empresa vendendo ativos, o caixa da
+venda não é fluxo operacional e não se perpetua; numa em expansão, o fluxo de caixa livre
+é negativo por escolha, não por fraqueza.
+
+O painel no topo da tela da empresa classifica esse momento a partir das demonstrações:
+
+| | Regime | O que quebra |
+|---|---|---|
+| **R0** | Operação normal | nada — é onde a média histórica vale |
+| **R1** | Expansão / capex pesado | a média subestima a geração madura; EV/EBITDA engana |
+| **R2** | Desalavancagem | o fluxo vai ao credor; a ponte EV→equity muda por ano |
+| **R3** | Turnaround | o histórico inteiro deixa de ser âncora |
+| **R4** | Reestruturação de portfólio | caixa de venda de ativo não se perpetua |
+| **R5** | Integração de M&A | o EBITDA carrega custo de integração; pares perdem sentido |
+
+Três regras valem mais que a precisão da classificação:
+
+- **Sem dado é "sem classificação"**, nunca R0 por omissão.
+- **Um exercício não muda regime** — salvo o fato estrutural, que é estrutural por não
+  precisar de repetição.
+- **Toda evidência traz data e número**, para você conferir a leitura.
+
+A classificação é **só contábil** por enquanto: guidance, troca de gestão, linguagem de
+call e fato relevante — metade do que define o momento de uma empresa — entram quando a
+ingestão do índice IPE da CVM existir. Por isso a confiança não passa de *média*. E o
+tratamento do fluxo-base que o painel indica é **recomendação**: o modelo continua usando
+a base que você escolheu.
 
 ---
 
@@ -277,7 +312,7 @@ São leitura crítica dos números que estão na tela.
 python -m pytest finlab/tests -q
 ```
 
-110 testes cobrindo extração contábil da CVM (incluindo as armadilhas de escala do LPA e
+118 testes cobrindo extração contábil da CVM (incluindo as armadilhas de escala do LPA e
 das units), consistência dos múltiplos, as curvas do score, as premissas de valuation,
 o proxy de LLM nos três formatos de API, a desacumulação do ITR, o motor de DCF contra
 referência independente e

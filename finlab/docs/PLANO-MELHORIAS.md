@@ -99,15 +99,23 @@ precisa de um scraper. Precisa de um leitor de CSV."
 - [ ] **2.3 Rota de busca + citação rastreável** — data visível em todo chunk
       injetado; validação de citação em código (não em prompt); abstenção quando
       a recuperação vier vazia. *(03 §5)*
-- [ ] **2.4 Classificação de regime** — taxonomia R0–R5 + modificador (05 §1):
+- [~] **2.4 Classificação de regime** — taxonomia R0–R5 + modificador (05 §1):
       operação normal, expansão/capex, desalavancagem, turnaround,
       desinvestimento, evento binário. Regra dura: mudar regime exige 2 tri
       consecutivos ou fato relevante estrutural. Sem dado → "sem classificação",
       nunca R0 por omissão. *(05 §7.3–7.4)*
-- [ ] **2.5 Painel de Momento na tela da empresa** — regime com evidências
+      *Parcial:* a leitura contábil está entregue (`backend/regime.py`), com
+      precedência, modificador, evidência datada e confiança. Falta a metade
+      documental — guidance, troca de gestão, fato relevante — que depende de
+      2.1–2.3. Por isso a confiança não passa de "média", e a regra de dois
+      trimestres consecutivos vale hoje como dois exercícios.
+- [~] **2.5 Painel de Momento na tela da empresa** — regime com evidências
       datadas, plano declarado da gestão (campo separado de fato), placar de
       execução, próximos 3 eventos, o que ouvir na call. Layout de referência no
       05 §6. *(05)*
+      *Parcial:* o painel existe no topo da tela com regime, o que ele quebra no
+      valuation, o tratamento indicado do fluxo-base e as evidências datadas.
+      Plano declarado, placar de execução e agenda dependem de 2.1–2.3.
 - [ ] **2.6 Regime → motor** — o regime escolhe o tratamento do fluxo-base
       (média 3a só em R0; 12m móveis ex-itens em R3; capex explícito em R1),
       sempre com o ajuste MOSTRADO. *(05 §5)*

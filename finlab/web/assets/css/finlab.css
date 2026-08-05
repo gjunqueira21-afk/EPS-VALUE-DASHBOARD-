@@ -706,3 +706,44 @@ textarea { font-family: var(--sans); resize: vertical; min-height: 64px; line-he
   .layout { grid-template-columns: 1fr !important; }
   a { color: inherit; text-decoration: none; }
 }
+
+/* ---------------------------------------------------- painel de momento -- */
+/* O regime é categórico: cada um ganha cor própria via --rc, em vez de uma
+   escala de bom para ruim — expansão não é "pior" que operação normal. */
+.regime-cab {
+  display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-bottom: 13px;
+}
+.regime-badge {
+  font: 700 12.5px/1 var(--mono); letter-spacing: .04em;
+  color: var(--rc, var(--brand));
+  border: 1px solid color-mix(in srgb, var(--rc, var(--brand)) 45%, transparent);
+  background: color-mix(in srgb, var(--rc, var(--brand)) 12%, transparent);
+  border-radius: 8px; padding: 7px 11px;
+}
+.regime-mod {
+  font: 500 11px/1 var(--mono); color: var(--dim);
+  border: 1px dashed var(--line2); border-radius: 8px; padding: 6px 9px;
+}
+.regime-conf {
+  font: 600 10px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase;
+  color: var(--dim2); margin-left: auto;
+}
+.regime-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 760px) { .regime-cols { grid-template-columns: 1fr; } }
+.regime-h {
+  font: 600 10.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase;
+  color: var(--dim2); margin-bottom: 6px;
+}
+.regime-txt { font-size: 12.5px; line-height: 1.62; color: var(--dim); }
+.regime-evid { margin: 0; padding: 0; list-style: none; }
+.regime-evid li {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  font-size: 12px; line-height: 1.6; color: var(--dim);
+  padding: 5px 0; border-bottom: 1px dashed var(--line);
+}
+.regime-evid li:last-child { border-bottom: 0; }
+/* O ano fica em destaque: evidência sem data é opinião. */
+.regime-ano {
+  font: 700 10.5px/1 var(--mono); color: var(--paper);
+  background: var(--line); border-radius: 5px; padding: 4px 6px; flex: none;
+}

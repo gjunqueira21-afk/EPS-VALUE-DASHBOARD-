@@ -1731,8 +1731,83 @@
     window.FLAgents.updateAssumptions(state, state.a, {});
   }
 
+  /* ================================================= painel de momento === */
+
+  // Cada regime tem cor própria porque a leitura é categórica, não uma escala
+  // de bom para ruim: R1 (expansão) não é "pior" que R0, é outro mundo.
+  const REGIME_COR = {
+    R0: '#34D399', R1: '#38BDF8', R2: '#67E8F9',
+    R3: '#F87171', R4: '#FB923C', R5: '#A78BFA'
+  };
+
+  function renderRegime() {
+    const painel = el('regimePanel');
+    const corpo = el('regimeCorpo');
+    if (!painel || !corpo) return;
+    const r = state.data.regime;
+    if (!r) { painel.hidden = true; return; }
+    painel.hidden = false;
+    corpo.innerHTML = '';
+
+    const cor = REGIME_COR[r.codigo] || 'var(--dim)';
+    const cab = h('div', { class: 'regime-cab' }, [
+      h('span', { class: 'regime-badge', style: `--rc:${cor}` },
+        r.codigo ? `${r.codigo} · ${r.rotulo}` : r.rotulo),
+      r.modificador ? h('span', { class: 'regime-mod' },
+        `com ${r.modificador.codigo} · ${r.modificador.rotulo}`) : null,
+      r.confianca ? h('span', { class: 'regime-conf' }, 'confiança ' + r.confianca) : null
+    ]);
+    corpo.appendChild(cab);
+
+    // Sem classificação não é um regime a menos: é o painel dizendo que não
+    // sabe, que é diferente de dizer que está tudo normal.
+    if (!r.codigo) {
+      corpo.appendChild(h('div', {
+        class: 'callout warn',
+        html: '<b>Não dá para classificar o momento desta empresa.</b> ' + esc(r.motivo || '')
+          + '. O painel prefere dizer isso a chutar "operação normal" — que é a única '
+          + 'hipótese em que a média histórica serve de base para o fluxo.'
+      }));
+      return;
+    }
+
+    corpo.appendChild(h('div', { class: 'regime-cols' }, [
+      h('div', {}, [
+        h('div', { class: 'regime-h' }, 'O que isso quebra no valuation'),
+        h('div', { class: 'regime-txt' }, r.quebra)
+      ]),
+      h('div', {}, [
+        h('div', { class: 'regime-h' }, 'Tratamento indicado do fluxo-base'),
+        h('div', { class: 'regime-txt' }, r.fluxo)
+      ])
+    ]));
+
+    const evid = r.evidencias || [];
+    if (evid.length) {
+      corpo.appendChild(h('div', { class: 'regime-h', style: 'margin-top:12px' },
+        'Em que isso se apoia'));
+      corpo.appendChild(h('ul', { class: 'regime-evid' }, evid.map((e) => h('li', {}, [
+        h('span', { class: 'regime-ano' }, String(e.exercicio)),
+        h('span', {}, e.texto),
+        isNum(e.valor) && Math.abs(e.valor) > 1000
+          ? h('b', { style: 'margin-left:6px' }, fmt.bigShort(e.valor, 1)) : null
+      ]))));
+    }
+
+    corpo.appendChild(h('div', {
+      class: 'note',
+      html: '<b>Leitura só contábil, por enquanto.</b> Esta classificação sai das '
+        + 'demonstrações da CVM. Guidance, troca de gestão, linguagem de call e fato '
+        + 'relevante — metade do que define o momento de uma empresa — ainda não entram, '
+        + 'e por isso a confiança não passa de <i>média</i>. O tratamento do fluxo-base '
+        + 'acima é uma recomendação: o modelo ao lado continua usando a base que você '
+        + 'escolheu.'
+    }));
+  }
+
   function renderAll() {
     renderStrip();
+    renderRegime();
     if (!state.a.aplicavel) {
       renderAlerts();
       modoSemDcf();

@@ -1,354 +1,192 @@
-# 🧠 Gab's FinLab
+# Plano de melhorias — diagnóstico dos 8 pareceres (03/08/2026)
 
-Monitor fundamentalista e **valuation interativo** de ações da B3, construído sobre as
-demonstrações da CVM. Quatro telas:
+Consolidação dos relatórios 00–07 da mesa de diagnóstico num roadmap executável.
+Cada item referencia o parecer de origem. Marcar `[x]` conforme entregar — este
+arquivo é o placar do projeto.
 
-1. **Ações** — 90 ações em 11 setores, com cotação do dia, performance de semana,
-   3 meses, 12 meses e YTD, os múltiplos que fazem sentido para cada setor e dívida
-   líquida/EBITDA. Tudo ordenado da empresa **financeiramente mais sólida para a mais frágil**.
-2. **Painel da empresa** — DCF e EPV com recálculo instantâneo ao mexer nos sliders,
-   régua de sensibilidade, matriz WACC × perpetuidade, 10 anos de demonstrações,
-   comparação com pares e uma **mesa de IA** com quatro analistas comentando os números.
-3. **ETFs** — todos os fundos de índice listados na B3 (universo dinâmico), por categoria:
-   tese (o que o fundo faz), taxa de administração, liquidez real (volume médio do boletim
-   da B3) e patrimônio do registro CVM. ETF não tem valuation — tem custo e liquidez.
-4. **BDRs** — empresas estrangeiras na B3, separadas pelos setores **GICS em inglês**, sem
-   misturar com as ações brasileiras. Clicou, abre o mesmo painel de valuation das ações:
-   fundamentos/score/DCF vêm do **Yahoo Finance** (gratuito, pelo papel de origem), na
-   moeda de reporte (USD), e o preço justo por BDR sai de `upside = equity ÷ market cap`
-   — sem depender da razão BDR/ação do programa.
+**A frase que amarra tudo (parecer 00):** *o FinLab é excelente descrevendo uma
+empresa em operação normal e não tem vocabulário para uma que não está.* O
+valuation e a mesa de IA são o mesmo projeto: dar ao painel a noção de
+**regime**, e deixar o número e o texto conversarem sobre isso.
 
-```bash
-git clone https://github.com/gjunqueira21-afk/EPS-VALUE-DASHBOARD-.git
-cd EPS-VALUE-DASHBOARD-
+**Invariantes que nenhuma fase pode quebrar:**
+- Funciona sem nenhuma chave de API; front sem CDN; gráficos em SVG próprio.
+- Chave de LLM só no navegador; nada de segredo em disco, log ou repositório.
+- Todo número e toda afirmação com origem visível (semáforo, ORIGEM DOS DADOS).
+- Premissas abertas: ajuste invisível é proibido (parecer 05 §7.6).
 
-.\finlab\iniciar.bat         # Windows (PowerShell ou cmd)
-./finlab/iniciar.sh          # Linux / macOS
+---
+
+## Fase 0 — Correções cirúrgicas (≈1 semana) · confiança primeiro
+
+Os cinco achados verificados em código no parecer 00 + quick wins de custo ≤2h.
+Pequenos diffs, efeito desproporcional.
+
+- [x] **0.1 Régua e KPI no mesmo modelo** — `curva()` roda crescimento constante
+      enquanto os KPIs usam a rampa de 5 anos; divergência chega a +40% no preço
+      justo. Reconciliar: a curva desloca a rampa real em bloco (como o slider do
+      hero já faz). *(00.1, 01 §2.1, 02 §0 — crítico)*
+- [x] **0.2 Barreira para fluxo-base ≤ 0** — o motor cresce e perpetua FCL
+      negativo sem aviso (caso MRVE3). Recusar como já recusa WACC ≤ g, com o
+      aviso ACIMA do preço justo, não dentro de aba. *(00.2, 05 §5)*
+- [x] **0.3 Ligar o trimestral (ITR)** — `cvm.py:39` fixa `_dfp`; o pipeline já
+      baixa ITR. Parametrizar o sufixo e expor a série trimestral. Maior ganho de
+      dado pelo menor diff do projeto. *(00.3, 03 §0)*
+      *Entregue em duas etapas:* a primeira parametrizou o sufixo e expôs só o
+      último trimestre (uma data no cabeçalho); a segunda entregou a série de
+      fato — trimestres desacumulados, 4T derivado da DFP e LTM na aba
+      Fundamentos. Só a segunda responde "como veio o 1T26".
+- [x] **0.4 Downloader revalida a origem** — `cvm_downloader.py:38` nunca
+      reconsulta; CVM republica retroativamente. Checar `Last-Modified`/tamanho
+      antes de pular. *(00.4)*
+- [x] **0.5 Quick wins UX** *(02 §5, todos ≤2h)*:
+      domínio do slider = domínio do gráfico; chip de cenário com estado `.on` +
+      cenário corrente no state; "desfazer" ao trocar cenário; alerta quando
+      `g_terminal > rf`; `renderValuation()` só com a aba visível;
+      `@media print`; marcar `.edited` também vindo do hero.
+
+**Critério de aceite:** ponto da régua = KPI em qualquer posição do slider ✓;
+MRVE3 exibe aviso e recusa o preço justo sem significado ✓; o leitor de ITR está
+ligado e degrada sem os parquets — o dado 1T26 aparece após rodar o pipeline
+(`cd valuation_cvm && python -m src.main`), que agora também revalida a origem.
+
+## Fase 1 — Visualização do valuation (≈2–3 semanas)
+
+Parecer 01 (dataviz) + estruturais do 02. Tudo em SVG próprio — o gargalo medido
+é DOM, não matemática (0,66 ms por DCF); **nenhuma biblioteca de gráfico**.
+
+- [x] **1.1 Heatmap consertado** — neutro em upside = 0 + iso-linha de breakeven
+      ("onde a tese vira de sinal"). *(01 §3.4 — crítico)*
+- [x] **1.2 Football field** — `hbars()` novo: preço justo por método (DCF, EPV,
+      múltiplos, consenso) num eixo comum, com o preço de tela cruzando as barras.
+      Vira o topo do painel. *(01 §3.1 — maior ganho isolado)*
+- [x] **1.3 Waterfall EV → equity → preço** — a cadeia causal do DCF hoje é
+      texto; virar ponte visual. *(01 §3.2)*
+- [x] **1.4 Tornado de sensibilidade** — ranking univariado das premissas; usa o
+      engine como está. Sidebar reordenada pelo impacto, 2ª ordem recolhida.
+      *(01 §3.3, 02 §3.4)*
+- [x] **1.5 Paleta acessível** — par semântico azul/laranja + segundo canal
+      (posição/forma); a paleta atual não sobrevive a daltonismo. *(01 §4.1)*
+      A régua e a ponte EV→equity saíram do verde/vermelho para o mesmo eixo
+      azul/laranja do heatmap — eram os lugares em que a cor era o único canal
+      separando upside de downside. Onde já existe segundo canal (o sinal de
+      menos no número da tabela), o vermelho ficou.
+- [x] **1.6 Estado que não evapora** — premissas por ticker no localStorage +
+      restaurar padrão visível; premissas serializadas na query string
+      ("🔗 link da tese"); "📋 copiar resumo". *(02 — stateless confirmado)*
+- [ ] **1.7 Cenários nomeados** — salvar, reencontrar e comparar em colunas.
+      *(02 estrutural)*
+- [ ] **1.8 DCF reverso como dot plot** vs. crescimento histórico realizado.
+      *(01 §3.5)*
+- [x] **1.9 Render barato × estrutural** separados + `ResizeObserver`. *(01 §5.1)*
+      O SVG tem viewBox fixo e `preserveAspectRatio: none`: arrastar a janela
+      de 1366 para 626px mantinha o desenho antigo esmagado. O redesenho
+      estrutural remonta a aba; o barato (`renderLive`) segue no slider.
+- Adiado de propósito: Monte Carlo / fan chart *(01 §3.8 — "não fazer agora")*;
+  modo duplo Mesa/Analista *(02 — decidir após protocolo de validação)*.
+
+**Critério de aceite:** regressão visual das 12 telas × 3 larguras verde; as
+novas visualizações respondem às perguntas-título de cada uma.
+
+## Fase 2 — Contexto de momento (≈3–4 semanas) · o coração do diagnóstico
+
+Pareceres 05 (o que o analista precisa) + 03 (como ingerir). "O FinLab não
+precisa de um scraper. Precisa de um leitor de CSV."
+
+- [ ] **2.1 Ingestão do índice IPE da CVM** — CSV oficial diário, ~1 MB/ano,
+      chaveado por `Codigo_CVM` (mesma chave do universe). Fatos relevantes,
+      comunicados, prévia, apresentações — com `Link_Download` direto ao PDF.
+      *(03 §0 — verificado com download)*
+- [ ] **2.2 Fetch + parsing + índice local** — baixar PDFs (Crawl-Delay 10s),
+      parsear (Docling; **não** pymupdf4llm — licença), chunking com metadado
+      temporal obrigatório, SQLite FTS5/BM25. Sem banco vetorial na fase 1 do
+      RAG; embeddings só depois, decididos por golden set. *(03 §3–4)*
+- [ ] **2.3 Rota de busca + citação rastreável** — data visível em todo chunk
+      injetado; validação de citação em código (não em prompt); abstenção quando
+      a recuperação vier vazia. *(03 §5)*
+- [~] **2.4 Classificação de regime** — taxonomia R0–R5 + modificador (05 §1):
+      operação normal, expansão/capex, desalavancagem, turnaround,
+      desinvestimento, evento binário. Regra dura: mudar regime exige 2 tri
+      consecutivos ou fato relevante estrutural. Sem dado → "sem classificação",
+      nunca R0 por omissão. *(05 §7.3–7.4)*
+      *Parcial:* a leitura contábil está entregue (`backend/regime.py`), com
+      precedência, modificador, evidência datada e confiança. Falta a metade
+      documental — guidance, troca de gestão, fato relevante — que depende de
+      2.1–2.3. Por isso a confiança não passa de "média", e a regra de dois
+      trimestres consecutivos vale hoje como dois exercícios.
+- [~] **2.5 Painel de Momento na tela da empresa** — regime com evidências
+      datadas, plano declarado da gestão (campo separado de fato), placar de
+      execução, próximos 3 eventos, o que ouvir na call. Layout de referência no
+      05 §6. *(05)*
+      *Parcial:* o painel existe no topo da tela com regime, o que ele quebra no
+      valuation, o tratamento indicado do fluxo-base e as evidências datadas.
+      Plano declarado, placar de execução e agenda dependem de 2.1–2.3.
+- [~] **2.6 Regime → motor** — o regime escolhe o tratamento do fluxo-base
+      (média 3a só em R0; 12m móveis ex-itens em R3; capex explícito em R1),
+      sempre com o ajuste MOSTRADO. *(05 §5)*
+      *Parcial:* o regime já escolhe a base e o painel mostra de quanto para
+      quanto, a conta e o porquê, com um clique para voltar. R1 ganhou base
+      própria (ativo maduro = FCO − depreciação); R2/R3/R4 passam ao exercício
+      mais recente. Falta o que exige dado que o painel não tem: soma das
+      partes em R4 (valor de realização) e a ponte EV→equity recalculada por
+      ano em R2. O "ex-itens marcados" de R3 depende de 12m móveis do core,
+      que o ITR não segrega.
+- **Não fazer:** sentimento numérico de call; narrativa da gestão misturada com
+  fato; sumarizar apresentação e Q&A juntos. *(05 §7)*
+
+**Critério de aceite:** golden set de perguntas estilo MRVE3 respondido com
+citação datada; a mesa cita a venda da Resia com data e link.
+
+## Fase 3 — Mesa de IA 2.0 (≈3–4 semanas)
+
+Parecer 04. Depende da Fase 2 expor `buscar_dossie_momento(ticker)`.
+
+- [ ] **3.1 Rodada paralela** — `Promise.allSettled` + semáforo por provedor no
+      lugar do `for await`; latência vira máximo, não soma. *(00.5, 04 F1)*
+- [ ] **3.2 Prompt com cache de prefixo** — contexto estável primeiro, pergunta
+      por último; custo por rodada medido e mostrado. *(04 F1)*
+- [ ] **3.3 Dossiê de momento no contexto** — camada L3 dos agentes + banner de
+      cobertura ("a mesa enxerga até dd/mm"). *(04 F1)*
+- [ ] **3.4 Deliberação** — schema de afirmação tipada (fato com doc_id ×
+      interpretação), blackboard da rodada, agente **Cético** contestando por ID,
+      **Moderador** produzindo mapa de convergência/disputa no lugar da síntese
+      de consenso. *(04 F2)*
+- [ ] **3.5 Eval em CI** — golden set + promptfoo; teste de abstenção
+      bloqueante (a mesa DEVE dizer "não tenho dado" quando não tem). *(03 §6, 04)*
+- [ ] **3.6 Streaming da fala final** + traço opt-in com trace_id. *(04)*
+
+**Critério de aceite:** rodada completa < timeout de uma chamada; mapa de
+disputa aparece quando os agentes divergem; toda afirmação de fato resolve para
+documento.
+
+## Fase 4 — Call, memória e ação (≈4–6 semanas) · última de propósito
+
+- [ ] **4.1 ASR das calls** — transcrição + diarização + segmentação do Q&A por
+      par pergunta→resposta. Maior custo operacional do projeto → última fase.
+      Transcrições ficam locais, nunca no repositório. *(03 §3.4, riscos)*
+- [ ] **4.2 Placar de promessas** — promessas da gestão versionadas e cobradas
+      tri a tri; memória por ticker. *(05 §3.4, 04 F3)*
+- [ ] **4.3 Reconciliador** — delta de premissa proposto pela mesa aplicável com
+      um clique via `recalcular_valuation` no cliente, com gates humanos. *(04 F3)*
+
+## Transversal
+
+- [ ] **V.1 Protocolo de validação com usuário (1 semana)** — o do parecer 02
+      §6: hipóteses de UX viram evidência antes das mudanças estruturais grandes
+      (football field como substituto da régua, modo duplo).
+- [ ] **V.2 Testes como sempre** — unidade + E2E Chromium + regressão 12 telas ×
+      3 larguras a cada fase; provedores simulados nos 3 formatos.
+- **Vetos de ferramenta (parecer 07):** OpenBB (AGPL + pina fastapi exato + zero
+  providers BR), brFinance (sem licença desde 2023), pymupdf4llm (dependência
+  não-comercial). Gráficos: continuar em `charts.js` próprio.
+
+## Ordem e dependências
+
+```
+Fase 0 ──► Fase 1 (visual)          ── independentes entre si ──►  V.1 valida os grandes
+   └─────► Fase 2 (contexto) ──► Fase 3 (mesa) ──► Fase 4 (call/memória)
+                 └── 0.3 (ITR) é pré-requisito da derivada trimestral do regime
 ```
 
-Abre em <http://127.0.0.1:8777>. **Funciona sem nenhuma chave de API.**
-Requer Python 3.10+ no PATH — no Windows, marque *"Add python.exe to PATH"* na
-instalação, senão o script avisa e para.
-
-No Windows, rode `finlab\criar_atalho.bat` uma vez para ganhar um atalho
-**Gab's FinLab** na área de trabalho, com o ícone do cérebro — daí em diante o
-painel abre com dois cliques.
-
----
-
-## Como funciona
-
-```
-finlab/
-├── backend/            FastAPI: coleta, normalização contábil, score, proxy de IA
-│   ├── universe.py     as 90 ações, seus setores e o CD_CVM de cada uma
-│   ├── cvm.py          lê os parquets do pipeline CVM: séries anuais e trimestrais
-│   ├── market.py       cotações e macro, com três provedores encadeados
-│   ├── metrics.py      margens, retornos, alavancagem, múltiplos
-│   ├── scoring.py      a nota de saúde financeira (0–100)
-│   ├── regime.py       em que momento a empresa está (R0–R5), com evidência
-│   ├── valuation.py    premissas iniciais: WACC, crescimento, fluxo base
-│   ├── agents.py       prompts dos analistas, proxy multi-provedor e conversa
-│   └── app.py          rotas HTTP
-├── web/                front-end sem dependências externas
-│   ├── index.html      tela principal
-│   ├── empresa.html    painel de valuation
-│   └── assets/js/
-│       ├── engine.js   o motor de DCF/EPV — roda no navegador
-│       ├── charts.js   gráficos em SVG puro
-│       └── ...
-└── tests/              128 testes (pytest)
-```
-
-O front não carrega **nada** de CDN: fontes do sistema, gráficos em SVG escritos à mão.
-O painel abre igual com ou sem internet.
-
-O cálculo de valuation acontece no navegador, não no servidor. É por isso que arrastar
-um slider recalcula os 5 anos de projeção, a perpetuidade, a régua, a matriz de
-sensibilidade e os KPIs no mesmo frame.
-
----
-
-## De onde vêm os dados
-
-| Camada | Fonte | Precisa de chave? |
-|---|---|---|
-| Demonstrações anuais (DFP) | Parquets do pipeline em `valuation_cvm/` | não |
-| Demonstrações trimestrais (ITR) | Parquets do pipeline em `valuation_cvm/` | não |
-| Ações emitidas | Capital social da CVM; se faltar, deduzido do LPA publicado | não |
-| Cotação e performance (ações) | BRAPI → Yahoo Finance → PulseFlat, nessa ordem | opcional |
-| Cotação, volume e liquidez de ETFs/BDRs | Boletim diário da B3 (BDI) via PulseFlat | não |
-| Lista de ETFs e patrimônio | Lista B3 + registro de fundos CVM via PulseFlat | não |
-| Tese e taxa de adm. dos ETFs | Cadastro local (`etfs.py` · `ETF_META`) — não há fonte por API | não |
-| Fundamentos de BDRs | Yahoo Finance pelo papel de origem (fallback: módulos BRAPI) | não |
-| Selic, CDI, IPCA, dólar, Ibovespa | BCB via PulseFlat | não |
-| Curva de juros (NTN-B / NTN-F) | ANBIMA via PulseFlat | não |
-| Consenso de analistas e beta | BRAPI | sim |
-
-**Sem token BRAPI** o painel usa o fechamento D-1 do [PulseFlat](https://github.com/PulseDataLabs/PulseFlat)
-— CSVs públicos servidos pelo GitHub, que costumam passar até em rede corporativa restrita.
-Com token, você ganha preço intradiário, dividend yield, beta e preço-alvo de analistas:
-basta preencher `BRAPI_TOKEN` em `finlab/.env` (veja `.env.example`).
-
-### O semáforo das fontes
-
-No topo de toda tela de lista há uma bolinha por provedor:
-
-| | O que significa |
-|---|---|
-| 🟢 verde | respondeu ao teste de conexão agora |
-| 🟠 âmbar | está configurado, mas não respondeu — rede, proxy ou provedor fora do ar |
-| ⚪ apagado (tracejado) | falta o token |
-
-A pastilha destacada é a fonte **em uso** no momento. Passe o mouse para ver o detalhe:
-qual token foi lido (mascarado — nunca o token inteiro) e, quando falta, **o caminho
-absoluto exato** onde o painel procurou o `.env`.
-
-O `.env` é lido **uma vez, quando o servidor sobe**: depois de preencher o token, reinicie
-o painel. O estado das fontes, por outro lado, nunca é servido do cache — assim que você
-reinicia com o token, o semáforo já mostra a verdade.
-
-Todo fechamento que o painel vê é gravado em `finlab/data/history.csv`. As janelas de
-3 meses, 12 meses e YTD aparecem conforme o histórico local se aprofunda.
-
-### Atualizar a base da CVM
-
-O FinLab lê os parquets gerados pelo pipeline que já existia neste repositório.
-No Windows, chamando o Python do `.venv` direto pelo caminho (evita a política de
-execução do PowerShell, que costuma barrar o `Activate.ps1`):
-
-```powershell
-# na pasta do repositório
-.\.venv\Scripts\python.exe -m pip install tqdm
-cd valuation_cvm
-..\.venv\Scripts\python.exe -m src.main --start-year 2016 --end-year 2026
-```
-
-Duas pegadinhas:
-
-* **`tqdm` não vem no `.venv`.** O `iniciar.bat` instala só `finlab/requirements.txt`,
-  que é o necessário para o painel; o downloader do pipeline importa `tqdm`. Sem ele,
-  a execução morre num `ModuleNotFoundError` antes de baixar qualquer coisa.
-* **O `--end-year` importa.** O padrão é 2025, e sem passar o ano corrente o pipeline
-  não busca nem a DFP nem o ITR do ano — a aba *Fundamentos* fica só com o anual.
-
-A mesma execução gera `*_dfp.parquet` (anual) e `*_itr.parquet` (trimestral). Baixar
-uma década inteira dos dois tipos leva bastante tempo e disco; para só acender o
-trimestral, `--start-year 2023` já cobre os 12 trimestres que o painel mostra — mas
-encurta o histórico anual dos gráficos e dos múltiplos.
-
-### Como o trimestral é montado
-
-A CVM publica a DRE do ITR **acumulada no exercício**: o 2T chega como jan–jun e o
-3T como jan–set. O painel desfaz o acúmulo por diferença, para que as barras de
-cada trimestre sejam comparáveis entre si. O 4º trimestre não existe no ITR — sai
-do exercício fechado da DFP menos o acumulado até o 3T, e aparece **hachurado**
-para deixar claro que é derivado, não publicado. A linha de *últimos 12 meses* é a
-soma móvel de quatro trimestres consecutivos; onde falta trimestre, ela não é
-desenhada em vez de somar períodos distantes.
-
-A tabela de demonstrações ganha uma coluna com o **ano em curso**, separada das
-colunas de exercício fechado. Nas linhas de resultado e de caixa ela soma os 12
-meses encerrados no último ITR; em dívida líquida e patrimônio líquido, que são
-**saldo e não fluxo**, vale o balanço daquela data — somar quatro trimestres de
-patrimônio líquido seria absurdo.
-
----
-
-## Em que momento a empresa está
-
-O painel de valuation nasceu assumindo um único mundo: empresa em operação normal, cuja
-média de 3 anos de FCO − capex é uma estimativa honesta do run-rate. Esse é o **R0** — e é
-o único regime em que a premissa se sustenta. Numa empresa vendendo ativos, o caixa da
-venda não é fluxo operacional e não se perpetua; numa em expansão, o fluxo de caixa livre
-é negativo por escolha, não por fraqueza.
-
-O painel no topo da tela da empresa classifica esse momento a partir das demonstrações:
-
-| | Regime | O que quebra |
-|---|---|---|
-| **R0** | Operação normal | nada — é onde a média histórica vale |
-| **R1** | Expansão / capex pesado | a média subestima a geração madura; EV/EBITDA engana |
-| **R2** | Desalavancagem | o fluxo vai ao credor; a ponte EV→equity muda por ano |
-| **R3** | Turnaround | o histórico inteiro deixa de ser âncora |
-| **R4** | Reestruturação de portfólio | caixa de venda de ativo não se perpetua |
-| **R5** | Integração de M&A | o EBITDA carrega custo de integração; pares perdem sentido |
-
-Três regras valem mais que a precisão da classificação:
-
-- **Sem dado é "sem classificação"**, nunca R0 por omissão.
-- **Um exercício não muda regime** — salvo o fato estrutural, que é estrutural por não
-  precisar de repetição.
-- **Toda evidência traz data e número**, para você conferir a leitura.
-
-O regime também **escolhe o fluxo-base** do modelo, e o painel mostra a troca:
-de quanto para quanto, a conta que produziu o número, o porquê, e um botão para
-voltar à média de 3 anos. Em expansão a base vira o fluxo do ativo maduro (caixa
-das operações menos depreciação, o proxy de capex de manutenção); em
-desalavancagem, turnaround e reestruturação, o exercício mais recente. A troca
-não acontece quando a base alternativa é irrelevante perto do EBITDA — trocar
-um fluxo negativo por outro que é quase zero só faz o preço justo virar função
-da dívida.
-
-A classificação é **só contábil** por enquanto: guidance, troca de gestão, linguagem de
-call e fato relevante — metade do que define o momento de uma empresa — entram quando a
-ingestão do índice IPE da CVM existir. Por isso a confiança não passa de *média*. E o
-tratamento do fluxo-base que o painel indica é **recomendação**: o modelo continua usando
-a base que você escolheu.
-
----
-
-## A nota de saúde financeira
-
-Nota de 0 a 100, **explicável linha a linha** na aba *Nota de saúde*. Cada indicador vira
-uma nota por interpolação entre âncoras de mercado; os pilares entram com peso fixo:
-
-| Pilar | Peso | Indicadores |
-|---|---|---|
-| Rentabilidade | 26% | ROE, ROIC, margem líquida |
-| Alavancagem | 24% | Dív.líq/EBITDA, Dív.líq/PL |
-| Margem operacional | 14% | Margem EBITDA |
-| Crescimento | 16% | CAGR 3a de receita e de EBITDA |
-| Geração de caixa | 14% | FCO/EBITDA, margem de FCL |
-| Consistência | 6% | anos com lucro nos últimos 5 |
-
-**Bancos e seguradoras usam outro conjunto** (rentabilidade 38%, margem 18%, crescimento
-20%, solidez 16%, consistência 8%): dívida líquida/EBITDA e conversão de caixa não têm
-significado num balanço de instituição financeira, e por isso aparecem como `n/a`.
-
-Indicador ausente **não pune nem premia**: o peso é redistribuído dentro do pilar e a
-cobertura de dados cai. Empresa com nota parcial ganha o marcador ◐.
-
----
-
-## O modelo de valuation
-
-- **DCF** de fluxo de caixa livre da firma. Fluxos anuais, desconto no fim do período,
-  perpetuidade por Gordon exigindo WACC > g — quando isso não vale, o painel devolve
-  um aviso, não um número.
-- **Fluxo base**: FCO − capex, direto do DFC da CVM. O padrão é a média de 3 anos,
-  para suavizar capital de giro e capex lumpy; dá para trocar pelo último exercício
-  ou normalizar manualmente.
-- **Custo de capital**: `Ke = Rf + β×ERP + prêmio adicional`, `Kd = CDI + spread`,
-  `WACC = We·Ke + Wd·Kd·(1−t)`. O Rf padrão é o **prefixado ~10 anos da ANBIMA** — um
-  modelo com perpetuidade precisa de juro longo, não da Selic overnight, que é cíclica.
-  Um clique troca para Selic à vista ou NTN-B + IPCA.
-  O risco-país já está embutido no juro brasileiro, por isso **não** somamos prêmio-país.
-- **EPV (Greenwald)**: EBIT normalizado de 3 anos, depois de imposto, capitalizado ao
-  WACC, sem crescimento. É a leitura de "quanto vale o poder de lucro atual".
-- **DCF reverso**: o crescimento que o preço de hoje embute.
-- **Units** (BPAC11, KLBN11, SANB11, TAEE11, ENGI11, IGTI11) têm o número de ações
-  dividido pela composição da unit — sem isso, valor de mercado e todo múltiplo derivado
-  sairiam inflados.
-
-O motor JavaScript é validado por teste contra uma implementação independente em Python,
-casa decimal a casa decimal (`finlab/tests/test_engine.py`).
-
----
-
-## A mesa de IA
-
-Quatro agentes leem **exatamente o que está na tela** — fundamentos da CVM, múltiplos,
-macro do dia, suas premissas e o resultado do modelo:
-
-| Agente | O que entrega |
-|---|---|
-| 📊 Analista de Ações BR | tese, três pontos fortes, três riscos, o que observar |
-| 🌎 Analista Macro | como Selic, IPCA e câmbio deveriam mover as premissas |
-| 🎯 Gestor | veredito, tamanho de posição, gatilhos, o que invalida a tese |
-| 🧪 Engenheiro de Premissas | devolve um JSON de premissas que você aplica com um clique |
-
-A configuração fica em *⚙ A mesa de IA*: **um cartão por agente**, com o nome dele, o
-provedor (OpenRouter, OpenAI, Anthropic, Google, Groq ou DeepSeek), a chave e o modelo.
-Dá para pôr um modelo forte no gestor e um barato no macro — ou preencher um agente só e
-clicar em **⇊ usar em todos**.
-
-**Uma chave só basta.** Agente sem chave própria **herda a configuração do primeiro
-configurado**, e o cartão diz isso na hora ("sem chave própria — vai usar a configuração
-de X"). Cada fala na conversa e cada card na aba *Mesa de IA* mostram o modelo que aquele
-agente está usando, então nunca fica a dúvida de quem usa o quê.
-
-Ao escolher o provedor e colar a chave, clique em **↻ Buscar meus modelos**: o painel
-consulta a API do provedor e lista os modelos que *aquela chave* pode usar, já sem
-embeddings, transcrição e afins. Se o provedor estiver fora do ar ou a chave for
-recusada, cai numa lista de sugestões e diz o motivo — e sempre há a opção
-*✎ outro (digitar)* para colar um id de modelo à mão.
-
-### Conversar com a mesa
-
-O botão do cérebro no canto inferior direito (ou `Ctrl+K`) abre uma caixa de conversa
-que acompanha você em todas as telas. Ela recebe o mesmo contexto dos agentes: o ativo
-aberto, os fundamentos, o macro do dia e — importante — **as premissas como estão nos
-sliders naquele instante**. Mexa no crescimento e pergunte "isso faz sentido?" que a
-pergunta chega junto com o número novo.
-
-**O que a mesa enxerga** depende de onde você está. No painel de uma empresa, ela
-recebe os fundamentos, o macro e as premissas dos sliders. Nas telas de lista —
-Ações, ETFs, BDRs — ela recebe **a tabela inteira que está na tela**: as 90 ações com
-nota e múltiplos, os ETFs com taxa e liquidez, os BDRs por setor. É o que permite
-perguntar sobre o conjunto: *"se fosse montar uma carteira com as melhores ações,
-quais seriam?"*, *"qual ETF de S&P 500 tem a menor taxa?"*, *"quais BDRs de tecnologia
-pagam dividendo?"*.
-
-**Quem responde** se escolhe no rodapé da caixa:
-
-- **🧠 Mesa inteira** (padrão) — os quatro agentes respondem em sequência, cada um pela
-  sua especialidade e com o crachá do nome, e as falas aparecem uma a uma conforme
-  chegam. No fim, uma **Conclusão da mesa** sintetiza: onde eles convergem, onde
-  discordam e o que observar. São 5 chamadas ao provedor por pergunta — é a rodada
-  completa, e custa como tal.
-- **Um agente só** — escolha no seletor, ou simplesmente comece a frase com o nome dele
-  (*"gestor, vale a posição?"*) que a pergunta é desviada mesmo com a mesa selecionada.
-
-Os agentes já vêm batizados pela especialidade — *Agente Analista BR*, *Agente Macro*,
-*Agente Gestor*, *Agente Premissas* — e você renomeia qualquer um no cartão dele em
-*⚙ A mesa de IA*. Campo em branco volta ao padrão. O nome vale na conversa e na aba
-*Mesa de IA*.
-
-A conversa fica no `sessionStorage` do navegador (sobrevive à navegação entre telas,
-some ao fechar a aba) e o 🗑 do cabeçalho limpa tudo. `Enter` envia, `Shift+Enter`
-quebra linha, `Esc` fecha.
-
-Cada agente usa a chave e o modelo do próprio cartão; sem chave própria, herda a do
-primeiro configurado — então uma chave só já move a mesa inteira.
-
-**Sobre as chaves:** ficam no `localStorage` do seu navegador e são enviadas ao servidor
-local só no instante da chamada, que apenas repassa ao provedor (isso evita CORS e as
-diferenças de formato entre APIs). Nada é gravado em disco, em log ou no repositório.
-
-Os agentes não têm acesso a resultado trimestral, guidance, fato relevante nem notícia.
-São leitura crítica dos números que estão na tela.
-
----
-
-## Testes
-
-```bash
-python -m pytest finlab/tests -q
-```
-
-128 testes cobrindo extração contábil da CVM (incluindo as armadilhas de escala do LPA e
-das units), consistência dos múltiplos, as curvas do score, as premissas de valuation,
-o proxy de LLM nos três formatos de API, a desacumulação do ITR, o motor de DCF contra
-referência independente e
-a geometria dos gráficos em SVG (rodados no navegador, pulados se não houver Chromium).
-
----
-
-## Limites conhecidos
-
-- Os múltiplos usam o **último exercício fechado** da CVM, não 12 meses móveis. O ano-base
-  aparece ao lado de cada empresa. Isso torna P/L e EV/EBITDA mais defasados — e mais
-  conservadores — que os de sites de mercado.
-- EBITDA é **contábil** (EBIT + D&A do DFC), não "EBITDA ajustado" de release. Para
-  empresas com impairment relevante os dois números divergem bastante.
-- Sem token BRAPI, o valor de mercado é preço × ações da CVM. Se a empresa fez
-  grupamento/desdobramento recente e o capital social ainda não refletiu, o múltiplo sai
-  distorcido — a origem do número aparece no rodapé do card de cotação.
-- DCF não se aplica a bancos e seguradoras. O painel diz isso explicitamente e mantém
-  fundamentos, score e múltiplos.
-
----
-
-**Isto não é recomendação de investimento.** É uma ferramenta de análise sobre dados
-públicos, com todas as premissas abertas e editáveis.
+Esforço somado dos pareceres: ~12–16 semanas de trabalho corrido. Fases 0+1
+mudam a experiência já; a Fase 2 muda o que o painel É.

@@ -385,6 +385,18 @@
     const clip = el('clipPath', { id: clipId });
     clip.appendChild(el('rect', { x: pad.l - 2, y: pad.t - 4, width: W + 4, height: H + 8 }));
     defs.appendChild(clip);
+    // Hachura para barra derivada (não publicada como tal na origem): mantém a
+    // cor da série, mas diz na textura que aquele número foi calculado aqui.
+    const hachura = o.hachura || [];
+    const hachId = 'hach-' + Math.random().toString(36).slice(2, 9);
+    if (hachura.some(Boolean)) {
+      const pat = el('pattern', {
+        id: hachId, width: 6, height: 6,
+        patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)'
+      });
+      pat.appendChild(el('rect', { width: 2.2, height: 6, fill: '#0A1120', opacity: 0.5 }));
+      defs.appendChild(pat);
+    }
     svg.appendChild(defs);
     const plot = el('g', { 'clip-path': `url(#${clipId})` });
 
@@ -409,6 +421,10 @@
     const groupW = slot * 0.62;
     const barW = groupW / series.length;
     const tip = ensureTip(container);
+    // Doze trimestres num painel de celular sobrepõem os rótulos: rareia como
+    // no eixo de valores, mantendo as barras todas desenhadas.
+    // (a largura passada faz o espaçamento interno bater com o slot da barra)
+    const mostraRotulo = ticksVisiveis(labels, slot * Math.max(1, labels.length - 1));
 
     labels.forEach((lab, i) => {
       const cx = pad.l + slot * i + slot / 2;
@@ -437,8 +453,16 @@
           tip.classList.remove('on');
         });
         plot.appendChild(rect);
+        if (hachura[i]) {
+          plot.appendChild(el('rect', {
+            x: x + 1, y: Math.min(y0, y1), width: Math.max(1, barW - 2),
+            height: Math.max(1, Math.abs(y1 - y0)), fill: `url(#${hachId})`,
+            rx: 2, 'pointer-events': 'none'
+          }));
+        }
       });
 
+      if (!mostraRotulo.has(i)) return;
       const lb = el('text', {
         x: cx, y: height - 8, fill: COLORS.text, 'font-size': 10,
         'text-anchor': 'middle', 'font-family': 'ui-monospace, monospace'

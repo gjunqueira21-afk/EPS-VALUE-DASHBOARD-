@@ -209,6 +209,7 @@ def api_company(ticker: str):
         "price_series": [{"d": d, "p": p} for d, p in series[-500:]],
         "consenso": _consenso(brapi),
         "itr": cvm.latest_quarter(comp.cd_cvm),
+        "trimestral": cvm.quarterly_series(comp.cd_cvm),
         "source": snap.get("price_source"),
     }
 

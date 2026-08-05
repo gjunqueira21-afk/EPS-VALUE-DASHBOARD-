@@ -2130,14 +2130,41 @@
       ]))));
     }
 
+    // O que a companhia COMUNICOU, ao lado do que ela contabilizou. São dois
+    // campos diferentes de propósito: acima ficam as evidências que o painel
+    // calculou; aqui, os documentos que ela publicou, com data e link para
+    // conferir na fonte. O painel não lê o conteúdo — e diz isso.
+    const docs = ((state.data.ipe || {}).docs) || [];
+    if (docs.length) {
+      corpo.appendChild(h('div', { class: 'regime-h', style: 'margin-top:14px' },
+        'O que a empresa comunicou à CVM'));
+      corpo.appendChild(h('ul', { class: 'regime-evid ipe-lista' }, docs.map((d) => h('li', {}, [
+        h('span', { class: 'regime-ano' }, d.data ? fmt.date(d.data) : '—'),
+        h('span', { class: 'ipe-cat' }, d.categoria || '—'),
+        d.link
+          ? h('a', { class: 'ipe-assunto', href: d.link, target: '_blank', rel: 'noopener' },
+              d.assunto || '(sem assunto declarado)')
+          : h('span', { class: 'ipe-assunto' }, d.assunto || '(sem assunto declarado)')
+      ]))));
+      corpo.appendChild(h('div', {
+        class: 'note',
+        html: '<b>São os títulos, não o conteúdo.</b> O painel lê o índice de documentos da '
+          + 'CVM — categoria, data e assunto — e cada linha leva ao PDF original. Ele não abre '
+          + 'os documentos, então nada aqui foi interpretado: se o assunto importa para a sua '
+          + 'tese, o link é o caminho.'
+      }));
+    }
+
     corpo.appendChild(h('div', {
       class: 'note',
-      html: '<b>Leitura só contábil, por enquanto.</b> Esta classificação sai das '
-        + 'demonstrações da CVM. Guidance, troca de gestão, linguagem de call e fato '
-        + 'relevante — metade do que define o momento de uma empresa — ainda não entram, '
-        + 'e por isso a confiança não passa de <i>média</i>. O tratamento do fluxo-base '
-        + 'acima é uma recomendação: o modelo ao lado continua usando a base que você '
-        + 'escolheu.'
+      html: '<b>A classificação acima é só contábil.</b> Ela sai das demonstrações da CVM. '
+        + (docs.length
+          ? 'Os documentos ao lado entram como <i>títulos</i> — o painel sabe que o assunto '
+            + 'existe e quando foi publicado, mas não lê o que está escrito dentro. '
+          : '')
+        + 'Guidance, troca de gestão e linguagem de call não entram de jeito nenhum, e por '
+        + 'isso a confiança não passa de <i>média</i>. O tratamento do fluxo-base acima é '
+        + 'uma recomendação: o modelo ao lado continua usando a base que você escolheu.'
     }));
   }
 

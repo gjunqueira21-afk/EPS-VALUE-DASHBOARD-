@@ -20,10 +20,17 @@ from functools import lru_cache
 from typing import Optional
 
 import pandas as pd
+import pyarrow.parquet as pq
 
 from .settings import CVM_PROCESSED_DIR
 
 STATEMENTS = ("dre", "bpa", "bpp", "dfc_mi")
+
+# O que de fato é lido daqui. Tudo o mais que a CVM publica fica no parquet e
+# não sobe para a memória — ver a nota em _frames.
+COLUNAS_LIDAS = ("CD_CVM", "DENOM_CIA", "CNPJ_CIA", "CD_CONTA", "DS_CONTA",
+                 "VL_CONTA_AJUSTADO", "ANO_REFER", "DT_FIM_EXERC",
+                 "DT_INI_EXERC", "ORDEM_EXERC")
 MAX_YEARS = 10
 MAX_TRIMESTRES = 12
 
@@ -54,7 +61,16 @@ def _frames(tipo: str = "dfp") -> dict[str, pd.DataFrame]:
         if not fp.exists():
             out[st] = pd.DataFrame()
             continue
-        df = pd.read_parquet(fp)
+        # Só as colunas que este módulo lê. O parquet do pipeline guarda tudo
+        # que a CVM manda (versão, moeda, escala, ordem, grupo…), e o ITR de
+        # uma década é grande o bastante para a diferença aparecer no tempo de
+        # abrir a primeira empresa. Colunas ausentes são ignoradas: o formato
+        # do parquet mudou entre versões do pipeline.
+        try:
+            disponiveis = set(pq.ParquetFile(fp).schema.names)
+            df = pd.read_parquet(fp, columns=[c for c in COLUNAS_LIDAS if c in disponiveis])
+        except Exception:
+            df = pd.read_parquet(fp)
         df["CD_CVM"] = df["CD_CVM"].astype(str).str.strip()
         df["CD_CONTA"] = df["CD_CONTA"].astype(str).str.strip()
         df["DS_NORM"] = df["DS_CONTA"].map(_norm)

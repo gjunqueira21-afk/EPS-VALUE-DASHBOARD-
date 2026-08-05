@@ -1244,6 +1244,63 @@
       return p;
     };
 
+    // O trimestral vem antes do anual: é o dado mais recente, e a pergunta
+    // "como veio o último trimestre" chega antes de "como foram os anos".
+    const tri = (state.data.trimestral || {}).pontos || [];
+    if (tri.length >= 2) {
+      const rot = tri.map((p) => p.rotulo);
+      const derivados = tri.filter((p) => p.derivado).length;
+      painel('Resultado trimestral', 'trimestres isolados, desacumulados do ITR',
+        'chartTri', 250, [['#3B82F6', 'Receita'], ['#34D399', 'Lucro líquido']]);
+      host.appendChild(h('div', {
+        class: 'note',
+        html: '<b>Como este gráfico é montado.</b> A CVM publica a DRE do ITR '
+          + '<b>acumulada no exercício</b> — o 2T chega como jan–jun, o 3T como jan–set. '
+          + 'Aqui cada trimestre é isolado por diferença, para que as barras sejam '
+          + 'comparáveis entre si.'
+          + (derivados ? ' O ITR não publica o 4º trimestre: ele sai do exercício '
+            + 'fechado da DFP menos o acumulado até o 3T, e aparece hachurado.' : '')
+      }));
+      // O LTM só existe a partir do 4º trimestre da série. Plotar o eixo
+      // inteiro deixaria três quartos do painel vazios: o gráfico começa
+      // onde o dado começa.
+      const ltm = tri.filter((p) => isNum(p.receita_ltm) || isNum(p.lucro_liquido_ltm));
+      const rotLtm = ltm.map((p) => p.rotulo);
+      if (ltm.length >= 2) {
+        painel('Últimos 12 meses', 'soma móvel de quatro trimestres — a leitura que se '
+          + 'compara com o exercício anual', 'chartTriLtm', 220,
+          [['#3B82F6', 'Receita LTM'], ['#34D399', 'Lucro líquido LTM']]);
+      }
+      setTimeout(() => {
+        C.bars(el('chartTri'), {
+          height: 250, labels: rot,
+          hachura: tri.map((p) => !!p.derivado),
+          series: [
+            { name: 'Receita', color: '#3B82F6', values: tri.map((p) => p.receita) },
+            { name: 'Lucro líquido', color: '#34D399', values: tri.map((p) => p.lucro_liquido) }
+          ],
+          yFormat: (v) => fmt.bigShort(v, 0)
+        });
+        if (el('chartTriLtm')) {
+          C.line(el('chartTriLtm'), {
+            height: 220,
+            xMin: 0, xMax: Math.max(1, ltm.length - 1),
+            xTickValues: ltm.map((_, i) => i),
+            xFormat: (v) => rotLtm[Math.round(v)] || '',
+            yFormat: (v) => fmt.bigShort(v, 0),
+            series: [
+              { name: 'Receita LTM', color: '#3B82F6', width: 2.4,
+                points: ltm.map((p, i) => ({ x: i, y: p.receita_ltm })) },
+              { name: 'Lucro líquido LTM', color: '#34D399', width: 2.4,
+                points: ltm.map((p, i) => ({ x: i, y: p.lucro_liquido_ltm })) }
+            ],
+            tipFormat: (p) => `<span class="k">${rotLtm[Math.round(p.x)]}</span> · `
+              + fmt.bigShort(p.y, 1)
+          });
+        }
+      }, 0);
+    }
+
     painel('Receita e resultado', 'exercícios anuais da CVM', 'chartRec', 250,
       [['#3B82F6', 'Receita'], ['#34D399', 'Lucro líquido']]);
     painel(f.financial ? 'Lucro líquido e patrimônio' : 'EBITDA e fluxo de caixa livre',

@@ -1243,3 +1243,135 @@ def test_prompt_do_macro_cobre_acao_br_e_bdr():
 def test_regras_comuns_nao_prometem_cvm_para_todo_ativo():
     for agente in agents.AGENTS.values():
         assert "ORIGEM DOS DADOS" in agente["system"]
+
+
+# ---------------------------------------------------------------------------
+# Série trimestral (ITR)
+# ---------------------------------------------------------------------------
+
+RE_DS = "Receita de Venda de Bens e/ou Serviços"
+LU_DS = "Lucro/Prejuízo Consolidado do Período"
+
+
+def _linha_itr(fim, ini, conta, ds, valor, ordem="ÚLTIMO"):
+    import pandas as pd
+
+    return {"CD_CVM": "009512", "DENOM_CIA": "X", "CNPJ_CIA": "x",
+            "DT_FIM_EXERC": pd.Timestamp(fim), "DT_INI_EXERC": pd.Timestamp(ini),
+            "ORDEM_EXERC": ordem, "ANO_REFER": pd.Timestamp(fim).year,
+            "CD_CONTA": conta, "DS_CONTA": ds, "VL_CONTA_AJUSTADO": valor}
+
+
+def _monta_itr(tmp_path, linhas, anual=None):
+    """Grava um ITR (e opcionalmente a DFP) sintéticos e devolve os pontos."""
+    import pandas as pd
+
+    pd.DataFrame(linhas).to_parquet(tmp_path / "dre_itr.parquet", index=False)
+    if anual:
+        pd.DataFrame([
+            {"CD_CVM": "009512", "DENOM_CIA": "X", "CNPJ_CIA": "x",
+             "DT_FIM_EXERC": pd.Timestamp(f"{ano}-12-31"), "ANO_REFER": ano,
+             "CD_CONTA": conta, "DS_CONTA": ds, "VL_CONTA_AJUSTADO": v}
+            for ano, conta, ds, v in anual
+        ]).to_parquet(tmp_path / "dre_dfp.parquet", index=False)
+    cvm._frames.cache_clear()
+    return {p["rotulo"]: p for p in cvm.quarterly_series("009512")["pontos"]}
+
+
+def test_serie_trimestral_desacumula_o_itr(tmp_path, monkeypatch):
+    """A DRE do ITR vem acumulada no exercício. Plotar o acumulado como se
+    fosse trimestre isolado desenha uma receita que só sobe — errado com cara
+    de certo. Aqui: acumulado 100/220/360 vira 100/120/140."""
+    monkeypatch.setattr(cvm, "CVM_PROCESSED_DIR", tmp_path)
+    cvm._frames.cache_clear()
+    try:
+        linhas = []
+        for fim, acc in (("2025-03-31", 100.0), ("2025-06-30", 220.0), ("2025-09-30", 360.0)):
+            linhas += [_linha_itr(fim, "2025-01-01", "3.01", RE_DS, acc),
+                       _linha_itr(fim, "2025-01-01", "3.11", LU_DS, acc / 10)]
+        pontos = _monta_itr(tmp_path, linhas,
+                            anual=[(2025, "3.01", RE_DS, 500.0), (2025, "3.11", LU_DS, 50.0)])
+
+        assert pontos["1T25"]["receita"] == 100.0
+        assert pontos["2T25"]["receita"] == 120.0
+        assert pontos["3T25"]["receita"] == 140.0
+        # o 4T não existe no ITR: sai do exercício fechado menos o acumulado
+        assert pontos["4T25"]["receita"] == 140.0
+        assert pontos["4T25"]["derivado"] is True
+        assert pontos["1T25"]["derivado"] is False
+        # validação forte: o LTM que fecha o exercício tem de bater com o anual
+        assert pontos["4T25"]["receita_ltm"] == 500.0
+        assert pontos["4T25"]["lucro_liquido_ltm"] == 50.0
+    finally:
+        cvm._frames.cache_clear()
+
+
+def test_serie_trimestral_descarta_janela_avulsa_e_comparativo(tmp_path, monkeypatch):
+    """O CSV do ITR traz, para a mesma data-fim, o acumulado e o trimestre
+    avulso; e repete períodos antigos como exercício comparativo. Confundir
+    qualquer um dos dois com o acumulado corrompe a diferença."""
+    monkeypatch.setattr(cvm, "CVM_PROCESSED_DIR", tmp_path)
+    cvm._frames.cache_clear()
+    try:
+        linhas = [
+            _linha_itr("2025-03-31", "2025-01-01", "3.01", RE_DS, 100.0),
+            _linha_itr("2025-06-30", "2025-01-01", "3.01", RE_DS, 220.0),
+            # janela avulsa do 2T (abril–junho): valor diferente do acumulado
+            _linha_itr("2025-06-30", "2025-04-01", "3.01", RE_DS, 777.0),
+            # comparativo do ano anterior, possivelmente reapresentado
+            _linha_itr("2024-03-31", "2024-01-01", "3.01", RE_DS, 999.0, ordem="PENÚLTIMO"),
+        ]
+        pontos = _monta_itr(tmp_path, linhas)
+
+        assert pontos["2T25"]["receita"] == 120.0     # 220 − 100, não 777
+        assert "1T24" not in pontos                   # o comparativo não vira ponto
+    finally:
+        cvm._frames.cache_clear()
+
+
+def test_quarto_trimestre_so_sai_quando_o_terceiro_fechou(tmp_path, monkeypatch):
+    """Se a empresa só publicou o 1T, anual − acumulado seriam nove meses
+    empilhados num "4T". Melhor não desenhar do que desenhar errado."""
+    monkeypatch.setattr(cvm, "CVM_PROCESSED_DIR", tmp_path)
+    cvm._frames.cache_clear()
+    try:
+        pontos = _monta_itr(
+            tmp_path,
+            [_linha_itr("2025-03-31", "2025-01-01", "3.01", RE_DS, 100.0)],
+            anual=[(2025, "3.01", RE_DS, 500.0)])
+
+        assert list(pontos) == ["1T25"]
+        assert pontos["1T25"]["receita"] == 100.0
+    finally:
+        cvm._frames.cache_clear()
+
+
+def test_ltm_nao_soma_trimestres_com_buraco(tmp_path, monkeypatch):
+    """Quatro pontos na série não são necessariamente quatro trimestres
+    seguidos. Com um ano faltando, o LTM tem de ficar vazio em vez de somar
+    períodos distantes e chamar isso de "últimos 12 meses"."""
+    monkeypatch.setattr(cvm, "CVM_PROCESSED_DIR", tmp_path)
+    cvm._frames.cache_clear()
+    try:
+        linhas = []
+        for ano, acc in ((2022, (100.0, 220.0)), (2025, (130.0, 260.0))):
+            for k, (fim_m, v) in enumerate(zip(("03-31", "06-30"), acc)):
+                linhas.append(_linha_itr(f"{ano}-{fim_m}", f"{ano}-01-01", "3.01", RE_DS, v))
+        pontos = _monta_itr(tmp_path, linhas)
+
+        assert len(pontos) == 4
+        assert all(p["receita_ltm"] is None for p in pontos.values())
+    finally:
+        cvm._frames.cache_clear()
+
+
+def test_painel_segue_anual_sem_itr(tmp_path, monkeypatch):
+    """Sem os parquets do ITR o painel não pode quebrar — só não mostra o
+    trimestral."""
+    monkeypatch.setattr(cvm, "CVM_PROCESSED_DIR", tmp_path)
+    cvm._frames.cache_clear()
+    try:
+        assert cvm.quarterly_series("009512") == {"pontos": [], "campos": []}
+        assert cvm.quarterly_series("") == {"pontos": [], "campos": []}
+    finally:
+        cvm._frames.cache_clear()

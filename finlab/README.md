@@ -42,7 +42,7 @@ painel abre com dois cliques.
 finlab/
 ├── backend/            FastAPI: coleta, normalização contábil, score, proxy de IA
 │   ├── universe.py     as 90 ações, seus setores e o CD_CVM de cada uma
-│   ├── cvm.py          lê os parquets do pipeline CVM e monta séries anuais
+│   ├── cvm.py          lê os parquets do pipeline CVM: séries anuais e trimestrais
 │   ├── market.py       cotações e macro, com três provedores encadeados
 │   ├── metrics.py      margens, retornos, alavancagem, múltiplos
 │   ├── scoring.py      a nota de saúde financeira (0–100)
@@ -56,7 +56,7 @@ finlab/
 │       ├── engine.js   o motor de DCF/EPV — roda no navegador
 │       ├── charts.js   gráficos em SVG puro
 │       └── ...
-└── tests/              104 testes (pytest)
+└── tests/              110 testes (pytest)
 ```
 
 O front não carrega **nada** de CDN: fontes do sistema, gráficos em SVG escritos à mão.
@@ -73,6 +73,7 @@ sensibilidade e os KPIs no mesmo frame.
 | Camada | Fonte | Precisa de chave? |
 |---|---|---|
 | Demonstrações anuais (DFP) | Parquets do pipeline em `valuation_cvm/` | não |
+| Demonstrações trimestrais (ITR) | Parquets do pipeline em `valuation_cvm/` | não |
 | Ações emitidas | Capital social da CVM; se faltar, deduzido do LPA publicado | não |
 | Cotação e performance (ações) | BRAPI → Yahoo Finance → PulseFlat, nessa ordem | opcional |
 | Cotação, volume e liquidez de ETFs/BDRs | Boletim diário da B3 (BDI) via PulseFlat | não |
@@ -115,8 +116,22 @@ O FinLab lê os parquets gerados pelo pipeline que já existia neste repositóri
 
 ```bash
 cd valuation_cvm
-python -m src.main --start-year 2016
+python -m src.main --start-year 2016 --end-year 2026
 ```
+
+O `--end-year` importa: o padrão é 2025, e sem passar o ano corrente o pipeline
+não busca nem a DFP nem o ITR do ano — a aba *Fundamentos* fica só com o anual.
+A mesma execução gera `*_dfp.parquet` (anual) e `*_itr.parquet` (trimestral).
+
+### Como o trimestral é montado
+
+A CVM publica a DRE do ITR **acumulada no exercício**: o 2T chega como jan–jun e o
+3T como jan–set. O painel desfaz o acúmulo por diferença, para que as barras de
+cada trimestre sejam comparáveis entre si. O 4º trimestre não existe no ITR — sai
+do exercício fechado da DFP menos o acumulado até o 3T, e aparece **hachurado**
+para deixar claro que é derivado, não publicado. A linha de *últimos 12 meses* é a
+soma móvel de quatro trimestres consecutivos; onde falta trimestre, ela não é
+desenhada em vez de somar períodos distantes.
 
 ---
 
@@ -249,9 +264,10 @@ São leitura crítica dos números que estão na tela.
 python -m pytest finlab/tests -q
 ```
 
-104 testes cobrindo extração contábil da CVM (incluindo as armadilhas de escala do LPA e
+110 testes cobrindo extração contábil da CVM (incluindo as armadilhas de escala do LPA e
 das units), consistência dos múltiplos, as curvas do score, as premissas de valuation,
-o proxy de LLM nos três formatos de API, o motor de DCF contra referência independente e
+o proxy de LLM nos três formatos de API, a desacumulação do ITR, o motor de DCF contra
+referência independente e
 a geometria dos gráficos em SVG (rodados no navegador, pulados se não houver Chromium).
 
 ---

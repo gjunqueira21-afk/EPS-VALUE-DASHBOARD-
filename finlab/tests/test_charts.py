@@ -336,3 +336,40 @@ def test_ticks_de_valor_nao_se_sobrepoem_em_tela_estreita(pagina):
     assert saida["t"]["colisoes"] == 0, saida["t"]
     assert saida["f"]["rotulos"] >= 2, "sobrou rótulo demais de menos no eixo"
     assert saida["grade"] >= 3, "a grade não deve sumir junto com os rótulos"
+
+
+def test_barra_derivada_ganha_hachura_e_rotulos_nao_colidem(pagina):
+    """O 4T da CVM não é publicado: é calculado. A hachura diz isso sem
+    precisar de nota de rodapé — e doze trimestres num painel estreito não
+    podem virar um borrão de rótulos."""
+    saida = pagina("""
+        const box = document.getElementById('box');
+        box.style.width = '340px';
+        const rot = [], vals = [], hach = [];
+        for (let a = 23; a <= 25; a++)
+          for (let t = 1; t <= 4; t++) {
+            rot.push(t + 'T' + a); vals.push(100 + t * 5); hach.push(t === 4);
+          }
+        FLChart.bars(box, {
+          labels: rot, hachura: hach,
+          series: [{name: 'Receita', color: '#3B82F6', values: vals}],
+          yFormat: v => v.toFixed(0)
+        });
+        const hachuradas = [...box.querySelectorAll('rect')]
+          .filter(r => (r.getAttribute('fill') || '').startsWith('url(#')).length;
+        const rotulos = [...box.querySelectorAll('text')]
+          .filter(t => /^\\dT\\d\\d$/.test(t.textContent))
+          .map(t => t.getBoundingClientRect())
+          .sort((a, b) => a.left - b.left);
+        let colisoes = 0;
+        for (let i = 1; i < rotulos.length; i++)
+          if (rotulos[i].left < rotulos[i - 1].right + 2) colisoes++;
+        const barras = [...box.querySelectorAll('rect')]
+          .filter(r => r.getAttribute('fill') === '#3B82F6').length;
+        box.style.width = '800px';
+        return {hachuradas, colisoes, rotulos: rotulos.length, barras};
+    """)
+    assert saida["hachuradas"] == 3, saida        # um 4T por ano
+    assert saida["barras"] == 12, saida           # nenhuma barra some
+    assert saida["colisoes"] == 0, saida
+    assert saida["rotulos"] >= 4, "rareou rótulo demais"

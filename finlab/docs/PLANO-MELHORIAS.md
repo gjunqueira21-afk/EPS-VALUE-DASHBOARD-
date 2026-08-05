@@ -32,6 +32,10 @@ Pequenos diffs, efeito desproporcional.
 - [x] **0.3 Ligar o trimestral (ITR)** — `cvm.py:39` fixa `_dfp`; o pipeline já
       baixa ITR. Parametrizar o sufixo e expor a série trimestral. Maior ganho de
       dado pelo menor diff do projeto. *(00.3, 03 §0)*
+      *Entregue em duas etapas:* a primeira parametrizou o sufixo e expôs só o
+      último trimestre (uma data no cabeçalho); a segunda entregou a série de
+      fato — trimestres desacumulados, 4T derivado da DFP e LTM na aba
+      Fundamentos. Só a segunda responde "como veio o 1T26".
 - [x] **0.4 Downloader revalida a origem** — `cvm_downloader.py:38` nunca
       reconsulta; CVM republica retroativamente. Checar `Last-Modified`/tamanho
       antes de pular. *(00.4)*

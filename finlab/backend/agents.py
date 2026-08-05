@@ -66,8 +66,15 @@ PROVIDERS = {
     "xai": {
         "label": "xAI (Grok)",
         "url": "https://api.x.ai/v1/chat/completions",
+        # A xAI tem dois endpoints. O antigo (/chat/completions) fala o dialeto
+        # OpenAI; o novo (/v1/responses) usa `input` no lugar de `messages`, e
+        # é onde os modelos mais recentes aparecem primeiro. Não dá para
+        # descobrir daqui qual atende cada modelo — este ambiente não alcança
+        # api.x.ai —, então tentamos o primeiro e caímos no segundo em caso de
+        # erro, em vez de obrigar a escolher no escuro.
+        "url_alt": "https://api.x.ai/v1/responses",
         "style": "openai",
-        "models": ["grok-4", "grok-4-fast", "grok-3"],
+        "models": ["grok-4.5", "grok-4", "grok-4-fast", "grok-3"],
         "docs": "https://console.x.ai",
         "busca_ao_vivo": True,
     },
@@ -418,6 +425,10 @@ def agent_list() -> list[dict]:
     return [{"key": k, "label": v["label"], "icon": v["icon"], "desc": v["desc"],
              "le_a_mesa": bool(v.get("le_a_mesa")),
              "abre_rodada": bool(v.get("abre_rodada")),
+             # Quem depende de busca ao vivo só funciona num provedor que a
+             # ofereça. O painel usa isto para marcar o cartão do agente em vez
+             # de deixar a exigência escondida no código.
+             "busca_ao_vivo": bool(v.get("busca_ao_vivo")),
              "ordem": int(v.get("ordem", 0))}
             for k, v in AGENTS.items()]
 
@@ -580,7 +591,8 @@ def monta_pergunta_sintese(pergunta: str, respostas: list[dict]) -> str:
 
 
 def provider_list() -> list[dict]:
-    return [{"key": k, "label": v["label"], "models": v["models"], "docs": v["docs"]}
+    return [{"key": k, "label": v["label"], "models": v["models"], "docs": v["docs"],
+             "busca_ao_vivo": bool(v.get("busca_ao_vivo"))}
             for k, v in PROVIDERS.items()]
 
 
@@ -617,6 +629,39 @@ def _corpo_openai(cfg: dict, model: str, temperature: float, max_tokens: int,
     return corpo
 
 
+def _responses_api(cfg: dict, cabecalho: dict, model: str, temperature: float,
+                   max_tokens: int, system: str, user: str, buscar: bool) -> str:
+    """Endpoint /v1/responses: `input` no lugar de `messages`.
+
+    Só é chamado quando o endpoint principal recusou. O texto da resposta vem
+    em `output_text` nas versões que o expõem; senão, é preciso costurar os
+    blocos de `output[].content[]`.
+    """
+    corpo = {
+        "model": model,
+        "temperature": temperature,
+        "max_output_tokens": max_tokens,
+        "input": [{"role": "system", "content": system},
+                  {"role": "user", "content": user}],
+    }
+    if buscar and cfg.get("busca_ao_vivo"):
+        corpo[BUSCA_CAMPO] = dict(BUSCA_AO_VIVO)
+
+    data = _json_or_raise(requests.post(cfg["url_alt"], headers=cabecalho, json=corpo,
+                                        timeout=max(HTTP_TIMEOUT, 120)))
+    texto = data.get("output_text")
+    if isinstance(texto, str) and texto.strip():
+        return texto
+    partes = []
+    for bloco in data.get("output") or []:
+        for parte in bloco.get("content") or []:
+            if isinstance(parte, dict) and parte.get("text"):
+                partes.append(parte["text"])
+    if not partes:
+        raise LLMError("Resposta vazia do provedor (/v1/responses).")
+    return "".join(partes)
+
+
 def chat(provider: str, api_key: str, model: str, system: str, user: str,
          temperature: float = 0.3, max_tokens: int = 1400,
          buscar: bool = False) -> str:
@@ -629,17 +674,24 @@ def chat(provider: str, api_key: str, model: str, system: str, user: str,
     style = cfg["style"]
     try:
         if style == "openai":
-            resp = requests.post(
-                cfg["url"],
-                headers={"Authorization": f"Bearer {api_key}",
+            cabecalho = {"Authorization": f"Bearer {api_key}",
                          "Content-Type": "application/json",
                          "HTTP-Referer": "https://github.com/gjunqueira21-afk/eps-value-dashboard-",
-                         "X-Title": "Gab's FinLab"},
+                         "X-Title": "Gab's FinLab"}
+            resp = requests.post(
+                cfg["url"], headers=cabecalho,
                 json=_corpo_openai(cfg, model, temperature, max_tokens,
                                    [{"role": "system", "content": system},
                                     {"role": "user", "content": user}], buscar),
                 timeout=max(HTTP_TIMEOUT, 120),
             )
+            if resp.status_code >= 400 and cfg.get("url_alt"):
+                # 400/404 aqui costuma ser "este modelo não é servido neste
+                # endpoint". Vale tentar o outro antes de devolver o erro —
+                # o 401 e o 429 seguem direto, porque repetir não ajuda.
+                if resp.status_code not in (401, 429):
+                    return _responses_api(cfg, cabecalho, model, temperature,
+                                          max_tokens, system, user, buscar)
             data = _json_or_raise(resp)
             return data["choices"][0]["message"]["content"]
 

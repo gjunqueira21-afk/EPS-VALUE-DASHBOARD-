@@ -15,7 +15,29 @@
   const { h, el, esc, api, markdown, loadSlots, loadAgentNames, agentIcon, prefs } = global.FL;
 
   const HIST_KEY = 'finlab.chat.hist.v1';
-  const ORDEM = ['equity', 'macro', 'gestor', 'premissas'];
+  const SAVED_KEY = 'finlab.chat.saved.v1';
+
+  /* A mesa inteira vive aqui agora — a aba "Mesa de IA" saiu de cena. A lista
+     de agentes (e a ordem das ondas: Radar abre, corpo em paralelo, Cético lê,
+     Moderador fecha) é do backend; este padrão só cobre o /api/config falhar. */
+  let MESA = [
+    { key: 'contexto', abre_rodada: true, le_a_mesa: false, ordem: 0 },
+    { key: 'equity', ordem: 0 }, { key: 'macro', ordem: 0 },
+    { key: 'gestor', ordem: 0 }, { key: 'premissas', ordem: 0 },
+    { key: 'cetico', le_a_mesa: true, ordem: 1 },
+    { key: 'moderador', le_a_mesa: true, ordem: 2 }
+  ];
+
+  async function carregarMesa() {
+    try {
+      const cfg = await api('/api/config');
+      if (Array.isArray(cfg.agents) && cfg.agents.length) {
+        MESA = cfg.agents;
+        if (global.FL.setAgentOrder) global.FL.setAgentOrder(MESA.map((a) => a.key));
+        atualizarRodape();
+      }
+    } catch (e) { /* fica o padrão */ }
+  }
 
   const state = { aberto: false, enviando: false, ticker: null, tela: null, ctx: null, montado: false };
 
@@ -58,7 +80,7 @@
   function alvoDaPergunta(texto) {
     const nomes = loadAgentNames();
     const inicio = texto.slice(0, 60).toLowerCase();
-    const achado = ORDEM.find((k) => {
+    const achado = MESA.map((a) => a.key).find((k) => {
       const nome = (nomes[k] || '').toLowerCase().replace(/^agente\s+/, '');
       return nome && (inicio.startsWith(nome) || inicio.startsWith('agente ' + nome)
         || inicio.startsWith('@' + nome));
@@ -77,7 +99,9 @@
     const caixa = h('div', { class: 'chat-msg ' + (meu ? 'me' : 'ai') });
     if (!meu && msg.autor) {
       caixa.classList.add('nomeado');
-      if (msg.agente === 'sintese') caixa.classList.add('sintese');
+      // O destaque de fechamento vale para quem fecha: era a "sintese", hoje é
+      // o Moderador — a fala que o usuário procura primeiro ao reler.
+      if (msg.agente === 'sintese' || msg.agente === 'moderador') caixa.classList.add('sintese');
       const cracha = [
         h('span', { class: 'ico' }, msg.icone || '🧠'),
         h('span', {}, msg.autor)
@@ -155,9 +179,9 @@
       title: 'Quem responde: a mesa inteira ou um agente',
       onchange: (ev) => prefs.set('chat.alvo', ev.target.value)
     }, [h('option', { value: 'mesa', selected: atual === 'mesa' ? 'selected' : null },
-      '🧠 Mesa inteira')].concat(ORDEM.map((k) => h('option', {
-      value: k, selected: k === atual ? 'selected' : null
-    }, `${agentIcon(k)} ${nomes[k]}`))));
+      '🧠 Mesa inteira')].concat(MESA.map((a) => h('option', {
+      value: a.key, selected: a.key === atual ? 'selected' : null
+    }, `${agentIcon(a.key)} ${nomes[a.key] || a.label || a.key}`))));
     info.appendChild(sel);
   }
 
@@ -252,18 +276,38 @@
 
     try {
       if (escolha !== 'mesa') {
-        await falar(escolha, nomes[escolha], agentIcon(escolha), texto, anterior);
+        await falar(escolha, nomes[escolha] || escolha, agentIcon(escolha), texto, anterior);
       } else {
-        // Cada agente fala na sua vez, e a bolha aparece assim que chega —
-        // é a reunião acontecendo na tela, não um bloco no fim.
+        // A rodada acontece em ondas, como na mesa: o Radar abre (o que ele
+        // levanta chega aos outros cercado como não verificado), o corpo fala,
+        // o Cético contesta lendo as falas, o Moderador fecha lendo tudo.
+        // Cada bolha aparece assim que chega — é a reunião na tela.
+        const abre = MESA.filter((a) => a.abre_rodada);
+        const corpo = MESA.filter((a) => !a.abre_rodada && !(a.ordem > 0));
+        const leitores = MESA.filter((a) => !a.abre_rodada && a.ordem > 0)
+          .sort((x, y) => (x.ordem || 0) - (y.ordem || 0));
+
+        let radar = '';
         const respostas = [];
-        for (const k of ORDEM) {
-          const r = await falar(k, nomes[k], agentIcon(k), texto, anterior);
-          if (r) respostas.push({ agente: k, nome: nomes[k], texto: r });
+        for (const a of abre) {
+          const r = await falar(a.key, nomes[a.key] || a.key, agentIcon(a.key),
+            texto, anterior);
+          if (r) { radar = r; respostas.push({ agente: a.key, nome: nomes[a.key], texto: r }); }
         }
+        const extra = radar ? { radar: radar } : {};
+        for (const a of corpo) {
+          const r = await falar(a.key, nomes[a.key] || a.key, agentIcon(a.key),
+            texto, anterior, extra);
+          if (r) respostas.push({ agente: a.key, nome: nomes[a.key], texto: r });
+        }
+        // Com uma fala só não há mesa para ler: os leitores só entram quando
+        // existe divergência possível.
         if (respostas.length >= 2) {
-          await falar('sintese', 'Conclusão da mesa', '⚖️', texto, anterior,
-            { respostas: respostas });
+          for (const a of leitores) {
+            const r = await falar(a.key, nomes[a.key] || a.key, agentIcon(a.key),
+              texto, anterior, Object.assign({ respostas: respostas.slice() }, extra));
+            if (r) respostas.push({ agente: a.key, nome: nomes[a.key], texto: r });
+          }
         }
       }
     } finally {
@@ -271,6 +315,112 @@
       el('chat-send').disabled = false;
       el('chat-input').focus();
     }
+  }
+
+  /* --------------------------------------------------------- análises salvas */
+  /* A conversa vive na sessão e evapora ao fechar a aba. O 💾 tira uma foto
+     dela — pergunta, falas da mesa, conclusão — e guarda no navegador
+     (localStorage), com download em Markdown para levar para fora. Nada vai
+     ao servidor: mesma regra das chaves. */
+
+  function salvas() {
+    try {
+      const arr = JSON.parse(localStorage.getItem(SAVED_KEY) || '[]');
+      return Array.isArray(arr) ? arr : [];
+    } catch (e) { return []; }
+  }
+
+  function gravarSalvas(lista) {
+    try { localStorage.setItem(SAVED_KEY, JSON.stringify(lista.slice(0, 40))); }
+    catch (e) { alert('Sem espaço no navegador para salvar. Apague análises antigas.'); }
+  }
+
+  function salvarAnalise() {
+    const msgs = carregar().filter((m) => !m.local);
+    if (!msgs.length) { alert('Nada para salvar ainda — pergunte algo à mesa primeiro.'); return; }
+    const primeira = (msgs.find((m) => m.role === 'user') || {}).content || 'conversa';
+    const item = {
+      id: Date.now(),
+      quando: new Date().toISOString(),
+      ticker: state.ticker || state.tela || null,
+      titulo: primeira.slice(0, 80),
+      msgs: msgs
+    };
+    gravarSalvas([item].concat(salvas()));
+    // Salvar já entrega o arquivo: a análise desce em .md na hora, e a cópia
+    // fica em 📚 para reabrir ou baixar de novo.
+    baixarAnalise(item);
+    const btn = el('chat-save');
+    if (btn) {
+      btn.textContent = '✓ salva';
+      setTimeout(() => { btn.textContent = '💾'; }, 1600);
+    }
+  }
+
+  function analiseEmMarkdown(item) {
+    const nomes = loadAgentNames();
+    const linhas = [`# Análise da mesa — ${item.ticker || 'geral'}`,
+      `_${new Date(item.quando).toLocaleString('pt-BR')} · Gab's FinLab_`, ''];
+    item.msgs.forEach((m) => {
+      if (m.role === 'user') {
+        linhas.push(`## Pergunta`, '', m.content, '');
+      } else {
+        const autor = m.autor || nomes[m.agente] || 'Mesa';
+        linhas.push(`### ${m.icone || '🧠'} ${autor}${m.modelo ? ` · \`${m.modelo}\`` : ''}`,
+          '', m.content, '');
+      }
+    });
+    return linhas.join('\n');
+  }
+
+  function baixarAnalise(item) {
+    const quando = item.quando.slice(0, 10);
+    const nome = `analise-${(item.ticker || 'mesa').toLowerCase()}-${quando}.md`;
+    const blob = new Blob([analiseEmMarkdown(item)], { type: 'text/markdown' });
+    const a = h('a', { href: URL.createObjectURL(blob), download: nome });
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }
+
+  function abrirSalvas() {
+    const corpo = el('chat-body');
+    const lista = salvas();
+    corpo.innerHTML = '';
+    const topo = h('div', { class: 'chat-salvas-topo' }, [
+      h('b', {}, `Análises salvas (${lista.length})`),
+      h('span', { style: 'flex:1 1 auto' }),
+      h('button', { class: 'btn ghost sm', onclick: pintarHistorico }, '← voltar')
+    ]);
+    corpo.appendChild(topo);
+    if (!lista.length) {
+      corpo.appendChild(h('div', { class: 'chat-vazio' },
+        'Nenhuma análise salva. Depois de uma rodada da mesa, clique em 💾 para guardar.'));
+      return;
+    }
+    lista.forEach((item) => {
+      corpo.appendChild(h('div', { class: 'chat-salva' }, [
+        h('div', { class: 'meta' }, [
+          h('b', {}, item.ticker || 'geral'),
+          h('span', {}, new Date(item.quando).toLocaleString('pt-BR')),
+          h('span', { class: 'n' }, `${item.msgs.length} mensagens`)
+        ]),
+        h('div', { class: 'ttl' }, item.titulo),
+        h('div', { class: 'acoes' }, [
+          h('button', {
+            class: 'btn ghost sm', title: 'Recarregar esta conversa no chat',
+            onclick: () => { salvar(item.msgs); pintarHistorico(); }
+          }, '↩ reabrir'),
+          h('button', {
+            class: 'btn ghost sm', title: 'Baixar como Markdown',
+            onclick: () => baixarAnalise(item)
+          }, '⬇ baixar .md'),
+          h('button', {
+            class: 'btn ghost sm', title: 'Excluir',
+            onclick: () => { gravarSalvas(salvas().filter((s) => s.id !== item.id)); abrirSalvas(); }
+          }, '🗑')
+        ])
+      ]));
+    });
   }
 
   /* ---------------------------------------------------------------- montagem */
@@ -301,6 +451,14 @@
           h('div', { class: 'chat-sub', id: 'chat-ctx' }, '—')
         ]),
         h('span', { style: 'flex:1 1 auto' }),
+        h('button', {
+          class: 'btn ghost sm', id: 'chat-save', title: 'Salvar esta análise',
+          onclick: salvarAnalise
+        }, '💾'),
+        h('button', {
+          class: 'btn ghost sm', title: 'Análises salvas',
+          onclick: abrirSalvas
+        }, '📚'),
         h('button', {
           class: 'btn ghost sm', title: 'Limpar a conversa',
           onclick: () => { salvar([]); pintarHistorico(); }
@@ -342,6 +500,7 @@
 
     pintarHistorico();
     atualizarRodape();
+    carregarMesa();
   }
 
   function alternar() {

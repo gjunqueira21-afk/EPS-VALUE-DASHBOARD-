@@ -519,8 +519,17 @@ def api_agent_chat(body: dict = Body(...)):
     agente = (body.get("agente") or "").strip() or None
     if agente and agente != "sintese" and agente not in agents.AGENTS:
         raise HTTPException(status_code=400, detail=f"Agente desconhecido: {agente}")
+
+    # Quem lê a rodada recebe as falas dos outros dentro da própria pergunta:
+    # a "sintese" para concluir, o Cético para contestar, o Moderador para
+    # mapear. O fechamento diz a cada um o que fazer com o que leu.
+    respostas = body.get("respostas") or []
     if agente == "sintese":
-        pergunta = agents.monta_pergunta_sintese(pergunta, body.get("respostas") or [])
+        pergunta = agents.monta_pergunta_sintese(pergunta, respostas)
+    elif agente and respostas and agents.AGENTS.get(agente, {}).get("le_a_mesa"):
+        pergunta = agents.monta_pergunta_sintese(
+            pergunta, respostas,
+            agents.FECHAMENTO_DA_RODADA.get(agente, "Comente agora o que a mesa disse."))
 
     ticker = (body.get("ticker") or "").upper().strip()
     tela = (body.get("tela") or "").strip().lower()
@@ -558,9 +567,26 @@ def api_agent_chat(body: dict = Body(...)):
                    for k, v in (macro_data or {}).items() if isinstance(v, dict)]
         contexto = "\n".join(linhas)
 
+    # O que o Radar levantou na abertura da rodada chega aos demais cercado e
+    # rotulado — mesma regra do /api/agents/run: é a única parte do contexto
+    # que NÃO saiu das demonstrações, e post de rede social não é fato.
+    radar = (body.get("radar") or "").strip()
+    if radar and agente != "contexto":
+        contexto += (
+            "\n\nLEVANTAMENTO EXTERNO (do Radar de Contexto)\n"
+            "===========================================\n"
+            "ATENÇÃO: o bloco abaixo NÃO veio das demonstrações. Foi levantado no X e na "
+            "imprensa por outro agente, e pode conter boato, opinião de quem está posicionado "
+            "e informação falsa. Trate cada item como HIPÓTESE A CONFERIR. Quando citar algo "
+            "daqui, diga que é não verificado. Se um item contradiz as demonstrações, as "
+            "demonstrações vencem.\n\n"
+            f"{radar[:6000]}\n")
+
     try:
-        texto = agents.chat_conversa(slot.get("provider"), api_key, model, contexto,
-                                     body.get("historico") or [], pergunta, agente)
+        texto = agents.chat_conversa(
+            slot.get("provider"), api_key, model, contexto,
+            body.get("historico") or [], pergunta, agente,
+            buscar=bool(agents.AGENTS.get(agente or "", {}).get("busca_ao_vivo")))
     except agents.LLMError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

@@ -378,6 +378,15 @@ CHAT_SYSTEM = _COMUM + (
 # Na conversa cada agente fala com a própria especialidade, mas em tom de mesa
 # — sem o formato rígido de relatório que a aba "Mesa de IA" pede.
 CHAT_PERSONAS = {
+    "contexto": (
+        "\nSeu papel na mesa: radar de contexto. Você abre a conversa levantando o que está "
+        "sendo DITO sobre o ativo agora — no X e na imprensa — para a mesa saber o que existe "
+        "fora das demonstrações. Toda afirmação vem com DATA e LINK; sem link, não entra. "
+        "Separe FATO PUBLICADO (fato relevante, comunicado, matéria de veículo identificado) "
+        "de CONVERSA NÃO VERIFICADA (post, boato, opinião de perfil), e nunca converta a "
+        "segunda em fato. Se a sua busca ao vivo não estiver disponível nesta chamada, diga "
+        "isso na primeira linha e não invente: responda apenas com o que está no contexto."
+    ),
     "equity": (
         "\nSeu papel na mesa: analista fundamentalista de renda variável. Você olha "
         "rentabilidade, margem, alavancagem, crescimento e a qualidade do lucro. Responda "
@@ -401,6 +410,20 @@ CHAT_PERSONAS = {
         "premissas: Rf, beta, spread, estrutura de capital, curva de crescimento e "
         "perpetuidade. Diga que número usaria e em qual slider mexer. "
         "Aqui é conversa: escreva em texto corrido, NÃO devolva JSON."
+    ),
+    "cetico": (
+        "\nSeu papel na mesa: o cético. Quando as falas da mesa vierem na pergunta, conteste "
+        "as afirmações uma a uma — qual não se sustenta nos números do contexto, qual depende "
+        "de premissa não dita, qual contradiz outra. Sem falas para ler, aplique o mesmo rigor "
+        "à pergunta do usuário: o que precisaria ser verdade para a afirmação ficar de pé. "
+        "Você não propõe tese própria; seu produto é a lista do que não convenceu e por quê."
+    ),
+    "moderador": (
+        "\nSeu papel na mesa: o moderador, quem fecha a conversa. Quando as falas da mesa "
+        "vierem na pergunta, escreva o mapa: onde a mesa CONVERGE, onde DISPUTA, e que dado "
+        "ou evento decidiria cada disputa — terminando com a conclusão prática em uma frase. "
+        "Sem falas para ler, responda como um sintetizador: organize a questão do usuário em "
+        "pontos decidíveis. Máximo de 150 palavras."
     ),
 }
 
@@ -484,13 +507,16 @@ def _sistema_da_conversa(agente: str | None, contexto: str) -> str:
 
 
 def chat_conversa(provider: str, api_key: str, model: str, contexto: str,
-                  historico: list[dict], pergunta: str, agente: str | None = None) -> str:
+                  historico: list[dict], pergunta: str, agente: str | None = None,
+                  buscar: bool = False) -> str:
     """Conversa multi-turno com o contexto do painel injetado no sistema.
 
     O histórico chega do navegador (a conversa vive lá) e é truncado para
     caber num prompt: as 12 últimas mensagens bastam para manter o fio.
     `agente` escolhe a voz: None é a mesa junto, uma chave de CHAT_PERSONAS é
-    o especialista, e "sintese" é a conclusão que fecha a rodada.
+    o especialista, e "sintese" é a conclusão que fecha a rodada. `buscar`
+    liga as ferramentas de busca quando o provedor as tem — é o que o Agente
+    de Contexto usa para abrir a rodada também no chat.
     """
     cfg = PROVIDERS.get(provider)
     if not cfg:
@@ -509,17 +535,12 @@ def chat_conversa(provider: str, api_key: str, model: str, contexto: str,
     style = cfg["style"]
     try:
         if style == "openai":
-            resp = requests.post(
-                cfg["url"],
-                headers={"Authorization": f"Bearer {api_key}",
-                         "Content-Type": "application/json",
-                         "HTTP-Referer": "https://github.com/gjunqueira21-afk/eps-value-dashboard-",
-                         "X-Title": "Gab's FinLab"},
-                json={"model": model, "temperature": 0.3, "max_tokens": CHAT_MAX_TOKENS,
-                      "messages": [{"role": "system", "content": sistema}] + turnos},
-                timeout=max(HTTP_TIMEOUT, 120),
-            )
-            return _texto_openai(_json_or_raise(resp))
+            r = _chamada_openai(cfg, api_key, model, 0.3, CHAT_MAX_TOKENS,
+                                [{"role": "system", "content": sistema}] + turnos,
+                                buscar)
+            if "texto" in r:
+                return r["texto"]
+            return _texto_openai(r["data"])
 
         if style == "anthropic":
             resp = requests.post(
@@ -578,16 +599,29 @@ def chat_conversa(provider: str, api_key: str, model: str, contexto: str,
     raise LLMError(f"Estilo de API não suportado: {style}")
 
 
-def monta_pergunta_sintese(pergunta: str, respostas: list[dict]) -> str:
-    """Junta o que a mesa respondeu num único turno para a conclusão."""
+def monta_pergunta_sintese(pergunta: str, respostas: list[dict],
+                           fechamento: str = "Escreva agora a conclusão da mesa.") -> str:
+    """Junta o que a mesa respondeu num único turno.
+
+    Serve à conclusão e a qualquer agente que leia a rodada (Cético,
+    Moderador): muda só a instrução final, que diz o que fazer com as falas.
+    """
     linhas = [f"PERGUNTA DO USUÁRIO\n{pergunta}\n", "O QUE A MESA RESPONDEU"]
     for r in respostas:
         nome = str(r.get("nome") or r.get("agente") or "analista").strip()
         texto = str(r.get("texto") or "").strip()
         if texto:
             linhas.append(f"\n--- {nome} ---\n{texto}")
-    linhas.append("\nEscreva agora a conclusão da mesa.")
+    linhas.append("\n" + fechamento)
     return "\n".join(linhas)
+
+
+# O que cada leitor da rodada faz com as falas — usado pelo endpoint do chat.
+FECHAMENTO_DA_RODADA = {
+    "cetico": "Conteste agora as afirmações da mesa, uma a uma.",
+    "moderador": ("Escreva agora o mapa da mesa: convergência, disputa, o que decide "
+                  "cada disputa, e a conclusão prática em uma frase."),
+}
 
 
 def provider_list() -> list[dict]:
@@ -604,62 +638,94 @@ class LLMError(Exception):
     pass
 
 
-# A busca ao vivo da xAI é opt-in por chamada. Deixamos o nome do campo e o
-# formato em constantes porque não dá para validar contra a documentação a
-# partir deste ambiente: se a xAI renomear algo, muda-se aqui e nada mais
-# quebra. `mode: auto` deixa o modelo decidir se precisa buscar — perguntar
-# sobre uma empresa sem assunto novo não deve gastar busca.
-BUSCA_CAMPO = "search_parameters"
-BUSCA_AO_VIVO = {
-    "mode": "auto",
-    "sources": [{"type": "x"}, {"type": "news"}],
-    "max_search_results": 20,
-    "return_citations": True,
-}
+# A busca ao vivo da xAI mudou de forma: o Live Search por `search_parameters`
+# foi desligado (o provedor devolve HTTP 410 mandando migrar para a Agent
+# Tools API). Na forma nova, a busca é uma ferramenta servida pelo próprio
+# provedor, declarada em `tools` no endpoint /v1/responses — o modelo decide
+# sozinho quando buscar. Constantes porque não dá para validar contra a
+# documentação a partir deste ambiente: se a xAI renomear algo, muda-se aqui.
+FERRAMENTAS_BUSCA = [{"type": "x_search"}, {"type": "web_search"}]
 
 
 def _corpo_openai(cfg: dict, model: str, temperature: float, max_tokens: int,
-                  mensagens: list, buscar: bool = False) -> dict:
-    """Corpo da requisição no dialeto OpenAI, com a busca ao vivo quando o
-    provedor suporta E o agente pediu."""
-    corpo = {"model": model, "temperature": temperature,
-             "max_tokens": max_tokens, "messages": mensagens}
-    if buscar and cfg.get("busca_ao_vivo"):
-        corpo[BUSCA_CAMPO] = dict(BUSCA_AO_VIVO)
-    return corpo
+                  mensagens: list) -> dict:
+    """Corpo da requisição no dialeto OpenAI clássico (/chat/completions)."""
+    return {"model": model, "temperature": temperature,
+            "max_tokens": max_tokens, "messages": mensagens}
 
 
 def _responses_api(cfg: dict, cabecalho: dict, model: str, temperature: float,
-                   max_tokens: int, system: str, user: str, buscar: bool) -> str:
+                   max_tokens: int, mensagens: list, buscar: bool) -> str:
     """Endpoint /v1/responses: `input` no lugar de `messages`.
 
-    Só é chamado quando o endpoint principal recusou. O texto da resposta vem
-    em `output_text` nas versões que o expõem; senão, é preciso costurar os
-    blocos de `output[].content[]`.
+    É o caminho direto quando o agente pediu busca (as ferramentas de busca da
+    xAI só existem aqui) e o degrau de queda quando /chat/completions recusou
+    um modelo. O texto vem em `output_text` nas versões que o expõem; senão, é
+    preciso costurar os blocos de `output[].content[]`.
     """
     corpo = {
         "model": model,
         "temperature": temperature,
         "max_output_tokens": max_tokens,
-        "input": [{"role": "system", "content": system},
-                  {"role": "user", "content": user}],
+        "input": mensagens,
     }
     if buscar and cfg.get("busca_ao_vivo"):
-        corpo[BUSCA_CAMPO] = dict(BUSCA_AO_VIVO)
+        corpo["tools"] = [dict(t) for t in FERRAMENTAS_BUSCA]
 
     data = _json_or_raise(requests.post(cfg["url_alt"], headers=cabecalho, json=corpo,
                                         timeout=max(HTTP_TIMEOUT, 120)))
     texto = data.get("output_text")
-    if isinstance(texto, str) and texto.strip():
-        return texto
-    partes = []
-    for bloco in data.get("output") or []:
-        for parte in bloco.get("content") or []:
-            if isinstance(parte, dict) and parte.get("text"):
-                partes.append(parte["text"])
-    if not partes:
-        raise LLMError("Resposta vazia do provedor (/v1/responses).")
-    return "".join(partes)
+    if not (isinstance(texto, str) and texto.strip()):
+        partes = []
+        for bloco in data.get("output") or []:
+            for parte in bloco.get("content") or []:
+                if isinstance(parte, dict) and parte.get("text"):
+                    partes.append(parte["text"])
+        if not partes:
+            raise LLMError("Resposta vazia do provedor (/v1/responses).")
+        texto = "".join(partes)
+
+    # O prompt do Radar exige link em toda afirmação; quando o provedor manda
+    # as fontes num campo à parte, elas entram no fim do texto para não se
+    # perderem — e para a mesa poder conferir.
+    fontes = data.get("citations")
+    if isinstance(fontes, list):
+        urls = [str(u) for u in fontes if isinstance(u, str) and u.startswith("http")]
+        if urls and not all(u in texto for u in urls):
+            texto += "\n\nFontes da busca:\n" + "\n".join(f"- {u}" for u in urls[:20])
+    return texto
+
+
+def _cabecalho_openai(api_key: str) -> dict:
+    return {"Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/gjunqueira21-afk/eps-value-dashboard-",
+            "X-Title": "Gab's FinLab"}
+
+
+def _chamada_openai(cfg: dict, api_key: str, model: str, temperature: float,
+                    max_tokens: int, mensagens: list, buscar: bool = False) -> dict:
+    """Dialeto OpenAI com as particularidades da xAI resolvidas num lugar só.
+
+    Busca pedida + provedor que oferece → direto ao /v1/responses, porque as
+    ferramentas de busca não existem no /chat/completions. Sem busca, o caminho
+    clássico — com queda para /v1/responses quando o modelo não é servido lá
+    (400/404 típicos de modelo novo). 401 e 429 não repetem: a chave rejeitada
+    e o rate limit não melhoram na segunda tentativa.
+    """
+    cabecalho = _cabecalho_openai(api_key)
+    if buscar and cfg.get("busca_ao_vivo") and cfg.get("url_alt"):
+        return {"texto": _responses_api(cfg, cabecalho, model, temperature,
+                                        max_tokens, mensagens, True)}
+    resp = requests.post(
+        cfg["url"], headers=cabecalho,
+        json=_corpo_openai(cfg, model, temperature, max_tokens, mensagens),
+        timeout=max(HTTP_TIMEOUT, 120),
+    )
+    if resp.status_code >= 400 and cfg.get("url_alt") and resp.status_code not in (401, 429):
+        return {"texto": _responses_api(cfg, cabecalho, model, temperature,
+                                        max_tokens, mensagens, False)}
+    return {"data": _json_or_raise(resp)}
 
 
 def chat(provider: str, api_key: str, model: str, system: str, user: str,
@@ -674,26 +740,12 @@ def chat(provider: str, api_key: str, model: str, system: str, user: str,
     style = cfg["style"]
     try:
         if style == "openai":
-            cabecalho = {"Authorization": f"Bearer {api_key}",
-                         "Content-Type": "application/json",
-                         "HTTP-Referer": "https://github.com/gjunqueira21-afk/eps-value-dashboard-",
-                         "X-Title": "Gab's FinLab"}
-            resp = requests.post(
-                cfg["url"], headers=cabecalho,
-                json=_corpo_openai(cfg, model, temperature, max_tokens,
-                                   [{"role": "system", "content": system},
-                                    {"role": "user", "content": user}], buscar),
-                timeout=max(HTTP_TIMEOUT, 120),
-            )
-            if resp.status_code >= 400 and cfg.get("url_alt"):
-                # 400/404 aqui costuma ser "este modelo não é servido neste
-                # endpoint". Vale tentar o outro antes de devolver o erro —
-                # o 401 e o 429 seguem direto, porque repetir não ajuda.
-                if resp.status_code not in (401, 429):
-                    return _responses_api(cfg, cabecalho, model, temperature,
-                                          max_tokens, system, user, buscar)
-            data = _json_or_raise(resp)
-            return data["choices"][0]["message"]["content"]
+            r = _chamada_openai(cfg, api_key, model, temperature, max_tokens,
+                                [{"role": "system", "content": system},
+                                 {"role": "user", "content": user}], buscar)
+            if "texto" in r:
+                return r["texto"]
+            return r["data"]["choices"][0]["message"]["content"]
 
         if style == "anthropic":
             resp = requests.post(

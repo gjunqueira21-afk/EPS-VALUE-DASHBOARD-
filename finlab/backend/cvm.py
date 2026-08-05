@@ -230,6 +230,105 @@ def _ltm(isolado: dict) -> dict:
     return out
 
 
+def ltm_series(cd_cvm: str) -> dict:
+    """O ano corrente parcial: 12 meses móveis até o último ITR publicado.
+
+    A tabela de demonstrações mostrava só exercícios fechados, então o ano em
+    curso simplesmente não existia nela — e é justamente o período que o
+    usuário está tentando entender.
+
+    Duas naturezas de conta, tratadas de formas diferentes de propósito:
+
+      * **Fluxo** (receita, EBITDA, EBIT, lucro, caixa das operações, capex):
+        soma dos quatro trimestres isolados. Somar acumulados daria o dobro.
+      * **Estoque** (dívida líquida, patrimônio líquido): é saldo, não fluxo.
+        Vale o do balanço mais recente — somar quatro seria absurdo.
+
+    Devolve {} quando o ITR não está processado ou não fecha 12 meses.
+    """
+    vazio: dict = {}
+    if not cd_cvm:
+        return vazio
+
+    dre = _acumulado_do_exercicio(_company("dre", cd_cvm, "itr"))
+    if dre.empty or "DT_INI_EXERC" not in dre.columns:
+        return vazio
+    abertura = (dre.drop_duplicates("DT_FIM_EXERC")
+                   .set_index("DT_FIM_EXERC")["DT_INI_EXERC"].to_dict())
+    if not abertura:
+        return vazio
+
+    dfc = _acumulado_do_exercicio(_company("dfc_mi", cd_cvm, "itr"))
+    dre_anual = _company("dre", cd_cvm)
+    dfc_anual = _company("dfc_mi", cd_cvm)
+
+    def ltm_de(acumulado: dict, anual: dict) -> Optional[float]:
+        if not acumulado:
+            return None
+        isolado = _desacumula(acumulado, abertura, anual or {})
+        janela = _ltm(isolado)
+        return janela.get(max(janela)) if janela else None
+
+    # --- fluxos da DRE ----------------------------------------------------
+    campos: dict = {}
+    for nome, conta in (("receita", CONTA_RECEITA), ("lucro_liquido", CONTA_LUCRO),
+                        ("ebit", (["3.05"], ["RESULTADO ANTES DO RESULTADO FINANCEIRO",
+                                             "RESULTADO OPERACIONAL"]))):
+        campos[nome] = ltm_de(_series(dre, *conta, chave="DT_FIM_EXERC"),
+                              _series(dre_anual, *conta) if not dre_anual.empty else {})
+
+    # --- fluxos do DFC ----------------------------------------------------
+    if not dfc.empty:
+        fco = ltm_de(_series(dfc, ["6.01"], ["CAIXA LIQUIDO ATIVIDADES OPERACIONAIS"],
+                             chave="DT_FIM_EXERC"),
+                     _series(dfc_anual, ["6.01"], ["CAIXA LIQUIDO ATIVIDADES OPERACIONAIS"])
+                     if not dfc_anual.empty else {})
+        capex = ltm_de(_capex(dfc, "DT_FIM_EXERC"),
+                       _capex(dfc_anual) if not dfc_anual.empty else {})
+        deprec = ltm_de(_depreciation(dfc, "DT_FIM_EXERC"),
+                        _depreciation(dfc_anual) if not dfc_anual.empty else {})
+        campos["fco"] = fco
+        campos["capex"] = -abs(capex) if capex is not None else None
+        campos["depreciacao"] = abs(deprec) if deprec is not None else None
+        campos["fcl"] = (fco - abs(capex)) if (fco is not None and capex is not None) else None
+        if campos.get("ebit") is not None and deprec is not None:
+            campos["ebitda"] = campos["ebit"] + abs(deprec)
+
+    # --- estoques do balanço ---------------------------------------------
+    bpa = _company("bpa", cd_cvm, "itr")
+    bpp = _company("bpp", cd_cvm, "itr")
+
+    def saldo(frame, codes, keywords) -> Optional[float]:
+        if frame.empty:
+            return None
+        serie = _series(frame, codes, keywords, chave="DT_FIM_EXERC")
+        return serie.get(max(serie)) if serie else None
+
+    pl = saldo(bpp, None, ["PATRIMONIO LIQUIDO CONSOLIDADO", "PATRIMONIO LIQUIDO"])
+    caixa = saldo(bpa, ["1.01.01"], ["CAIXA E EQUIVALENTES"])
+    aplic = saldo(bpa, ["1.01.02"], ["APLICACOES FINANCEIRAS", "TITULOS E VALORES MOBILIARIOS"])
+    div_cp = saldo(bpp, ["2.01.04"], None)
+    div_lp = saldo(bpp, ["2.02.01"], None)
+    campos["patrimonio_liquido"] = pl
+    if div_cp is not None or div_lp is not None:
+        bruta = (div_cp or 0.0) + (div_lp or 0.0)
+        campos["divida_liquida"] = bruta - ((caixa or 0.0) + (aplic or 0.0))
+
+    if not any(v is not None for v in campos.values()):
+        return vazio
+
+    fim = max(abertura)
+    return {
+        "fim": str(pd.Timestamp(fim).date()),
+        "rotulo": f"LTM {_indice_do_trimestre(pd.Timestamp(abertura[fim]), pd.Timestamp(fim))}"
+                  f"T{str(pd.Timestamp(fim).year)[-2:]}",
+        "campos": campos,
+        # Diz ao front quais colunas são saldo: elas não somam 12 meses, e
+        # rotulá-las como se somassem seria mentir sobre o que o número é.
+        "saldos": ["patrimonio_liquido", "divida_liquida"],
+    }
+
+
 def quarterly_series(cd_cvm: str, max_tri: int = MAX_TRIMESTRES) -> dict:
     """Trimestres isolados e LTM por empresa, prontos para o painel.
 
@@ -340,6 +439,11 @@ def _series(
         if not hit.empty:
             return _collapse(hit, chave)
     return {}
+
+
+def _periodo(valor, chave: str):
+    """A chave de período tipada: ano inteiro no anual, Timestamp no trimestral."""
+    return int(valor) if chave == "ANO_REFER" else pd.Timestamp(valor)
 
 
 def _collapse(hit: pd.DataFrame, chave: str = "ANO_REFER") -> dict:
@@ -504,7 +608,7 @@ _DA_RE = r"DEPRECIA|AMORTIZ|EXAUST"
 _DA_EXCLUDE = r"DESPESAS ANTECIPADAS|AGIO|MAIS-VALIA|DIREITO DE USO CONTRAPRESTA"
 
 
-def _depreciation(dfc: pd.DataFrame) -> dict[int, float]:
+def _depreciation(dfc: pd.DataFrame, chave: str = "ANO_REFER") -> dict:
     """Depreciação, amortização e exaustão a partir do DFC.
 
     A CVM não padroniza código para D&A: a linha vive em 6.01.01.xx com
@@ -528,9 +632,10 @@ def _depreciation(dfc: pd.DataFrame) -> dict[int, float]:
         _both=(hit["DS_NORM"].str.contains("DEPRECIA", na=False)
                & hit["DS_NORM"].str.contains("AMORTIZ", na=False)).astype(int),
         _abs=hit["VL_CONTA_AJUSTADO"].abs(),
-    ).sort_values(["ANO_REFER", "_both", "_abs"], ascending=[True, False, False])
-    hit = hit.drop_duplicates("ANO_REFER", keep="first")
-    return {int(r.ANO_REFER): float(r.VL_CONTA_AJUSTADO) for r in hit.itertuples()}
+    ).sort_values([chave, "_both", "_abs"], ascending=[True, False, False])
+    hit = hit.drop_duplicates(chave, keep="first")
+    return {_periodo(getattr(r, chave), chave): float(r.VL_CONTA_AJUSTADO)
+            for r in hit.itertuples()}
 
 
 _CAPEX_RE = (r"IMOBILIZAD|INTANGIVE|ATIVO FIXO|ATIVOS FIXOS|PROPRIEDADE PARA INVESTIMENTO"
@@ -539,7 +644,7 @@ _CAPEX_EXCLUDE = (r"VENDA|ALIENACAO|RECEBIMENTO|BAIXA|RESGATE|REDUCAO|RECURSOS P
                   r"|DESIMOBILIZ|CAIXA LIQUIDO")
 
 
-def _capex(dfc: pd.DataFrame) -> dict[int, float]:
+def _capex(dfc: pd.DataFrame, chave: str = "ANO_REFER") -> dict:
     """CAPEX (investimento em imobilizado + intangível), como valor negativo.
 
     O código 6.02.01 NÃO é padronizado pela CVM — em várias empresas ele é
@@ -558,8 +663,8 @@ def _capex(dfc: pd.DataFrame) -> dict[int, float]:
     ].dropna(subset=["VL_CONTA_AJUSTADO"])
     if hit.empty:
         return {}
-    out: dict[int, float] = {}
-    for year, grp in hit.groupby("ANO_REFER"):
+    out: dict = {}
+    for periodo, grp in hit.groupby(chave):
         # Evita dupla contagem quando a empresa detalha a conta em sub-níveis:
         # fica só com o nível hierárquico mais agregado presente no ano.
         lvl = grp["CD_CONTA"].str.count(r"\.")
@@ -567,7 +672,7 @@ def _capex(dfc: pd.DataFrame) -> dict[int, float]:
         neg = grp[grp["VL_CONTA_AJUSTADO"] < 0]["VL_CONTA_AJUSTADO"].sum()
         total = neg if neg < 0 else -grp["VL_CONTA_AJUSTADO"].abs().sum()
         if total != 0:
-            out[int(year)] = float(total)
+            out[_periodo(periodo, chave)] = float(total)
     return out
 
 

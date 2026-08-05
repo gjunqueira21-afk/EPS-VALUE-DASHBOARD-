@@ -57,7 +57,7 @@ finlab/
 │       ├── engine.js   o motor de DCF/EPV — roda no navegador
 │       ├── charts.js   gráficos em SVG puro
 │       └── ...
-└── tests/              118 testes (pytest)
+└── tests/              127 testes (pytest)
 ```
 
 O front não carrega **nada** de CDN: fontes do sistema, gráficos em SVG escritos à mão.
@@ -147,6 +147,12 @@ para deixar claro que é derivado, não publicado. A linha de *últimos 12 meses
 soma móvel de quatro trimestres consecutivos; onde falta trimestre, ela não é
 desenhada em vez de somar períodos distantes.
 
+A tabela de demonstrações ganha uma coluna com o **ano em curso**, separada das
+colunas de exercício fechado. Nas linhas de resultado e de caixa ela soma os 12
+meses encerrados no último ITR; em dívida líquida e patrimônio líquido, que são
+**saldo e não fluxo**, vale o balanço daquela data — somar quatro trimestres de
+patrimônio líquido seria absurdo.
+
 ---
 
 ## Em que momento a empresa está
@@ -174,6 +180,15 @@ Três regras valem mais que a precisão da classificação:
 - **Um exercício não muda regime** — salvo o fato estrutural, que é estrutural por não
   precisar de repetição.
 - **Toda evidência traz data e número**, para você conferir a leitura.
+
+O regime também **escolhe o fluxo-base** do modelo, e o painel mostra a troca:
+de quanto para quanto, a conta que produziu o número, o porquê, e um botão para
+voltar à média de 3 anos. Em expansão a base vira o fluxo do ativo maduro (caixa
+das operações menos depreciação, o proxy de capex de manutenção); em
+desalavancagem, turnaround e reestruturação, o exercício mais recente. A troca
+não acontece quando a base alternativa é irrelevante perto do EBITDA — trocar
+um fluxo negativo por outro que é quase zero só faz o preço justo virar função
+da dívida.
 
 A classificação é **só contábil** por enquanto: guidance, troca de gestão, linguagem de
 call e fato relevante — metade do que define o momento de uma empresa — entram quando a
@@ -312,7 +327,7 @@ São leitura crítica dos números que estão na tela.
 python -m pytest finlab/tests -q
 ```
 
-118 testes cobrindo extração contábil da CVM (incluindo as armadilhas de escala do LPA e
+127 testes cobrindo extração contábil da CVM (incluindo as armadilhas de escala do LPA e
 das units), consistência dos múltiplos, as curvas do score, as premissas de valuation,
 o proxy de LLM nos três formatos de API, a desacumulação do ITR, o motor de DCF contra
 referência independente e

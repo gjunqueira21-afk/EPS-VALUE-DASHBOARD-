@@ -55,7 +55,102 @@ def base_fcf(fund: dict) -> dict:
     return {"ultimo": ultimo, "media3": media3, "historico": fcl[-5:]}
 
 
-def assumptions(fund: dict, snap: dict, macro: dict, brapi: Optional[dict] = None) -> dict:
+# Piso de conversão (FCL sobre EBITDA) para a base alternativa valer a troca.
+# Abaixo disso o fluxo é ruído perto da dívida e do custo de capital, e o
+# preço justo deixa de falar sobre a operação. Aferido nas empresas do
+# universo em regime de ruptura: elas se distribuem de 18% para cima, com a
+# MRV isolada em 7% — exatamente o caso em que a troca só serve para escapar
+# da barreira de fluxo não positivo.
+BASE_MATERIAL = 0.15
+
+
+def base_por_regime(fund: dict, fcf: dict, reg: Optional[dict]) -> Optional[dict]:
+    """O fluxo-base que o regime pede, quando ele difere do padrão do painel.
+
+    O padrão é a média de 3 anos do FCL, que só é uma estimativa honesta do
+    run-rate em operação normal (R0). Nos demais regimes ela descreve um
+    passado que não se repete — e o parecer 05 é explícito: o ajuste tem de
+    aparecer, senão o painel deixa de ser uma ferramenta de premissas abertas.
+
+    Devolve None quando o regime não pede nada diferente. Nunca troca a base
+    sozinha: quem escolhe continua sendo quem usa, e o padrão fica a um clique.
+    """
+    if not isinstance(reg, dict) or not reg.get("codigo") or reg["codigo"] == "R0":
+        return None
+
+    codigo = reg["codigo"]
+    series = fund.get("series") or {}
+
+    def media3(campo):
+        vals = [v for v in (series.get(campo) or []) if v is not None]
+        return _mean(vals[-3:]) if vals else None
+
+    if codigo == "R1":
+        # Fluxo do ativo maduro: o capex de expansão sai da base, o de
+        # manutenção fica. A depreciação é o proxy padrão de manutenção — é o
+        # que o ativo consome por ano para continuar sendo o que é.
+        fco, dep = media3("fco"), media3("depreciacao")
+        if fco is None or dep is None:
+            return None
+        valor = fco - abs(dep)
+        return {
+            "modo": "maduro",
+            "rotulo": "Ativo maduro",
+            "valor": round(valor, 2),
+            "porque": "Em expansão, o FCL é negativo por escolha: o capex embute a "
+                      "capacidade que ainda não gera receita. Esta base troca o capex "
+                      "total pelo de manutenção (proxy: a depreciação), estimando o que "
+                      "o ativo gera quando a expansão terminar. Cuidado: em negócio "
+                      "intensivo em capital a depreciação subestima a manutenção de "
+                      "verdade — o ativo foi comprado a custo histórico e se repõe a "
+                      "custo de hoje. Quanto maior o salto contra a média, mais essa "
+                      "base depende de a expansão de fato terminar.",
+            "conta": "caixa das operações (média 3a) − depreciação (média 3a)",
+        }
+
+    if codigo in ("R2", "R3", "R4"):
+        # Nos três, o passado descreve outra empresa: dívida sendo paga,
+        # estratégia refeita, ou um pedaço saindo. O exercício mais recente é
+        # o retrato menos contaminado que as demonstrações anuais oferecem.
+        ultimo = fcf.get("ultimo")
+        if ultimo is None:
+            return None
+        # Trocar uma base negativa por outra que é praticamente zero não
+        # melhora nada: o DCF passa a existir, mas o preço justo vira função
+        # só da dívida líquida. A MRV saía de −1,40 bi para +28 mi e o painel
+        # cuspia −404% de upside, onde antes dizia honestamente que não dava
+        # para valorar. Sem base material, o padrão fica e a barreira do
+        # fluxo não positivo faz o seu trabalho.
+        ebitda = media3("ebitda")
+        if ebitda and ultimo < BASE_MATERIAL * abs(ebitda):
+            return None
+        porque = {
+            "R2": "Em desalavancagem, a média de 3 anos mistura exercícios de "
+                  "estruturas de capital diferentes. Atenção: o fluxo está indo para o "
+                  "credor, então a ponte até o equity muda de ano para ano — e o painel "
+                  "ainda usa uma dívida líquida fixa.",
+            "R3": "Em turnaround, a média de 3 anos mistura o regime velho com o novo. "
+                  "A margem histórica deixou de ser âncora, e o valor está numa "
+                  "distribuição de cenários, não num ponto.",
+            "R4": "Com uma operação saindo, a média de 3 anos soma fluxos de um pedaço "
+                  "que não estará lá. O correto seria soma das partes — negócio "
+                  "contínuo mais o valor de realização do que está à venda —, e esse "
+                  "valor de realização o painel não tem.",
+        }[codigo]
+        return {
+            "modo": "ultimo",
+            "rotulo": "Último exercício",
+            "valor": round(float(fcf["ultimo"]), 2),
+            "porque": porque,
+            "conta": "FCL do exercício mais recente",
+        }
+
+    # R5: a base não muda; o que perde sentido é a comparação com pares.
+    return None
+
+
+def assumptions(fund: dict, snap: dict, macro: dict, brapi: Optional[dict] = None,
+                reg: Optional[dict] = None) -> dict:
     """Monta o conjunto de premissas iniciais para o motor de valuation."""
     sector = fund.get("sector") or ""
     base = fund.get("base", {})
@@ -148,6 +243,15 @@ def assumptions(fund: dict, snap: dict, macro: dict, brapi: Optional[dict] = Non
 
     fcf = base_fcf(fund)
     fcf_base = fcf["media3"] if fcf["media3"] is not None else fcf["ultimo"]
+    fcf_modo = "media3" if fcf["media3"] is not None else "ultimo"
+
+    # O regime manda no padrão do painel — é o item 2.6 do plano. Não é ajuste
+    # silencioso: o front mostra de quanto para quanto, a conta que produziu o
+    # número e o porquê, com um clique para voltar à média de 3 anos.
+    regime_base = base_por_regime(fund, fcf, reg)
+    if regime_base and regime_base.get("valor") is not None:
+        fcf_base = regime_base["valor"]
+        fcf_modo = regime_base["modo"]
 
     ebit_hist = [v for v in (fund.get("series", {}).get("ebit") or []) if v is not None]
     ebit_norm = _mean(ebit_hist[-3:]) if ebit_hist else None
@@ -187,7 +291,8 @@ def assumptions(fund: dict, snap: dict, macro: dict, brapi: Optional[dict] = Non
         "fcf_ultimo": fcf["ultimo"],
         "fcf_media3": fcf["media3"],
         "fcf_historico": fcf["historico"],
-        "fcf_modo": "media3" if fcf["media3"] is not None else "ultimo",
+        "fcf_regime": regime_base,
+        "fcf_modo": fcf_modo,
         "ebit_normalizado": ebit_norm,
         "ebitda_normalizado": ebitda_norm,
         "fcl_sobre_ebitda": fcl_sobre_ebitda,
@@ -335,6 +440,9 @@ def bdr_assumptions(fund: dict, snap: dict, macro: dict,
         "fcf_ultimo": fcf["ultimo"],
         "fcf_media3": fcf["media3"],
         "fcf_historico": fcf["historico"],
+        # BDR não passa por classificação de regime: as demonstrações vêm do
+        # Yahoo, sem o plano de contas da CVM que os sinais leem.
+        "fcf_regime": None,
         "fcf_modo": "media3" if fcf["media3"] is not None else "ultimo",
         "ebit_normalizado": ebit_norm,
         "ebitda_normalizado": ebitda_norm,

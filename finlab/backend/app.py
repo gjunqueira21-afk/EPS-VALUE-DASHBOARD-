@@ -192,7 +192,10 @@ def api_company(ticker: str):
     mult = metrics.multiples(fund, snap, brapi)
     sc = scoring.score(fund.get("indicadores", {}), fund.get("financial", False))
     macro_data = market.macro()
-    prem = valuation.assumptions(fund, snap, macro_data, brapi)
+    # O regime vem antes das premissas: é ele que diz se a média de 3 anos
+    # descreve o run-rate desta empresa ou o de outra que ela já foi.
+    reg = regime.classificar(fund)
+    prem = valuation.assumptions(fund, snap, macro_data, brapi, reg=reg)
 
     overview = _overview_rows()
     stats = (overview.get("sector_stats") or {}).get(comp.sector, {})
@@ -214,7 +217,8 @@ def api_company(ticker: str):
         "consenso": _consenso(brapi),
         "itr": cvm.latest_quarter(comp.cd_cvm),
         "trimestral": cvm.quarterly_series(comp.cd_cvm),
-        "regime": regime.classificar(fund),
+        "ltm": cvm.ltm_series(comp.cd_cvm),
+        "regime": reg,
         "source": snap.get("price_source"),
     }
 

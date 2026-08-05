@@ -27,9 +27,18 @@
     return (p.get('ticker') || 'PETR4').toUpperCase();
   }
 
-  function fcfBase() {
+  /** A base crua de cada modo, antes do ajuste manual. */
+  function fcfCru(modo) {
     const a = state.a;
-    const raw = state.fcfMode === 'ultimo' ? a.fcf_ultimo : a.fcf_media3;
+    const reg = a.fcf_regime;
+    // "maduro" é uma base calculada pelo regime (não é nem a média nem o
+    // último exercício): ela só existe quando o backend a devolve.
+    if (modo === 'maduro') return reg && reg.modo === 'maduro' ? reg.valor : null;
+    return modo === 'ultimo' ? a.fcf_ultimo : a.fcf_media3;
+  }
+
+  function fcfBase() {
+    const raw = fcfCru(state.fcfMode);
     if (!isNum(raw)) return null;
     return raw * (1 + state.fcfAjuste);
   }
@@ -288,7 +297,7 @@
         state.a[k] = v; mudou = true;
       }
     });
-    if (delta.fcf_modo === 'ultimo' || delta.fcf_modo === 'media3') {
+    if (['ultimo', 'media3', 'maduro'].includes(delta.fcf_modo)) {
       state.fcfMode = delta.fcf_modo; mudou = true;
     }
     if (isNum(delta.fcf_ajuste)) { state.fcfAjuste = delta.fcf_ajuste; mudou = true; }
@@ -348,7 +357,9 @@
       + ` · prêmio extra ${fmt.pct(a.premio_extra, 2)}`);
     L.push(`  Kd = CDI + ${fmt.pct(a.spread_credito, 2)} · D/(D+E) ${fmt.pct(a.wd, 0)}`
       + ` · imposto ${fmt.pct(a.tax, 1)}`);
-    L.push(`  FCL base ${fmt.big(a.fcf_base, 2)} (${state.fcfMode === 'ultimo' ? 'último exercício' : 'média 3 anos'}`
+    const NOME_MODO = { ultimo: 'último exercício', media3: 'média 3 anos',
+                        maduro: 'ativo maduro, base do regime' };
+    L.push(`  FCL base ${fmt.big(a.fcf_base, 2)} (${NOME_MODO[state.fcfMode] || state.fcfMode}`
       + (state.fcfAjuste ? `, ajuste ${fmt.pctSigned(state.fcfAjuste, 0)}` : '') + ')');
     L.push(`  Crescimento: ${g.map((v) => fmt.pct(v, 1)).join(' → ')}`
       + ` · perpetuidade ${fmt.pct(a.g_terminal, 2)}`);
@@ -829,18 +840,52 @@
 
     // Fluxo base -------------------------------------------------------
     const fcfBox = h('div', { class: 'ctrl-body' });
+    const reg = state.a.fcf_regime;
     const modos = [['media3', 'Média 3 anos'], ['ultimo', 'Último exercício']];
+    // O regime só entra como opção quando pede uma base que ainda não está na
+    // lista. Quando ele aponta para "último exercício", a sugestão vira um
+    // destaque no chip que já existe, em vez de um chip duplicado.
+    if (reg && reg.modo === 'maduro') modos.push(['maduro', reg.rotulo]);
+    const sugerido = reg ? reg.modo : null;
+
     const chips = h('div', { style: 'display:flex;gap:6px;margin:8px 0 4px;flex-wrap:wrap' },
       modos.map(([key, label]) => {
-        const disponivel = isNum(key === 'ultimo' ? state.a.fcf_ultimo : state.a.fcf_media3);
+        const disponivel = isNum(fcfCru(key));
         return h('button', {
-          class: 'chip' + (state.fcfMode === key ? ' on' : ''),
+          class: 'chip' + (state.fcfMode === key ? ' on' : '')
+            + (key === sugerido ? ' sugerido' : ''),
           disabled: disponivel ? null : 'disabled',
+          title: key === sugerido ? 'base indicada pelo regime da empresa' : null,
           onclick: () => { state.fcfMode = key; rebuildControls(); renderAll(); }
-        }, label);
+        }, label + (key === sugerido ? ' ◆' : ''));
       })
     );
     fcfBox.appendChild(chips);
+
+    // O ajuste tem de aparecer: de quanto para quanto, e por quê. Um painel
+    // que troca a base em silêncio deixa de ser de premissas abertas.
+    if (reg && isNum(reg.valor) && isNum(state.a.fcf_media3)) {
+      const delta = (reg.valor - state.a.fcf_media3) / Math.abs(state.a.fcf_media3);
+      fcfBox.appendChild(h('div', { class: 'fcf-regime' }, [
+        h('div', { class: 'fcf-regime-h' }, [
+          h('b', {}, 'O regime pede outra base.'),
+          ' ', fmt.big(state.a.fcf_media3, 2), ' → ', h('b', {}, fmt.big(reg.valor, 2)),
+          isFinite(delta) ? h('span', { class: 'fcf-regime-delta' },
+            ` (${delta >= 0 ? '+' : ''}${fmt.pct(delta, 0)})`) : null
+        ]),
+        h('div', { class: 'fcf-regime-conta' }, reg.conta),
+        h('div', { class: 'fcf-regime-txt' }, reg.porque),
+        state.fcfMode !== sugerido
+          ? h('button', {
+              class: 'btn ghost', style: 'margin-top:8px;font-size:11px',
+              onclick: () => { state.fcfMode = sugerido; rebuildControls(); renderAll(); }
+            }, 'usar a base do regime')
+          : h('button', {
+              class: 'btn ghost', style: 'margin-top:8px;font-size:11px',
+              onclick: () => { state.fcfMode = 'media3'; rebuildControls(); renderAll(); }
+            }, 'voltar para a média de 3 anos')
+      ]));
+    }
     fcfBox.appendChild(h('div', {
       style: 'font:700 18px var(--mono);color:var(--brand);margin:6px 0 2px'
     }, fmt.big(fcfBase(), 2)));
@@ -1399,19 +1444,44 @@
          ['capex', 'Capex'], ['fcl', 'Fluxo de caixa livre'],
          ['divida_liquida', 'Dívida líquida'], ['patrimonio_liquido', 'Patrimônio líquido']];
 
+    // O ano em curso é o período que mais interessa e era o único que faltava:
+    // a tabela só tinha exercícios fechados. A coluna do ITR entra ao lado.
+    const ltm = state.data.ltm || {};
+    const temLtm = !!(ltm.campos && Object.keys(ltm.campos).length);
+    const saldos = new Set(ltm.saldos || []);
+
     host.appendChild(h('section', { class: 'panel' }, [
       h('div', { class: 'panel-h' }, h('div', { class: 'ptitle' },
-        [h('b', {}, 'Demonstrações consolidadas'), ' · DFP anual da CVM'])),
+        [h('b', {}, 'Demonstrações consolidadas'), ' · DFP anual da CVM',
+         temLtm ? ' + o ano em curso pelo ITR' : ''])),
       h('div', { class: 'table-wrap' }, h('table', {}, [
         h('thead', {}, h('tr', {}, [h('th', { class: 'left' }, 'R$')]
-          .concat(labels.map((y) => h('th', {}, y))))),
+          .concat(labels.map((y) => h('th', {}, y)))
+          .concat(temLtm ? [h('th', { class: 'col-ltm' }, ltm.rotulo)] : []))),
         h('tbody', {}, LINHAS.map(([key, label]) => h('tr', {}, [
           h('td', { class: 'left' }, label)
         ].concat(anos.map((_, i) => {
           const v = (s[key] || [])[i];
           return h('td', { class: 'num ' + (isNum(v) && v < 0 ? 'neg' : '') }, fmt.bigShort(v, 1));
-        })))))
-      ]))
+        })).concat(temLtm ? [(() => {
+          const v = ltm.campos[key];
+          return h('td', {
+            class: 'num col-ltm ' + (isNum(v) && v < 0 ? 'neg' : ''),
+            title: isNum(v)
+              ? (saldos.has(key) ? 'saldo no balanço de ' + fmt.date(ltm.fim)
+                                 : '12 meses encerrados em ' + fmt.date(ltm.fim))
+              : 'o ITR não fecha 12 meses para esta linha'
+          }, fmt.bigShort(v, 1));
+        })()] : []))))
+      ])),
+      temLtm ? h('div', {
+        class: 'note',
+        html: '<b>A última coluna é o ano em curso, não um exercício fechado.</b> Nas linhas '
+          + 'de resultado e de caixa ela soma os <b>12 meses</b> encerrados em '
+          + esc(fmt.date(ltm.fim)) + ', a partir dos trimestres do ITR desacumulados. '
+          + 'Já dívida líquida e patrimônio líquido são <b>saldo</b>, não fluxo: ali vale o '
+          + 'balanço daquela data, sem somar trimestre nenhum.'
+      }) : null
     ]));
   }
 

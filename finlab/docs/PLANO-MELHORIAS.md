@@ -116,9 +116,16 @@ precisa de um scraper. Precisa de um leitor de CSV."
       *Parcial:* o painel existe no topo da tela com regime, o que ele quebra no
       valuation, o tratamento indicado do fluxo-base e as evidências datadas.
       Plano declarado, placar de execução e agenda dependem de 2.1–2.3.
-- [ ] **2.6 Regime → motor** — o regime escolhe o tratamento do fluxo-base
+- [~] **2.6 Regime → motor** — o regime escolhe o tratamento do fluxo-base
       (média 3a só em R0; 12m móveis ex-itens em R3; capex explícito em R1),
       sempre com o ajuste MOSTRADO. *(05 §5)*
+      *Parcial:* o regime já escolhe a base e o painel mostra de quanto para
+      quanto, a conta e o porquê, com um clique para voltar. R1 ganhou base
+      própria (ativo maduro = FCO − depreciação); R2/R3/R4 passam ao exercício
+      mais recente. Falta o que exige dado que o painel não tem: soma das
+      partes em R4 (valor de realização) e a ponte EV→equity recalculada por
+      ano em R2. O "ex-itens marcados" de R3 depende de 12m móveis do core,
+      que o ITR não segrega.
 - **Não fazer:** sentimento numérico de call; narrativa da gestão misturada com
   fato; sumarizar apresentação e Q&A juntos. *(05 §7)*
 

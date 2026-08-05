@@ -1517,3 +1517,153 @@ def test_regime_nao_derruba_o_painel_com_serie_torta():
     ):
         r = regime.classificar(torta)
         assert r["codigo"] in (None, "R0", "R1", "R2", "R3", "R4", "R5")
+
+
+# ---------------------------------------------------------------------------
+# Regime → fluxo-base (item 2.6)
+# ---------------------------------------------------------------------------
+
+def _fcf(ultimo, media3):
+    return {"ultimo": ultimo, "media3": media3, "historico": []}
+
+
+def test_regime_r0_nao_mexe_na_base():
+    """R0 é o único mundo em que a média de 3 anos já é honesta. Mexer nela
+    ali seria trocar uma premissa boa por outra sem motivo."""
+    from finlab.backend import valuation
+
+    fund = _fund([2023, 2024, 2025], fco=[10.0] * 3, depreciacao=[3.0] * 3)
+    assert valuation.base_por_regime(fund, _fcf(7.0, 6.0), {"codigo": "R0"}) is None
+    assert valuation.base_por_regime(fund, _fcf(7.0, 6.0), None) is None
+    assert valuation.base_por_regime(fund, _fcf(7.0, 6.0), {"codigo": None}) is None
+
+
+def test_base_de_expansao_troca_capex_total_por_manutencao():
+    """Em R1 o FCL é negativo por escolha. A base do ativo maduro é o caixa
+    das operações menos o capex de manutenção — e a depreciação é o proxy."""
+    from finlab.backend import valuation
+
+    fund = _fund([2023, 2024, 2025], fco=[100.0] * 3, depreciacao=[30.0] * 3)
+    b = valuation.base_por_regime(fund, _fcf(-5.0, -8.0), {"codigo": "R1"})
+    assert b["modo"] == "maduro"
+    assert b["valor"] == 70.0                      # 100 − 30
+    # o sinal da depreciação não pode inverter a conta
+    fund_neg = _fund([2023, 2024, 2025], fco=[100.0] * 3, depreciacao=[-30.0] * 3)
+    assert valuation.base_por_regime(fund_neg, _fcf(-5.0, -8.0),
+                                     {"codigo": "R1"})["valor"] == 70.0
+    # o texto avisa que o proxy é otimista em negócio intensivo em capital
+    assert "subestima" in b["porque"]
+
+
+def test_base_de_expansao_desiste_sem_depreciacao():
+    """Sem depreciação não há proxy de manutenção: melhor não propor base
+    nenhuma do que inventar uma."""
+    from finlab.backend import valuation
+
+    fund = _fund([2023, 2024, 2025], fco=[100.0] * 3)
+    assert valuation.base_por_regime(fund, _fcf(1.0, 1.0), {"codigo": "R1"}) is None
+
+
+def test_regimes_de_ruptura_usam_o_exercicio_mais_recente():
+    """Em desalavancagem, turnaround e desinvestimento a média de 3 anos
+    descreve outra empresa. Cada um explica o próprio motivo."""
+    from finlab.backend import valuation
+
+    fund = _fund([2023, 2024, 2025], fco=[10.0] * 3, depreciacao=[3.0] * 3)
+    for codigo, marca in (("R2", "credor"), ("R3", "turnaround"), ("R4", "soma das partes")):
+        b = valuation.base_por_regime(fund, _fcf(9.0, 4.0), {"codigo": codigo})
+        assert b["modo"] == "ultimo" and b["valor"] == 9.0, codigo
+        assert marca in b["porque"], codigo
+
+
+def test_r5_nao_muda_a_base():
+    """Em integração de M&A o que perde sentido é a comparação com pares, não
+    o fluxo-base."""
+    from finlab.backend import valuation
+
+    fund = _fund([2023, 2024, 2025], fco=[10.0] * 3, depreciacao=[3.0] * 3)
+    assert valuation.base_por_regime(fund, _fcf(9.0, 4.0), {"codigo": "R5"}) is None
+
+
+def test_toda_base_de_regime_carrega_a_conta_e_o_porque():
+    """O ajuste invisível é o pecado nº 6 do parecer: se o painel troca a base,
+    ele tem de dizer qual conta produziu o número e por que trocou."""
+    from finlab.backend import valuation
+
+    fund = _fund([2023, 2024, 2025], fco=[100.0] * 3, depreciacao=[30.0] * 3)
+    for codigo in ("R1", "R2", "R3", "R4"):
+        b = valuation.base_por_regime(fund, _fcf(9.0, 4.0), {"codigo": codigo})
+        assert b["conta"] and b["porque"] and b["rotulo"], codigo
+        assert b["modo"] in ("maduro", "ultimo"), codigo
+
+
+def test_base_de_regime_nao_resgata_fluxo_irrelevante():
+    """Trocar uma base negativa por outra que é praticamente zero não melhora
+    nada: o DCF passa a existir, mas o preço justo vira função só da dívida.
+    A MRV saía de −1,40 bi para +28 mi e o painel cuspia −404% de upside onde
+    antes dizia, honestamente, que não dava para valorar."""
+    from finlab.backend import valuation
+
+    fund = _fund([2023, 2024, 2025], ebitda=[0.20e9, 0.61e9, 0.45e9])
+    # conversão de 7% do EBITDA: fica com o padrão e a barreira faz o trabalho
+    assert valuation.base_por_regime(fund, _fcf(0.03e9, -1.40e9), {"codigo": "R3"}) is None
+    # conversão saudável: a troca vale
+    b = valuation.base_por_regime(fund, _fcf(0.30e9, -1.40e9), {"codigo": "R3"})
+    assert b and b["valor"] == 0.30e9
+
+
+# ---------------------------------------------------------------------------
+# Ano em curso (LTM) na tabela de demonstrações
+# ---------------------------------------------------------------------------
+
+def test_ltm_soma_fluxo_e_nao_soma_saldo(tmp_path, monkeypatch):
+    """As duas naturezas de conta: fluxo soma 12 meses, saldo é o do balanço
+    mais recente. Somar quatro trimestres de patrimônio líquido seria absurdo,
+    e é o tipo de erro que passa despercebido numa tabela bonita."""
+    import pandas as pd
+
+    monkeypatch.setattr(cvm, "CVM_PROCESSED_DIR", tmp_path)
+    cvm._frames.cache_clear()
+    try:
+        # DRE trimestral acumulada: 4 trimestres isolados de 100 cada
+        dre = []
+        for ano, accs in ((2024, (100.0, 200.0, 300.0)), (2025, (100.0, 200.0, 300.0))):
+            for fim, acc in zip((f"{ano}-03-31", f"{ano}-06-30", f"{ano}-09-30"), accs):
+                dre.append(_linha_itr(fim, f"{ano}-01-01", "3.01", RE_DS, acc))
+        pd.DataFrame(dre).to_parquet(tmp_path / "dre_itr.parquet", index=False)
+        # anual fecha 2024 em 400 -> 4T24 isolado = 100
+        pd.DataFrame([{
+            "CD_CVM": "009512", "DENOM_CIA": "X", "CNPJ_CIA": "x",
+            "DT_FIM_EXERC": pd.Timestamp("2024-12-31"), "ANO_REFER": 2024,
+            "CD_CONTA": "3.01", "DS_CONTA": RE_DS, "VL_CONTA_AJUSTADO": 400.0,
+        }]).to_parquet(tmp_path / "dre_dfp.parquet", index=False)
+        # balanço: saldo cresce a cada trimestre; o LTM tem de pegar o último
+        bpp = [{"CD_CVM": "009512", "DENOM_CIA": "X", "CNPJ_CIA": "x",
+                "DT_INI_EXERC": pd.Timestamp("2025-01-01"),
+                "DT_FIM_EXERC": pd.Timestamp(f), "ORDEM_EXERC": "ÚLTIMO",
+                "ANO_REFER": 2025, "CD_CONTA": "2.03",
+                "DS_CONTA": "Patrimônio Líquido Consolidado", "VL_CONTA_AJUSTADO": v}
+               for f, v in (("2025-03-31", 900.0), ("2025-06-30", 950.0))]
+        pd.DataFrame(bpp).to_parquet(tmp_path / "bpp_itr.parquet", index=False)
+        cvm._frames.cache_clear()
+
+        l = cvm.ltm_series("009512")
+        assert l["fim"] == "2025-09-30"
+        # fluxo: 4T24 (100) + 1T25 + 2T25 + 3T25 (100 cada) = 400
+        assert l["campos"]["receita"] == 400.0
+        # saldo: o do balanço mais recente, jamais a soma dos trimestres
+        assert l["campos"]["patrimonio_liquido"] == 950.0
+        assert "patrimonio_liquido" in l["saldos"]
+    finally:
+        cvm._frames.cache_clear()
+
+
+def test_ltm_vazio_sem_itr(tmp_path, monkeypatch):
+    """Sem ITR a coluna do ano em curso não aparece — e a tabela anual segue."""
+    monkeypatch.setattr(cvm, "CVM_PROCESSED_DIR", tmp_path)
+    cvm._frames.cache_clear()
+    try:
+        assert cvm.ltm_series("009512") == {}
+        assert cvm.ltm_series("") == {}
+    finally:
+        cvm._frames.cache_clear()

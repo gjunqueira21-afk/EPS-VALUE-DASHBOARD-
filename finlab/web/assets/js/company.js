@@ -28,6 +28,15 @@
   }
 
   /** A base crua de cada modo, antes do ajuste manual. */
+  /* Par semântico da tela: azul para o lado bom, laranja para o ruim. Não é
+     escolha estética — verde e vermelho colidem na deuteranopia, e em vários
+     lugares do painel a cor é o único canal que separa os dois lados. Onde
+     havia um segundo canal (o sinal de menos no número), o vermelho ficou. */
+  const CORES_UPSIDE = {
+    muito_alto: '#38BDF8', alto: '#7DD3FC', neutro: '#67E8F9',
+    baixo: '#FDBA74', muito_baixo: '#FB923C'
+  };
+
   function fcfCru(modo) {
     const a = state.a;
     const reg = a.fcf_regime;
@@ -588,14 +597,19 @@
       const b2 = isNum(g0) ? g0 : b1;
       const b3 = isNum(g30) ? g30 : hi;
 
-      zonas.push({ from: lo, to: b1, color: 'rgba(248,113,113,.11)' });
-      zonas.push({ from: b1, to: b2, color: 'rgba(245,184,65,.10)' });
-      zonas.push({ from: b2, to: b3, color: 'rgba(103,232,249,.09)' });
-      zonas.push({ from: b3, to: hi, color: 'rgba(52,211,153,.11)' });
+      // As faixas de fundo seguem o mesmo eixo azul/laranja da linha: eram o
+      // último lugar da régua onde a leitura dependia de distinguir verde de
+      // vermelho.
+      zonas.push({ from: lo, to: b1, color: 'rgba(251,146,60,.13)' });
+      zonas.push({ from: b1, to: b2, color: 'rgba(253,186,116,.09)' });
+      zonas.push({ from: b2, to: b3, color: 'rgba(125,211,252,.09)' });
+      zonas.push({ from: b3, to: hi, color: 'rgba(56,189,248,.12)' });
 
       if (isNum(g0)) marcadores.push({ x: g0, color: '#67E8F9', label: 'preço justo = tela ' + fmt.pct(g0, 1) });
-      if (isNum(g30)) marcadores.push({ x: g30, color: '#34D399', label: '+30% ' + fmt.pct(g30, 1) });
-      if (isNum(gm20)) marcadores.push({ x: gm20, color: '#F87171', label: '-20% ' + fmt.pct(gm20, 1) });
+      if (isNum(g30)) marcadores.push({ x: g30, color: CORES_UPSIDE.muito_alto,
+                                        label: '+30% ' + fmt.pct(g30, 1) });
+      if (isNum(gm20)) marcadores.push({ x: gm20, color: CORES_UPSIDE.muito_baixo,
+                                         label: '-20% ' + fmt.pct(gm20, 1) });
     }
 
     // O MESMO cálculo dos KPIs: ponto e card nunca mais divergem.
@@ -629,9 +643,13 @@
       series: [{
         name: 'Preço justo', points: pts, width: 2.6,
         colorAt: (x, y) => {
-          if (!isNum(preco)) return '#67E8F9';
+          // Escala divergente azul/laranja, a mesma do heatmap: verde e
+          // vermelho são indistinguíveis na forma mais comum de daltonismo,
+          // e aqui a cor é o único canal que separa upside de downside.
+          if (!isNum(preco)) return CORES_UPSIDE.neutro;
           const up = y / preco - 1;
-          return up > 0.30 ? '#34D399' : up > 0 ? '#67E8F9' : up > -0.20 ? '#F5B841' : '#F87171';
+          return up > 0.30 ? CORES_UPSIDE.muito_alto : up > 0 ? CORES_UPSIDE.alto
+            : up > -0.20 ? CORES_UPSIDE.baixo : CORES_UPSIDE.muito_baixo;
         }
       }].concat(isNum(preco) ? [{
         name: 'Preço de tela',
@@ -1193,7 +1211,8 @@
         { label: 'VP dos fluxos', value: r.soma_vp, color: '#38BDF8' },
         { label: 'VP da perpetuidade', value: r.vp_terminal, color: '#A78BFA' },
         { label: 'Enterprise value', value: r.ev, tipo: 'total', color: '#67E8F9' },
-        { label: 'Dívida líquida', value: -dl, color: dl > 0 ? '#FB923C' : '#34D399' },
+        { label: 'Dívida líquida', value: -dl,
+          color: dl > 0 ? CORES_UPSIDE.muito_baixo : CORES_UPSIDE.muito_alto },
         { label: 'Equity value', value: r.equity_value, tipo: 'total', color: '#34D399' }
       ],
       format: (v) => fmt.bigShort(v, 1),
@@ -1211,7 +1230,8 @@
     box.appendChild(linha('VP dos fluxos explícitos', fmt.big(r.soma_vp, 2)));
     box.appendChild(linha('VP da perpetuidade', fmt.big(r.vp_terminal, 2)));
     box.appendChild(linha('= Enterprise Value', fmt.big(r.ev, 2), '#67E8F9'));
-    box.appendChild(linha('− Dívida líquida', fmt.big(-dl, 2), dl > 0 ? '#F87171' : '#34D399'));
+    box.appendChild(linha('− Dívida líquida', fmt.big(-dl, 2),
+                          dl > 0 ? CORES_UPSIDE.muito_baixo : CORES_UPSIDE.muito_alto));
     box.appendChild(linha('= Equity value', fmt.big(r.equity_value, 2), '#A78BFA'));
     box.appendChild(linha(
       a.bdr ? '→ preço justo por BDR (via market cap e câmbio)'
@@ -1708,6 +1728,36 @@
     }
   }
 
+  /* =============================================== redesenho estrutural === */
+
+  /** Força a aba corrente a ser montada de novo (ela é memoizada por padrão). */
+  function remontarAba() {
+    const host = qs(`[data-panel="${state.tab}"]`);
+    if (host) host.dataset.done = '';
+    if (state.tab === 'valuation') renderValuation();
+    if (state.tab === 'fundamentos') renderFundamentos();
+    if (state.tab === 'saude') renderSaude();
+    if (state.tab === 'pares') renderPares();
+  }
+
+  /**
+   * Dois caminhos de render, de propósito:
+   *
+   *   barato      renderLive() — as premissas mudaram, a geometria não. É o
+   *               que roda a cada frame do slider.
+   *   estrutural  aqui — a largura mudou, então todo SVG precisa nascer de
+   *               novo. Caro: remonta a aba inteira, e por isso só dispara
+   *               quando a janela de fato mudou de tamanho.
+   */
+  function bindResize() {
+    if (!C.observarLargura) return;
+    C.observarLargura(() => {
+      if (!state.a || !state.a.aplicavel) { renderStrip(); renderRegime(); return; }
+      renderLive();
+      remontarAba();
+    });
+  }
+
   /* ============================================================== abas */
 
   function bindTabs() {
@@ -1950,6 +2000,7 @@
       if (state.a.aplicavel) rebuildControls();
       bindTabs();
       bindSearch();
+      bindResize();
       renderAll();
       renderFooter();
 

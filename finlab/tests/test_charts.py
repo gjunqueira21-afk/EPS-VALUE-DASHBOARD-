@@ -373,3 +373,34 @@ def test_barra_derivada_ganha_hachura_e_rotulos_nao_colidem(pagina):
     assert saida["barras"] == 12, saida           # nenhuma barra some
     assert saida["colisoes"] == 0, saida
     assert saida["rotulos"] >= 4, "rareou rótulo demais"
+
+
+def test_observador_redesenha_so_quando_a_largura_muda_de_fato(pagina):
+    """O SVG tem viewBox fixo e preserveAspectRatio "none": ele estica junto
+    com a caixa. Sem redesenhar, arrastar a janela de 1366 para 626 mantinha o
+    desenho de 1366 esmagado. Mas redesenhar a cada pixel seria caro — o
+    gatilho é a largura ter mudado além do limiar, com espera."""
+    saida = pagina("""
+        const box = document.getElementById('box');
+        const alvo = document.createElement('div');
+        alvo.style.width = '800px';
+        document.body.appendChild(alvo);
+        let chamadas = 0;
+        FLChart.observarLargura(() => { chamadas++; }, {alvo, espera: 20, limiar: 12});
+        const esperar = ms => new Promise(r => setTimeout(r, ms));
+        return (async () => {
+          await esperar(60);
+          const inicial = chamadas;              // observar não dispara sozinho
+          alvo.style.width = '805px';            // 5px: ruído, abaixo do limiar
+          await esperar(80);
+          const ruido = chamadas;
+          alvo.style.width = '400px';            // mudança real
+          await esperar(120);
+          const real = chamadas;
+          alvo.remove();
+          return {inicial, ruido, real};
+        })();
+    """)
+    assert saida["inicial"] == 0, "montar o observador não pode redesenhar nada"
+    assert saida["ruido"] == 0, "variação menor que o limiar não pode redesenhar"
+    assert saida["real"] == 1, saida

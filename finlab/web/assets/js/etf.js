@@ -147,7 +147,12 @@
   window.FLChat.init({ ticker: ticker, tela: 'etfs', rotulo: 'sobre o ETF ' + ticker });
 
   api('/api/etf/' + encodeURIComponent(ticker))
-    .then(render)
+    .then((d) => {
+      render(d);
+      // O SVG estica junto com a caixa (viewBox fixo + preserveAspectRatio
+      // "none"): sem redesenhar, mudar a largura da janela deforma o gráfico.
+      if (C.observarLargura) C.observarLargura(() => render(d));
+    })
     .catch((err) => {
       el('content').appendChild(h('div', { class: 'callout bad' },
         'Não foi possível carregar ' + ticker + ': ' + err.message));

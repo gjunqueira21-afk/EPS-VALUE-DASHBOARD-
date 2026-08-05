@@ -371,44 +371,87 @@ def test_pulse_recorta_o_historico_sem_perder_a_janela_do_painel(monkeypatch):
     assert [d for d, _ in serie] == [recente]
 
 
-def test_xai_cai_para_o_endpoint_responses(monkeypatch):
-    """A xAI tem dois endpoints e não dá para saber daqui qual serve cada modelo.
+class _RespFake:
+    def __init__(self, status, payload):
+        self.status_code, self._payload, self.text = status, payload, str(payload)
 
-    Quando /chat/completions recusa o modelo, a chamada tem de tentar
-    /v1/responses (que usa `input` no lugar de `messages`) antes de desistir.
-    Um 401 não: repetir com a mesma chave rejeitada só gasta uma chamada.
+    def json(self):
+        return self._payload
+
+
+def test_xai_busca_usa_agent_tools_no_responses(monkeypatch):
+    """O Live Search por search_parameters morreu (o provedor devolve 410).
+
+    Com busca pedida, a chamada vai DIRETO ao /v1/responses com as ferramentas
+    em `tools` — não passa pelo /chat/completions, onde a busca não existe.
+    As fontes de `citations` entram no fim do texto.
     """
     chamadas = []
 
-    class Resp:
-        def __init__(self, status, payload):
-            self.status_code, self._payload, self.text = status, payload, str(payload)
+    def fake_post(url, **kw):
+        chamadas.append((url, kw.get("json") or {}))
+        return _RespFake(200, {"output_text": "contexto levantado",
+                               "citations": ["https://x.com/post/1"]})
 
-        def json(self):
-            return self._payload
+    monkeypatch.setattr(agents.requests, "post", fake_post)
+    texto = agents.chat("xai", "k", "grok-4-fast", "sys", "usr", buscar=True)
+
+    assert texto.startswith("contexto levantado")
+    assert "https://x.com/post/1" in texto
+    assert [u for u, _ in chamadas] == ["https://api.x.ai/v1/responses"]
+    corpo = chamadas[0][1]
+    assert corpo["tools"] == agents.FERRAMENTAS_BUSCA
+    assert "input" in corpo and "messages" not in corpo
+    assert "search_parameters" not in corpo
+
+
+def test_xai_sem_busca_cai_para_o_responses_quando_recusado(monkeypatch):
+    """Modelo novo pode não ser servido no /chat/completions: cai para o
+    /v1/responses. Um 401 não repete — chave rejeitada não melhora tentando."""
+    chamadas = []
 
     def fake_post(url, **kw):
         chamadas.append((url, kw.get("json") or {}))
         if url.endswith("/chat/completions"):
-            return Resp(404, {"error": "model not found on this endpoint"})
-        return Resp(200, {"output_text": "contexto levantado"})
+            return _RespFake(404, {"error": "model not found"})
+        return _RespFake(200, {"output_text": "resposta"})
 
     monkeypatch.setattr(agents.requests, "post", fake_post)
-    texto = agents.chat("xai", "k", "grok-4.5", "sys", "usr", buscar=True)
-
-    assert texto == "contexto levantado"
+    assert agents.chat("xai", "k", "grok-4.5", "sys", "usr") == "resposta"
     assert [u for u, _ in chamadas] == ["https://api.x.ai/v1/chat/completions",
                                         "https://api.x.ai/v1/responses"]
-    # O segundo corpo usa `input`, e a busca ao vivo viaja junto.
-    assert "input" in chamadas[1][1] and "messages" not in chamadas[1][1]
-    assert agents.BUSCA_CAMPO in chamadas[1][1]
+    # Sem busca pedida, nada de tools no corpo.
+    assert "tools" not in chamadas[1][1]
 
     chamadas.clear()
     monkeypatch.setattr(agents.requests, "post",
-                        lambda url, **kw: (chamadas.append(url), Resp(401, {}))[1])
+                        lambda url, **kw: (chamadas.append(url), _RespFake(401, {}))[1])
     with pytest.raises(agents.LLMError):
         agents.chat("xai", "k", "grok-4.5", "sys", "usr")
     assert len(chamadas) == 1
+
+
+def test_chat_conversa_com_busca_e_personas_novas(monkeypatch):
+    """O chat também sabe buscar: o Agente de Contexto abre a rodada por lá.
+
+    E as três vozes novas (contexto, cetico, moderador) têm persona própria —
+    sem entrada em CHAT_PERSONAS, a fala sairia com o prompt genérico da mesa.
+    """
+    for chave in ("contexto", "cetico", "moderador"):
+        assert chave in agents.CHAT_PERSONAS, chave
+
+    chamadas = []
+
+    def fake_post(url, **kw):
+        chamadas.append((url, kw.get("json") or {}))
+        return _RespFake(200, {"output_text": "radar do dia"})
+
+    monkeypatch.setattr(agents.requests, "post", fake_post)
+    texto = agents.chat_conversa("xai", "k", "grok-4-fast", "CTX", [],
+                                 "o que estão falando?", "contexto", buscar=True)
+    assert texto == "radar do dia"
+    assert chamadas[0][0].endswith("/v1/responses")
+    assert chamadas[0][1]["tools"] == agents.FERRAMENTAS_BUSCA
 
 
 # ---------------------------------------------------------------------------
@@ -1755,18 +1798,32 @@ def test_ltm_vazio_sem_itr(tmp_path, monkeypatch):
 # Radar de Contexto (busca ao vivo) e camada de momento
 # ---------------------------------------------------------------------------
 
-def test_busca_ao_vivo_so_no_provedor_que_tem_e_no_agente_que_pede():
+def test_busca_ao_vivo_so_no_provedor_que_tem_e_no_agente_que_pede(monkeypatch):
     """A busca externa é opt-in duplo: o provedor precisa suportar E o agente
-    precisa pedir. Mandar `search_parameters` para quem não conhece o campo é
-    erro 400 garantido."""
-    xai, openai = agents.PROVIDERS["xai"], agents.PROVIDERS["openai"]
+    precisa pedir. Na forma nova (Agent Tools), pedir busca leva a chamada ao
+    /v1/responses com `tools`; sem pedido — ou sem suporte — nada de tools."""
+    chamadas = []
 
-    com = agents._corpo_openai(xai, "grok-4", 0.3, 100, [], buscar=True)
-    assert agents.BUSCA_CAMPO in com
-    assert com[agents.BUSCA_CAMPO]["sources"], "a busca precisa declarar as fontes"
+    def fake_post(url, **kw):
+        chamadas.append((url, kw.get("json") or {}))
+        if url.endswith("/responses"):
+            return _RespFake(200, {"output_text": "ok"})
+        return _RespFake(200, {"choices": [{"message": {"content": "ok"}}]})
 
-    assert agents.BUSCA_CAMPO not in agents._corpo_openai(xai, "grok-4", 0.3, 100, [], buscar=False)
-    assert agents.BUSCA_CAMPO not in agents._corpo_openai(openai, "gpt", 0.3, 100, [], buscar=True)
+    monkeypatch.setattr(agents.requests, "post", fake_post)
+
+    agents.chat("xai", "k", "grok-4", "s", "u", buscar=True)
+    assert chamadas[-1][0].endswith("/responses")
+    assert chamadas[-1][1]["tools"] == agents.FERRAMENTAS_BUSCA
+
+    agents.chat("xai", "k", "grok-4", "s", "u", buscar=False)
+    assert chamadas[-1][0].endswith("/chat/completions")
+    assert "tools" not in chamadas[-1][1]
+
+    # OpenAI não tem busca ao vivo: pedir não muda nada.
+    agents.chat("openai", "k", "gpt", "s", "u", buscar=True)
+    assert chamadas[-1][0].endswith("/chat/completions")
+    assert "tools" not in chamadas[-1][1] and "search_parameters" not in chamadas[-1][1]
 
 
 def test_radar_abre_a_rodada_e_e_o_unico_com_busca():

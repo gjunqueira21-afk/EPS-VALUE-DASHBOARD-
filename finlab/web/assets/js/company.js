@@ -1986,7 +1986,6 @@
         if (state.tab === 'fundamentos') renderFundamentos();
         if (state.tab === 'saude') renderSaude();
         if (state.tab === 'pares') renderPares();
-        if (state.tab === 'ia') window.FLAgents.render(state);
       });
     });
   }
@@ -2044,7 +2043,6 @@
     renderRegua();
     // ~500 DCFs por frame eram gastos desenhando uma aba escondida.
     if (state.tab === 'valuation') renderValuation();
-    window.FLAgents.updateAssumptions(state, params(), E.resumo(params()));
   }
 
   /** Quando o DCF não se aplica, some com a maquinaria do modelo em vez de
@@ -2062,9 +2060,6 @@
     qsa('.tab').forEach((b, i) => b.classList.toggle('on', i === 0));
     qsa('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== 'fundamentos'; });
     renderFundamentos();
-    // Os agentes continuam disponíveis: eles comentam fundamentos e múltiplos,
-    // que existem mesmo sem DCF.
-    window.FLAgents.updateAssumptions(state, state.a, {});
   }
 
   /* ================================================= painel de momento === */
@@ -2266,7 +2261,7 @@
         schedule();
       });
       el('btnLLM').addEventListener('click', () => window.FLSettings.open(
-        () => window.FLAgents.render(state)));
+        () => window.FLChat.atualizarRodape()));
 
       // Um agente pode propor premissas; ao aplicá-las, os sliders acompanham.
       window.addEventListener('finlab:assumptions-applied', () => {

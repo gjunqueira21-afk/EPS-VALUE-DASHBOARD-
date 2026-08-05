@@ -150,12 +150,15 @@ citação datada; a mesa cita a venda da Resia com data e link.
 
 Parecer 04. Depende da Fase 2 expor `buscar_dossie_momento(ticker)`.
 
-- [ ] **3.1 Rodada paralela** — `Promise.allSettled` + semáforo por provedor no
+- [x] **3.1 Rodada paralela** — `Promise.allSettled` + semáforo por provedor no
       lugar do `for await`; latência vira máximo, não soma. *(00.5, 04 F1)*
 - [ ] **3.2 Prompt com cache de prefixo** — contexto estável primeiro, pergunta
       por último; custo por rodada medido e mostrado. *(04 F1)*
-- [ ] **3.3 Dossiê de momento no contexto** — camada L3 dos agentes + banner de
+- [~] **3.3 Dossiê de momento no contexto** — camada L3 dos agentes + banner de
       cobertura ("a mesa enxerga até dd/mm"). *(04 F1)*
+      *Parcial:* regime com evidência datada, trimestres do ITR e LTM entram no
+      contexto, e o banner diz até quando a mesa enxerga. Falta o dossiê
+      documental, que depende de 2.1–2.3.
 - [ ] **3.4 Deliberação** — schema de afirmação tipada (fato com doc_id ×
       interpretação), blackboard da rodada, agente **Cético** contestando por ID,
       **Moderador** produzindo mapa de convergência/disputa no lugar da síntese
@@ -163,6 +166,13 @@ Parecer 04. Depende da Fase 2 expor `buscar_dossie_momento(ticker)`.
 - [ ] **3.5 Eval em CI** — golden set + promptfoo; teste de abstenção
       bloqueante (a mesa DEVE dizer "não tenho dado" quando não tem). *(03 §6, 04)*
 - [ ] **3.6 Streaming da fala final** + traço opt-in com trace_id. *(04)*
+
+**Fora do plano original — Radar de Contexto (xAI/Grok).** Ideia do usuário: um
+agente com busca ao vivo no X e na imprensa, que abre a rodada e dá contexto
+aos outros. Entregue com a separação FATO PUBLICADO × CONVERSA NÃO VERIFICADA,
+data e link obrigatórios em todo item, e o levantamento chegando aos demais
+agentes cercado por um aviso de que é hipótese a conferir — nunca fato. O campo
+de evidência do Painel de Momento continua fechado para ele.
 
 **Critério de aceite:** rodada completa < timeout de uma chamada; mapa de
 disputa aparece quando os agentes divergem; toda afirmação de fato resolve para

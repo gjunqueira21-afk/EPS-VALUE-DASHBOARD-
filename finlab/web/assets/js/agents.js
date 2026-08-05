@@ -68,6 +68,8 @@
           assumptions: ctx.params,
           resultado: ctx.resumo,
           radar: agentKey === 'contexto' ? '' : (saidas.contexto || ''),
+          falas: cfg && (cfg.agents || []).some((a) => a.key === agentKey && a.le_a_mesa)
+            ? saidas : undefined,
           pergunta
         })
       });
@@ -258,30 +260,39 @@
     const rotulo = btn.textContent;
     btn.innerHTML = '<span class="spinner"></span> rodando…';
 
-    // O Radar abre a rodada sozinho: o que ele levanta entra no contexto dos
-    // outros, então precisa ter terminado antes de eles começarem.
-    const radar = cards.find(
-      (c) => c.querySelector('button[data-run]').dataset.run === 'contexto');
-    if (radar) {
-      await run('contexto', state, radar);
-      cards = cards.filter((c) => c !== radar);
-    }
+    const meta = (key) => (cfg.agents || []).find((a) => a.key === key) || {};
+    const chaveDo = (c) => c.querySelector('button[data-run]').dataset.run;
 
-    const filas = new Map();
+    // A rodada acontece em ondas, e a ordem não é estética:
+    //   antes  o Radar, porque o que ele levanta entra no contexto dos outros;
+    //   0      o corpo da mesa, em paralelo — eles não dependem uns dos outros;
+    //   1      o Cético, que precisa ter as falas para contestar;
+    //   2      o Moderador, que precisa das falas E da contestação.
+    const ondas = new Map();
     cards.forEach((card) => {
-      const key = card.querySelector('button[data-run]').dataset.run;
-      const slot = slotFor(key);
-      // Sem slot o run() já mostra o aviso; agrupamos por provedor+chave,
-      // porque o limite é da credencial, não do fornecedor em abstrato.
-      const fila = slot ? `${slot.provider}:${slot.api_key}` : 'sem-slot';
-      if (!filas.has(fila)) filas.set(fila, []);
-      filas.get(fila).push({ key, card });
+      const m = meta(chaveDo(card));
+      const onda = m.abre_rodada ? -1 : (m.ordem || 0);
+      if (!ondas.has(onda)) ondas.set(onda, []);
+      ondas.get(onda).push(card);
     });
 
-    // allSettled: um provedor fora do ar não pode abortar a rodada dos outros.
-    await Promise.allSettled(Array.from(filas.values()).map(async (fila) => {
-      for (const { key, card } of fila) await run(key, state, card);
-    }));
+    for (const onda of Array.from(ondas.keys()).sort((x, y) => x - y)) {
+      const desta = ondas.get(onda);
+      const filas = new Map();
+      desta.forEach((card) => {
+        const key = chaveDo(card);
+        const slot = slotFor(key);
+        // Agrupamos por provedor+chave porque o rate limit é da credencial,
+        // não do fornecedor em abstrato.
+        const fila = slot ? `${slot.provider}:${slot.api_key}` : 'sem-slot';
+        if (!filas.has(fila)) filas.set(fila, []);
+        filas.get(fila).push({ key, card });
+      });
+      // allSettled: um provedor fora do ar não aborta a rodada dos outros.
+      await Promise.allSettled(Array.from(filas.values()).map(async (fila) => {
+        for (const { key, card } of fila) await run(key, state, card);
+      }));
+    }
 
     btn.disabled = false;
     btn.textContent = rotulo;

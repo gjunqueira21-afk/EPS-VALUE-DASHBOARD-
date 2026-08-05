@@ -159,10 +159,14 @@ Parecer 04. Depende da Fase 2 expor `buscar_dossie_momento(ticker)`.
       *Parcial:* regime com evidência datada, trimestres do ITR e LTM entram no
       contexto, e o banner diz até quando a mesa enxerga. Falta o dossiê
       documental, que depende de 2.1–2.3.
-- [ ] **3.4 Deliberação** — schema de afirmação tipada (fato com doc_id ×
+- [~] **3.4 Deliberação** — schema de afirmação tipada (fato com doc_id ×
       interpretação), blackboard da rodada, agente **Cético** contestando por ID,
       **Moderador** produzindo mapa de convergência/disputa no lugar da síntese
       de consenso. *(04 F2)*
+      *Parcial:* a rodada virou ondas — Radar, corpo da mesa em paralelo,
+      Cético, Moderador — e só quem fecha recebe o blackboard das falas. O
+      schema de afirmação TIPADA com doc_id depende do índice documental
+      (2.1–2.3): sem doc_id não há por onde contestar por ID.
 - [ ] **3.5 Eval em CI** — golden set + promptfoo; teste de abstenção
       bloqueante (a mesa DEVE dizer "não tenho dado" quando não tem). *(03 §6, 04)*
 - [ ] **3.6 Streaming da fala final** + traço opt-in com trace_id. *(04)*

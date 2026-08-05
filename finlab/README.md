@@ -57,7 +57,7 @@ finlab/
 │       ├── engine.js   o motor de DCF/EPV — roda no navegador
 │       ├── charts.js   gráficos em SVG puro
 │       └── ...
-└── tests/              135 testes (pytest)
+└── tests/              138 testes (pytest)
 ```
 
 O front não carrega **nada** de CDN: fontes do sistema, gráficos em SVG escritos à mão.
@@ -327,7 +327,7 @@ São leitura crítica dos números que estão na tela.
 python -m pytest finlab/tests -q
 ```
 
-135 testes cobrindo extração contábil da CVM (incluindo as armadilhas de escala do LPA e
+138 testes cobrindo extração contábil da CVM (incluindo as armadilhas de escala do LPA e
 das units), consistência dos múltiplos, as curvas do score, as premissas de valuation,
 o proxy de LLM nos três formatos de API, a desacumulação do ITR, o motor de DCF contra
 referência independente e

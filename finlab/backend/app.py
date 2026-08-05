@@ -655,7 +655,7 @@ def api_agent_run(body: dict = Body(...)):
 @app.post("/api/cache/clear")
 def api_cache_clear():
     removed = cache.clear()
-    cvm._frames.cache_clear()
+    cvm.limpar_cache()
     cvm._shares_table.cache_clear()
     return {"ok": True, "arquivos_removidos": removed}
 

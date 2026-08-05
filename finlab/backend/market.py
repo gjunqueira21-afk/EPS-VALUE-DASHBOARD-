@@ -19,6 +19,7 @@ import csv
 import io
 import json
 import os
+from bisect import bisect_right
 from datetime import date, datetime, timedelta
 from typing import Iterable, Optional
 
@@ -107,22 +108,39 @@ def _probe(kind: str) -> Optional[bool]:
 # Provedor 3 — PulseFlat (sem token)
 # ---------------------------------------------------------------------------
 
-def _pulse_csv(name: str, ttl: int) -> list[dict]:
+def _pulse_csv(name: str, ttl: int, memo: bool = True) -> list[dict]:
+    """Lê um CSV do PulseFlat. `memo=False` para arquivos grandes.
+
+    Guardar as linhas cruas em disco só compensa em arquivo pequeno: o CSV de
+    cotações tem 462 mil linhas e virava um blob JSON de 70 MB no cache — que
+    o painel reescrevia na primeira abertura e relia em toda partida. Quem
+    passa memo=False já memoiza o resultado *processado*, que é o que importa.
+    """
     def fetch():
         r = _SESSION.get(f"{PULSE_BASE}/{name}", timeout=max(HTTP_TIMEOUT, 60))
         r.raise_for_status()
         r.encoding = r.encoding or "utf-8"
         return list(csv.DictReader(io.StringIO(r.text)))
     try:
+        if not memo:
+            return fetch()
         return cache.memoize(f"pulse:{name}", ttl, fetch) or []
     except Exception:
         return []
 
 
+# O painel consome no máximo os últimos 500 fechamentos (~2 anos) e a janela
+# mais longa da performance é 12 meses. O arquivo do PulseFlat traz desde 2020;
+# guardar tudo era um blob de 16 MB relido a cada partida sem que nada na tela
+# usasse a cauda. O histórico local (history.csv) segue acumulando o que já viu.
+ANOS_DE_HISTORICO = 4
+
+
 def pulse_prices() -> dict[str, list[tuple[str, float]]]:
     """{ticker: [(data, fechamento), ...]} ordenado por data."""
     def build():
-        rows = _pulse_csv("yahoo_acoes_brasileiras.csv", TTL_HISTORY)
+        rows = _pulse_csv("yahoo_acoes_brasileiras.csv", TTL_HISTORY, memo=False)
+        corte = (date.today() - timedelta(days=365 * ANOS_DE_HISTORICO)).isoformat()
         out: dict[str, list[tuple[str, float]]] = {}
         for row in rows:
             tk = (row.get("label") or "").strip().upper()
@@ -131,14 +149,16 @@ def pulse_prices() -> dict[str, list[tuple[str, float]]]:
                 px = float(row.get("preco_fechamento") or "")
             except ValueError:
                 continue
-            if not tk or not dt or px <= 0:
+            if not tk or not dt or px <= 0 or dt < corte:
                 continue
             out.setdefault(tk, []).append((dt, px))
         for tk in out:
             seen: dict[str, float] = dict(sorted(out[tk]))
             out[tk] = sorted(seen.items())
         return out
-    return cache.memoize("pulse:prices:v2", TTL_HISTORY, build) or {}
+    # v3: a série passou a ser recortada em ANOS_DE_HISTORICO. Sem o bump, quem
+    # já tem o blob antigo continuaria carregando os 16 MB pelo resto do TTL.
+    return cache.memoize("pulse:prices:v3", TTL_HISTORY, build) or {}
 
 
 def pulse_macro() -> dict:
@@ -467,24 +487,24 @@ def performance(series: list[tuple[str, float]], today: Optional[date] = None) -
     series = sorted(series)
     last_date, last_px = series[-1]
     out["price"], out["date"] = last_px, last_date
-    ref = today or datetime.strptime(last_date, "%Y-%m-%d").date()
+    ref = today or date.fromisoformat(last_date)
 
     if len(series) >= 2 and series[-2][1]:
         out["day"] = last_px / series[-2][1] - 1
 
+    # As datas são ISO ("2026-08-05"): comparar como texto já é comparar
+    # cronologicamente. A versão anterior varria a série inteira convertendo
+    # cada data com strptime, uma vez por janela e por empresa — 462 mil
+    # conversões só para montar a tela principal, ~6 s da primeira abertura.
+    datas = [d for d, _ in series]
+
     def close_at(target: date, tol_days: int) -> Optional[float]:
-        best = None
-        for dt, px in series:
-            d = datetime.strptime(dt, "%Y-%m-%d").date()
-            if d <= target:
-                best = (d, px)
-            else:
-                break
-        if best is None:
+        i = bisect_right(datas, target.isoformat())
+        if i == 0:
             return None
-        if (target - best[0]).days > tol_days:
+        if (target - date.fromisoformat(datas[i - 1])).days > tol_days:
             return None
-        return best[1]
+        return series[i - 1][1]
 
     for key, days in _WINDOWS.items():
         base = close_at(ref - timedelta(days=days), tol_days=12 if days <= 91 else 20)
@@ -492,8 +512,7 @@ def performance(series: list[tuple[str, float]], today: Optional[date] = None) -
             out[key] = last_px / base - 1
 
     jan1 = date(ref.year, 1, 1)
-    first = series[0]
-    first_date = datetime.strptime(first[0], "%Y-%m-%d").date()
+    first_date = date.fromisoformat(series[0][0])
     if first_date <= jan1 + timedelta(days=12):
         base = close_at(jan1, tol_days=12)
         if base:

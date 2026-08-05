@@ -19,6 +19,7 @@ import unicodedata
 from functools import lru_cache
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
@@ -71,9 +72,29 @@ def _frames(tipo: str = "dfp") -> dict[str, pd.DataFrame]:
             df = pd.read_parquet(fp, columns=[c for c in COLUNAS_LIDAS if c in disponiveis])
         except Exception:
             df = pd.read_parquet(fp)
+        # Exercício comparativo: a CVM repete o período anterior em toda
+        # entrega. Descartar aqui corta linha à toa e evita que _collapse
+        # escolha um valor reapresentado no lugar do corrente.
+        if "ORDEM_EXERC" in df.columns:
+            corrente = df["ORDEM_EXERC"].astype(str).map(_norm).str.startswith("ULTIMO")
+            if corrente.any():
+                df = df[corrente]
         df["CD_CVM"] = df["CD_CVM"].astype(str).str.strip()
         df["CD_CONTA"] = df["CD_CONTA"].astype(str).str.strip()
-        df["DS_NORM"] = df["DS_CONTA"].map(_norm)
+        # Normalizar por VALOR ÚNICO, não por linha. São milhões de linhas
+        # para alguns milhares de descrições distintas, e _norm faz
+        # normalização unicode + regex a cada chamada: por linha, isso
+        # sozinho levava dezenas de segundos na primeira abertura do painel,
+        # que era o "fica carregando e não abre".
+        unicos = pd.Series(df["DS_CONTA"].astype(str).unique())
+        df["DS_NORM"] = df["DS_CONTA"].astype(str).map(dict(zip(unicos, unicos.map(_norm))))
+        # Nível hierárquico da conta (3.01.01 → 2). _collapse precisa dele em
+        # toda consulta e o contava por regex a cada chamada; pré-calcular por
+        # código único troca centenas de milhares de regex por uma busca em
+        # dicionário. Mesmo raciocínio do DS_NORM acima.
+        codigos = pd.Series(df["CD_CONTA"].unique())
+        df["_LVL"] = df["CD_CONTA"].map(
+            dict(zip(codigos, codigos.map(lambda c: c.count("."))))).astype("int16")
         out[st] = df
     return out
 
@@ -107,6 +128,12 @@ def _shares_table() -> pd.DataFrame:
 def _norm(s: object) -> str:
     txt = unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode()
     return re.sub(r"\s+", " ", txt).strip().upper()
+
+
+def limpar_cache() -> None:
+    """Zera os quadros e o índice por empresa — os dois vivem juntos."""
+    _frames.cache_clear()
+    _por_empresa.cache_clear()
 
 
 def available() -> bool:
@@ -408,11 +435,25 @@ def quarterly_series(cd_cvm: str, max_tri: int = MAX_TRIMESTRES) -> dict:
 # Extração de contas
 # ---------------------------------------------------------------------------
 
-def _company(st: str, cd_cvm: str, tipo: str = "dfp") -> pd.DataFrame:
+@lru_cache(maxsize=8)
+def _por_empresa(st: str, tipo: str) -> dict:
+    """Índice CD_CVM → linhas, montado uma vez por demonstrativo.
+
+    A varredura era `df[df["CD_CVM"] == cd]`: uma passada pelo quadro inteiro
+    a cada consulta. A tela principal faz isso 90 vezes × 4 demonstrativos ×
+    ~15 contas, e o custo aparecia inteiro na primeira abertura — 26 s só para
+    montar a lista de ações. Agrupar uma vez troca a varredura por uma busca
+    em dicionário.
+    """
     df = _frames(tipo).get(st)
     if df is None or df.empty:
-        return pd.DataFrame()
-    return df[df["CD_CVM"] == str(cd_cvm).strip()]
+        return {}
+    return {str(cd): grupo for cd, grupo in df.groupby("CD_CVM", sort=False)}
+
+
+def _company(st: str, cd_cvm: str, tipo: str = "dfp") -> pd.DataFrame:
+    grupo = _por_empresa(st, tipo).get(str(cd_cvm).strip())
+    return pd.DataFrame() if grupo is None else grupo
 
 
 def _series(
@@ -435,26 +476,30 @@ def _series(
     if sub.empty:
         return {}
 
+    # Recortar com `sub[mask]` copiava as nove colunas do quadro — inclusive as
+    # de texto, que são Arrow — a cada uma das ~1.400 consultas da tela
+    # principal. O recorte agora viaja como máscara e só os três vetores que
+    # _collapse usa são materializados.
     for code in codes or []:
-        hit = sub[sub["CD_CONTA"] == code]
-        if not hit.empty:
-            return _collapse(hit, chave)
+        onde = _mascara(sub["CD_CONTA"] == code)
+        if onde.any():
+            return _collapse(sub, chave, onde)
 
     if keywords:
         keys = [_norm(k) for k in keywords]
         ds = sub["DS_NORM"]
-        if contains_all:
-            mask = pd.Series(True, index=sub.index)
-            for k in keys:
-                mask &= ds.str.contains(k, regex=False, na=False)
-        else:
-            mask = pd.Series(False, index=sub.index)
-            for k in keys:
-                mask |= ds.str.contains(k, regex=False, na=False)
-        hit = sub[mask]
-        if not hit.empty:
-            return _collapse(hit, chave)
+        onde = np.full(len(sub), contains_all, dtype=bool)
+        for k in keys:
+            achou = _mascara(ds.str.contains(k, regex=False, na=False))
+            onde = (onde & achou) if contains_all else (onde | achou)
+        if onde.any():
+            return _collapse(sub, chave, onde)
     return {}
+
+
+def _mascara(serie: pd.Series) -> np.ndarray:
+    """Série booleana (possivelmente Arrow, possivelmente com nulos) → vetor."""
+    return serie.to_numpy(dtype=bool, na_value=False)
 
 
 def _periodo(valor, chave: str):
@@ -462,17 +507,56 @@ def _periodo(valor, chave: str):
     return int(valor) if chave == "ANO_REFER" else pd.Timestamp(valor)
 
 
-def _collapse(hit: pd.DataFrame, chave: str = "ANO_REFER") -> dict:
-    """Um valor por período: conta mais agregada; empate pelo maior |valor|."""
-    tmp = hit.assign(
-        _lvl=hit["CD_CONTA"].str.count(r"\."),
-        _abs=hit["VL_CONTA_AJUSTADO"].abs(),
-    ).sort_values([chave, "_lvl", "_abs"], ascending=[True, True, False])
-    tmp = tmp.dropna(subset=["VL_CONTA_AJUSTADO"]).drop_duplicates(chave, keep="first")
+def _collapse(hit: pd.DataFrame, chave: str = "ANO_REFER",
+              onde: Optional[np.ndarray] = None,
+              criterio: Optional[np.ndarray] = None) -> dict:
+    """Um valor por período: conta mais agregada; empate pelo maior |valor|.
+
+    Em numpy, não em pandas. Esta função roda ~1.400 vezes só para montar a
+    tela principal, e a versão anterior (assign + sort_values + itertuples)
+    respondia sozinha por 11 s dos 19 s da primeira abertura: as colunas do
+    parquet são de tipo Arrow, e percorrer linha a linha paga uma conversão
+    por célula. Aqui o quadro vira três vetores e a escolha é um lexsort.
+
+    `onde` recorta as linhas sem construir um sub-quadro. `criterio` troca o
+    desempate padrão (nível hierárquico) por outro — o D&A desempata por
+    "cita depreciação E amortização", não por nível.
+    """
+    val = hit["VL_CONTA_AJUSTADO"].to_numpy(dtype="float64", na_value=np.nan)
+    valido = ~np.isnan(val)
+    if onde is not None:
+        valido &= onde
     if chave == "ANO_REFER":
-        return {int(getattr(r, chave)): float(r.VL_CONTA_AJUSTADO) for r in tmp.itertuples()}
-    return {pd.Timestamp(getattr(r, chave)): float(r.VL_CONTA_AJUSTADO)
-            for r in tmp.itertuples()}
+        periodo = hit[chave].to_numpy(dtype="float64", na_value=np.nan)
+        valido &= ~np.isnan(periodo)
+    else:
+        periodo = hit[chave].astype(str).to_numpy(dtype=object)
+    if not valido.any():
+        return {}
+
+    val = val[valido]
+    periodo = periodo[valido]
+    if criterio is None:
+        criterio = (hit["_LVL"].to_numpy(dtype="int64") if "_LVL" in hit.columns
+                    else np.array([str(c).count(".") for c in hit["CD_CONTA"]], dtype="int64"))
+    criterio = criterio[valido]
+
+    # np.unique devolve os períodos já ordenados e o código de cada linha;
+    # ordenar pelo código equivale a ordenar pelo período, tanto para o ano
+    # inteiro do anual quanto para a data ISO do trimestral.
+    periodos, codigo = np.unique(periodo, return_inverse=True)
+    codigo = np.asarray(codigo).ravel()
+    ordem = np.lexsort((-np.abs(val), criterio, codigo))
+    codigo, val = codigo[ordem], val[ordem]
+
+    primeiro = np.empty(len(codigo), dtype=bool)
+    primeiro[0] = True
+    np.not_equal(codigo[1:], codigo[:-1], out=primeiro[1:])
+    escolhidos, valores = periodos[codigo[primeiro]], val[primeiro]
+
+    if chave == "ANO_REFER":
+        return {int(p): float(v) for p, v in zip(escolhidos, valores)}
+    return {pd.Timestamp(p): float(v) for p, v in zip(escolhidos, valores)}
 
 
 def _sum_series(*series: dict[int, float]) -> dict[int, float]:
@@ -635,23 +719,21 @@ def _depreciation(dfc: pd.DataFrame, chave: str = "ANO_REFER") -> dict:
     """
     if dfc.empty:
         return {}
-    base = dfc[dfc["CD_CONTA"].str.startswith("6.01.01")]
-    if base.empty:
-        base = dfc[dfc["CD_CONTA"].str.startswith("6.01")]
-    hit = base[
-        base["DS_NORM"].str.contains(_DA_RE, regex=True, na=False)
-        & ~base["DS_NORM"].str.contains(_DA_EXCLUDE, regex=True, na=False)
-    ].dropna(subset=["VL_CONTA_AJUSTADO"])
-    if hit.empty:
+    cd = dfc["CD_CONTA"]
+    base = _mascara(cd.str.startswith("6.01.01"))
+    if not base.any():
+        base = _mascara(cd.str.startswith("6.01"))
+    ds = dfc["DS_NORM"]
+    onde = (base
+            & _mascara(ds.str.contains(_DA_RE, regex=True, na=False))
+            & ~_mascara(ds.str.contains(_DA_EXCLUDE, regex=True, na=False)))
+    if not onde.any():
         return {}
-    hit = hit.assign(
-        _both=(hit["DS_NORM"].str.contains("DEPRECIA", na=False)
-               & hit["DS_NORM"].str.contains("AMORTIZ", na=False)).astype(int),
-        _abs=hit["VL_CONTA_AJUSTADO"].abs(),
-    ).sort_values([chave, "_both", "_abs"], ascending=[True, False, False])
-    hit = hit.drop_duplicates(chave, keep="first")
-    return {_periodo(getattr(r, chave), chave): float(r.VL_CONTA_AJUSTADO)
-            for r in hit.itertuples()}
+    # Preferir a linha que cita depreciação E amortização (a consolidada
+    # típica): critério menor ordena primeiro, então o "ambos" vira -1.
+    ambos = (_mascara(ds.str.contains("DEPRECIA", na=False))
+             & _mascara(ds.str.contains("AMORTIZ", na=False)))
+    return _collapse(dfc, chave, onde, criterio=-ambos.astype("int64"))
 
 
 _CAPEX_RE = (r"IMOBILIZAD|INTANGIVE|ATIVO FIXO|ATIVOS FIXOS|PROPRIEDADE PARA INVESTIMENTO"
@@ -670,23 +752,31 @@ def _capex(dfc: pd.DataFrame, chave: str = "ANO_REFER") -> dict:
     """
     if dfc.empty:
         return {}
-    sub = dfc[dfc["CD_CONTA"].str.startswith("6.02.")]
-    if sub.empty:
+    ds = dfc["DS_NORM"]
+    val = dfc["VL_CONTA_AJUSTADO"].to_numpy(dtype="float64", na_value=np.nan)
+    onde = (_mascara(dfc["CD_CONTA"].str.startswith("6.02."))
+            & _mascara(ds.str.contains(_CAPEX_RE, regex=True, na=False))
+            & ~_mascara(ds.str.contains(_CAPEX_EXCLUDE, regex=True, na=False))
+            & ~np.isnan(val)
+            & _mascara(dfc[chave].notna()))
+    if not onde.any():
         return {}
-    hit = sub[
-        sub["DS_NORM"].str.contains(_CAPEX_RE, regex=True, na=False)
-        & ~sub["DS_NORM"].str.contains(_CAPEX_EXCLUDE, regex=True, na=False)
-    ].dropna(subset=["VL_CONTA_AJUSTADO"])
-    if hit.empty:
-        return {}
+
+    val = val[onde]
+    lvl = dfc["_LVL"].to_numpy(dtype="int64")[onde]
+    bruto = dfc[chave].to_numpy(dtype=object)[onde]
+    periodos, codigo = np.unique(bruto, return_inverse=True)
+    codigo = np.asarray(codigo).ravel()
+
     out: dict = {}
-    for periodo, grp in hit.groupby(chave):
+    for i, periodo in enumerate(periodos):
+        no_periodo = codigo == i
         # Evita dupla contagem quando a empresa detalha a conta em sub-níveis:
         # fica só com o nível hierárquico mais agregado presente no ano.
-        lvl = grp["CD_CONTA"].str.count(r"\.")
-        grp = grp[lvl == lvl.min()]
-        neg = grp[grp["VL_CONTA_AJUSTADO"] < 0]["VL_CONTA_AJUSTADO"].sum()
-        total = neg if neg < 0 else -grp["VL_CONTA_AJUSTADO"].abs().sum()
+        agregado = no_periodo & (lvl == lvl[no_periodo].min())
+        vals = val[agregado]
+        neg = vals[vals < 0].sum()
+        total = neg if neg < 0 else -np.abs(vals).sum()
         if total != 0:
             out[_periodo(periodo, chave)] = float(total)
     return out

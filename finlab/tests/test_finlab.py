@@ -329,6 +329,88 @@ def test_performance_sem_serie():
     assert market.performance([])["price"] is None
 
 
+def test_performance_com_buracos_e_fim_de_semana():
+    """A busca por data virou bisect sobre texto ISO; precisa achar o mesmo ponto.
+
+    O caso que importa é a data-alvo que NÃO existe na série (fim de semana,
+    feriado, pregão sem negócio): a janela tem de cair no último fechamento
+    anterior ao alvo, nunca no seguinte.
+    """
+    from datetime import date
+
+    serie = [("2026-01-02", 100.0), ("2026-01-05", 110.0), ("2026-01-06", 120.0),
+             ("2026-04-06", 130.0), ("2026-07-06", 140.0)]
+    # 2026-01-03 e 04 são fim de semana: a janela de 3 meses a partir de 06/04
+    # tem de usar como base o fechamento de 05/01, não o de 06/01. O numerador
+    # é sempre o último fechamento da série.
+    perf = market.performance(serie, date(2026, 4, 6))
+    assert perf["m3"] == pytest.approx(140.0 / 110.0 - 1)
+    # Alvo anterior ao primeiro ponto: sem base, sem retorno inventado.
+    assert market.performance(serie[-2:], date(2026, 7, 6))["m12"] is None
+
+
+def test_pulse_recorta_o_historico_sem_perder_a_janela_do_painel(monkeypatch):
+    """O blob de cotações era de 16 MB e o painel só consome ~2 anos.
+
+    O corte tem de deixar de fora o que está além de ANOS_DE_HISTORICO e
+    preservar tudo o que as telas leem (500 fechamentos e a janela de 12 meses).
+    """
+    from datetime import date, timedelta
+
+    hoje = date.today()
+    velha = (hoje - timedelta(days=365 * (market.ANOS_DE_HISTORICO + 2))).isoformat()
+    recente = (hoje - timedelta(days=30)).isoformat()
+    linhas = [
+        {"label": "TESTE3", "data_referencia": velha, "preco_fechamento": "10"},
+        {"label": "TESTE3", "data_referencia": recente, "preco_fechamento": "20"},
+    ]
+    monkeypatch.setattr(market, "_pulse_csv", lambda *a, **kw: linhas)
+    monkeypatch.setattr(market.cache, "memoize", lambda key, ttl, producer: producer())
+
+    serie = market.pulse_prices()["TESTE3"]
+    assert [d for d, _ in serie] == [recente]
+
+
+def test_xai_cai_para_o_endpoint_responses(monkeypatch):
+    """A xAI tem dois endpoints e não dá para saber daqui qual serve cada modelo.
+
+    Quando /chat/completions recusa o modelo, a chamada tem de tentar
+    /v1/responses (que usa `input` no lugar de `messages`) antes de desistir.
+    Um 401 não: repetir com a mesma chave rejeitada só gasta uma chamada.
+    """
+    chamadas = []
+
+    class Resp:
+        def __init__(self, status, payload):
+            self.status_code, self._payload, self.text = status, payload, str(payload)
+
+        def json(self):
+            return self._payload
+
+    def fake_post(url, **kw):
+        chamadas.append((url, kw.get("json") or {}))
+        if url.endswith("/chat/completions"):
+            return Resp(404, {"error": "model not found on this endpoint"})
+        return Resp(200, {"output_text": "contexto levantado"})
+
+    monkeypatch.setattr(agents.requests, "post", fake_post)
+    texto = agents.chat("xai", "k", "grok-4.5", "sys", "usr", buscar=True)
+
+    assert texto == "contexto levantado"
+    assert [u for u, _ in chamadas] == ["https://api.x.ai/v1/chat/completions",
+                                        "https://api.x.ai/v1/responses"]
+    # O segundo corpo usa `input`, e a busca ao vivo viaja junto.
+    assert "input" in chamadas[1][1] and "messages" not in chamadas[1][1]
+    assert agents.BUSCA_CAMPO in chamadas[1][1]
+
+    chamadas.clear()
+    monkeypatch.setattr(agents.requests, "post",
+                        lambda url, **kw: (chamadas.append(url), Resp(401, {}))[1])
+    with pytest.raises(agents.LLMError):
+        agents.chat("xai", "k", "grok-4.5", "sys", "usr")
+    assert len(chamadas) == 1
+
+
 # ---------------------------------------------------------------------------
 # Proxy de LLM
 # ---------------------------------------------------------------------------
@@ -528,7 +610,7 @@ def test_leitor_da_cvm_aceita_itr_e_degrada_sem_ele(tmp_path, monkeypatch):
     import pandas as pd
 
     monkeypatch.setattr(cvm, "CVM_PROCESSED_DIR", tmp_path)
-    cvm._frames.cache_clear()
+    cvm.limpar_cache()
     try:
         # sem arquivos: nada de ITR, nada de exceção
         assert cvm.quarterly_available() is False
@@ -557,7 +639,7 @@ def test_leitor_da_cvm_aceita_itr_e_degrada_sem_ele(tmp_path, monkeypatch):
                        "DS_CONTA": "Receita de Venda de Bens e/ou Serviços",
                        "VL_CONTA_AJUSTADO": 120.0})
         pd.DataFrame(linhas).to_parquet(tmp_path / "dre_itr.parquet", index=False)
-        cvm._frames.cache_clear()
+        cvm.limpar_cache()
 
         assert cvm.quarterly_available() is True
         q = cvm.latest_quarter("009512")
@@ -565,7 +647,7 @@ def test_leitor_da_cvm_aceita_itr_e_degrada_sem_ele(tmp_path, monkeypatch):
         # outra empresa segue sem dado, sem exceção
         assert cvm.latest_quarter("999999") is None
     finally:
-        cvm._frames.cache_clear()
+        cvm.limpar_cache()
 
 
 def test_downloader_revalida_quando_a_origem_muda(tmp_path, monkeypatch):
@@ -1274,7 +1356,7 @@ def _monta_itr(tmp_path, linhas, anual=None):
              "CD_CONTA": conta, "DS_CONTA": ds, "VL_CONTA_AJUSTADO": v}
             for ano, conta, ds, v in anual
         ]).to_parquet(tmp_path / "dre_dfp.parquet", index=False)
-    cvm._frames.cache_clear()
+    cvm.limpar_cache()
     return {p["rotulo"]: p for p in cvm.quarterly_series("009512")["pontos"]}
 
 
@@ -1283,7 +1365,7 @@ def test_serie_trimestral_desacumula_o_itr(tmp_path, monkeypatch):
     fosse trimestre isolado desenha uma receita que só sobe — errado com cara
     de certo. Aqui: acumulado 100/220/360 vira 100/120/140."""
     monkeypatch.setattr(cvm, "CVM_PROCESSED_DIR", tmp_path)
-    cvm._frames.cache_clear()
+    cvm.limpar_cache()
     try:
         linhas = []
         for fim, acc in (("2025-03-31", 100.0), ("2025-06-30", 220.0), ("2025-09-30", 360.0)):
@@ -1303,7 +1385,7 @@ def test_serie_trimestral_desacumula_o_itr(tmp_path, monkeypatch):
         assert pontos["4T25"]["receita_ltm"] == 500.0
         assert pontos["4T25"]["lucro_liquido_ltm"] == 50.0
     finally:
-        cvm._frames.cache_clear()
+        cvm.limpar_cache()
 
 
 def test_serie_trimestral_descarta_janela_avulsa_e_comparativo(tmp_path, monkeypatch):
@@ -1311,7 +1393,7 @@ def test_serie_trimestral_descarta_janela_avulsa_e_comparativo(tmp_path, monkeyp
     avulso; e repete períodos antigos como exercício comparativo. Confundir
     qualquer um dos dois com o acumulado corrompe a diferença."""
     monkeypatch.setattr(cvm, "CVM_PROCESSED_DIR", tmp_path)
-    cvm._frames.cache_clear()
+    cvm.limpar_cache()
     try:
         linhas = [
             _linha_itr("2025-03-31", "2025-01-01", "3.01", RE_DS, 100.0),
@@ -1326,14 +1408,14 @@ def test_serie_trimestral_descarta_janela_avulsa_e_comparativo(tmp_path, monkeyp
         assert pontos["2T25"]["receita"] == 120.0     # 220 − 100, não 777
         assert "1T24" not in pontos                   # o comparativo não vira ponto
     finally:
-        cvm._frames.cache_clear()
+        cvm.limpar_cache()
 
 
 def test_quarto_trimestre_so_sai_quando_o_terceiro_fechou(tmp_path, monkeypatch):
     """Se a empresa só publicou o 1T, anual − acumulado seriam nove meses
     empilhados num "4T". Melhor não desenhar do que desenhar errado."""
     monkeypatch.setattr(cvm, "CVM_PROCESSED_DIR", tmp_path)
-    cvm._frames.cache_clear()
+    cvm.limpar_cache()
     try:
         pontos = _monta_itr(
             tmp_path,
@@ -1343,7 +1425,7 @@ def test_quarto_trimestre_so_sai_quando_o_terceiro_fechou(tmp_path, monkeypatch)
         assert list(pontos) == ["1T25"]
         assert pontos["1T25"]["receita"] == 100.0
     finally:
-        cvm._frames.cache_clear()
+        cvm.limpar_cache()
 
 
 def test_ltm_nao_soma_trimestres_com_buraco(tmp_path, monkeypatch):
@@ -1351,7 +1433,7 @@ def test_ltm_nao_soma_trimestres_com_buraco(tmp_path, monkeypatch):
     seguidos. Com um ano faltando, o LTM tem de ficar vazio em vez de somar
     períodos distantes e chamar isso de "últimos 12 meses"."""
     monkeypatch.setattr(cvm, "CVM_PROCESSED_DIR", tmp_path)
-    cvm._frames.cache_clear()
+    cvm.limpar_cache()
     try:
         linhas = []
         for ano, acc in ((2022, (100.0, 220.0)), (2025, (130.0, 260.0))):
@@ -1362,19 +1444,19 @@ def test_ltm_nao_soma_trimestres_com_buraco(tmp_path, monkeypatch):
         assert len(pontos) == 4
         assert all(p["receita_ltm"] is None for p in pontos.values())
     finally:
-        cvm._frames.cache_clear()
+        cvm.limpar_cache()
 
 
 def test_painel_segue_anual_sem_itr(tmp_path, monkeypatch):
     """Sem os parquets do ITR o painel não pode quebrar — só não mostra o
     trimestral."""
     monkeypatch.setattr(cvm, "CVM_PROCESSED_DIR", tmp_path)
-    cvm._frames.cache_clear()
+    cvm.limpar_cache()
     try:
         assert cvm.quarterly_series("009512") == {"pontos": [], "campos": []}
         assert cvm.quarterly_series("") == {"pontos": [], "campos": []}
     finally:
-        cvm._frames.cache_clear()
+        cvm.limpar_cache()
 
 
 # ---------------------------------------------------------------------------
@@ -1623,7 +1705,7 @@ def test_ltm_soma_fluxo_e_nao_soma_saldo(tmp_path, monkeypatch):
     import pandas as pd
 
     monkeypatch.setattr(cvm, "CVM_PROCESSED_DIR", tmp_path)
-    cvm._frames.cache_clear()
+    cvm.limpar_cache()
     try:
         # DRE trimestral acumulada: 4 trimestres isolados de 100 cada
         dre = []
@@ -1645,7 +1727,7 @@ def test_ltm_soma_fluxo_e_nao_soma_saldo(tmp_path, monkeypatch):
                 "DS_CONTA": "Patrimônio Líquido Consolidado", "VL_CONTA_AJUSTADO": v}
                for f, v in (("2025-03-31", 900.0), ("2025-06-30", 950.0))]
         pd.DataFrame(bpp).to_parquet(tmp_path / "bpp_itr.parquet", index=False)
-        cvm._frames.cache_clear()
+        cvm.limpar_cache()
 
         l = cvm.ltm_series("009512")
         assert l["fim"] == "2025-09-30"
@@ -1655,18 +1737,18 @@ def test_ltm_soma_fluxo_e_nao_soma_saldo(tmp_path, monkeypatch):
         assert l["campos"]["patrimonio_liquido"] == 950.0
         assert "patrimonio_liquido" in l["saldos"]
     finally:
-        cvm._frames.cache_clear()
+        cvm.limpar_cache()
 
 
 def test_ltm_vazio_sem_itr(tmp_path, monkeypatch):
     """Sem ITR a coluna do ano em curso não aparece — e a tabela anual segue."""
     monkeypatch.setattr(cvm, "CVM_PROCESSED_DIR", tmp_path)
-    cvm._frames.cache_clear()
+    cvm.limpar_cache()
     try:
         assert cvm.ltm_series("009512") == {}
         assert cvm.ltm_series("") == {}
     finally:
-        cvm._frames.cache_clear()
+        cvm.limpar_cache()
 
 
 # ---------------------------------------------------------------------------

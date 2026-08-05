@@ -475,6 +475,21 @@ textarea { font-family: var(--sans); resize: vertical; min-height: 64px; line-he
 }
 .agent-heranca.ok { color: var(--green); }
 
+/* Agente preso a um provedor: o selo fica no cabeçalho, ao lado do nome, e a
+   nota abaixo do formulário. A nota vira alerta quando o provedor escolhido
+   não é o exigido. */
+.selo-exige {
+  font: 600 9.5px/1 var(--mono); letter-spacing: .04em; text-transform: uppercase;
+  color: var(--brand); border: 1px solid rgba(103, 232, 249, .45); border-radius: 999px;
+  background: rgba(103, 232, 249, .08);
+  padding: 4px 8px; white-space: nowrap;
+}
+.agent-exige {
+  margin-top: 10px; padding-top: 9px; border-top: 1px dashed var(--line);
+  font: 400 10.5px/1.5 var(--mono); color: var(--dim2);
+}
+.agent-exige.alerta { color: var(--amber); }
+
 .agent-modelo {
   font: 500 10px/1 var(--mono); color: var(--dim); cursor: help;
   border: 1px solid var(--line); border-radius: 999px; padding: 5px 9px;

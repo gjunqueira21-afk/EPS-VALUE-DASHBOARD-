@@ -14,11 +14,31 @@
   let providers = [];
   let onSaved = null;
 
+  // Sem entrada aqui o cartão saía com o papel em branco — foi o que aconteceu
+  // com os três agentes que entraram depois dos quatro originais.
   const PAPEIS = {
+    contexto: 'abre a rodada: varre o X e a imprensa e diz o que está sendo dito agora',
     equity: 'lê os fundamentos e monta a tese: o que sustenta e o que ameaça',
     macro: 'traduz juros, inflação e câmbio em impacto nas premissas',
     gestor: 'dá o veredito: posição, gatilhos e o que invalida a tese',
-    premissas: 'calibra o modelo: Rf, beta, spread, crescimento, perpetuidade'
+    premissas: 'calibra o modelo: Rf, beta, spread, crescimento, perpetuidade',
+    cetico: 'lê a mesa e contesta afirmação por afirmação: qual não se sustenta',
+    moderador: 'fecha a rodada: onde a mesa converge, onde disputa, o que decide'
+  };
+
+  /* Agentes que só funcionam num provedor específico. O Radar de Contexto é o
+     único que sai do painel para buscar informação, e busca ao vivo no X é
+     coisa da API oficial da xAI — em qualquer outro provedor ele responde de
+     memória, sem link e sem data, que é exatamente o que o prompt dele proíbe.
+     Marcar no cartão evita configurar errado e só descobrir na resposta. */
+  const EXIGE_PROVEDOR = {
+    contexto: {
+      provider: 'xai',
+      selo: 'exige Grok (API oficial xAI)',
+      nota: 'Este agente é o único que consulta fontes externas. A busca ao vivo no X '
+          + 'só existe na API oficial da xAI — em outro provedor ele responde sem '
+          + 'links nem datas e a mesa inteira herda esse contexto frouxo.'
+    }
   };
 
   async function ensureProviders() {
@@ -121,11 +141,27 @@
 
     const aviso = h('div', { class: 'agent-heranca', id: `agent-heranca-${idx}` });
 
+    const exige = EXIGE_PROVEDOR[chave];
+    const avisoProvedor = exige
+      ? h('div', { class: 'agent-exige', id: `agent-exige-${idx}` }, exige.nota)
+      : null;
+
+    function conferirProvedor() {
+      if (!exige || !avisoProvedor) return;
+      const errado = provSel.value !== exige.provider;
+      avisoProvedor.classList.toggle('alerta', errado);
+      avisoProvedor.textContent = errado
+        ? `⚠ ${exige.nota}`
+        : exige.nota;
+    }
+    if (exige) provSel.addEventListener('change', conferirProvedor);
+
     const card = h('div', { class: 'slot-card agent-slot' }, [
       h('div', { class: 'hd' }, [
         h('span', { class: 'ico-agente' }, global.FL.agentIcon(chave)),
         h('span', { class: 'n' }, nomes[chave]),
-        h('span', { class: 'papel' }, PAPEIS[chave]),
+        exige ? h('span', { class: 'selo-exige' }, exige.selo) : null,
+        h('span', { class: 'papel' }, PAPEIS[chave] || ''),
         h('span', { class: 'sp', style: 'flex:1 1 auto' }),
         h('a', {
           id: `slot-doc-${idx}`, href: '#', target: '_blank', rel: 'noopener',
@@ -162,8 +198,10 @@
           }, '⇊ usar em todos')
         ])
       ]),
+      avisoProvedor,
       aviso
     ]);
+    conferirProvedor();
 
     function replicar() {
       const dados = {

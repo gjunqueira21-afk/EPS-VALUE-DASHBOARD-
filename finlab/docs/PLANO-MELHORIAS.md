@@ -152,8 +152,12 @@ Parecer 04. Depende da Fase 2 expor `buscar_dossie_momento(ticker)`.
 
 - [x] **3.1 Rodada paralela** — `Promise.allSettled` + semáforo por provedor no
       lugar do `for await`; latência vira máximo, não soma. *(00.5, 04 F1)*
-- [ ] **3.2 Prompt com cache de prefixo** — contexto estável primeiro, pergunta
+- [~] **3.2 Prompt com cache de prefixo** — contexto estável primeiro, pergunta
       por último; custo por rodada medido e mostrado. *(04 F1)*
+      *Parcial:* o contexto foi reordenado — dossiê da empresa, regime e
+      trimestres antes; premissas e resultado depois de um marcador explícito.
+      Arrastar um slider deixou de invalidar o prefixo inteiro. Falta medir e
+      mostrar o custo por rodada.
 - [~] **3.3 Dossiê de momento no contexto** — camada L3 dos agentes + banner de
       cobertura ("a mesa enxerga até dd/mm"). *(04 F1)*
       *Parcial:* regime com evidência datada, trimestres do ITR e LTM entram no
@@ -167,8 +171,12 @@ Parecer 04. Depende da Fase 2 expor `buscar_dossie_momento(ticker)`.
       Cético, Moderador — e só quem fecha recebe o blackboard das falas. O
       schema de afirmação TIPADA com doc_id depende do índice documental
       (2.1–2.3): sem doc_id não há por onde contestar por ID.
-- [ ] **3.5 Eval em CI** — golden set + promptfoo; teste de abstenção
+- [~] **3.5 Eval em CI** — golden set + promptfoo; teste de abstenção
       bloqueante (a mesa DEVE dizer "não tenho dado" quando não tem). *(03 §6, 04)*
+      *Parcial:* conjunto dourado em `tests/golden/abstencao.json` e executor em
+      `tests/eval_abstencao.py`, com 7 casos sobre o que a mesa não tem como
+      saber. Precisa de chave real, então não roda na suíte offline — e este
+      repositório não tem CI onde pendurar.
 - [ ] **3.6 Streaming da fala final** + traço opt-in com trace_id. *(04)*
 
 **Fora do plano original — Radar de Contexto (xAI/Grok).** Ideia do usuário: um

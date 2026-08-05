@@ -1781,3 +1781,62 @@ def test_moderador_mapeia_disputa_em_vez_de_fabricar_consenso():
     # a parte acionável: o que resolveria a discordância
     assert "o que decidiria" in s
     assert "Nunca produza recomendação" in s
+
+
+def test_contexto_poe_o_estavel_antes_do_volatil():
+    """Cache de prefixo só paga se o começo do prompt for byte a byte igual
+    entre chamadas. Sete agentes leem a mesma empresa, e arrastar um slider
+    deve revalidar só a cauda — não o dossiê inteiro."""
+    fund = {"name": "X", "ticker": "X", "sector": "S", "last_year": 2025,
+            "series": {}, "years": [], "base": {}, "indicadores": {}}
+    payload = {"fundamentals": fund, "market": {}, "multiples": {}, "score": {},
+               "regime": {"codigo": "R3", "rotulo": "Turnaround", "confianca": "media",
+                          "quebra": "q", "fluxo": "f", "evidencias": []}}
+
+    ctx = agents.build_context(payload, {"rf": 0.14}, {}, {})
+    titulos = [l for l in ctx.splitlines() if l and not l.startswith(" ")]
+    pos = {t: i for i, t in enumerate(titulos)}
+    corte = next(i for t, i in pos.items() if "muda a cada ajuste" in t)
+
+    # o dossiê da empresa fica todo antes do corte
+    for estavel in ("HISTÓRICO", "FUNDAMENTOS (último exercício)"):
+        assert pos[estavel] < corte, estavel
+    assert next(i for t, i in pos.items() if t.startswith("MOMENTO")) < corte
+    # e o que o slider mexe, todo depois
+    assert pos["PREMISSAS ATUAIS DO PAINEL"] > corte
+    assert pos["RESULTADO DO MODELO COM ESSAS PREMISSAS"] > corte
+
+    # mudar premissa não pode alterar um único byte do prefixo estável
+    outro = agents.build_context(payload, {"rf": 0.19, "beta": 2.0}, {"upside": 0.5}, {})
+    marca = "--- daqui para baixo muda a cada ajuste de premissa ---"
+    assert ctx.split(marca)[0] == outro.split(marca)[0]
+
+
+def test_contexto_diz_sem_dado_em_vez_de_omitir():
+    """Campo omitido é convite para o modelo preencher sozinho. Ausência tem
+    de ser explícita — é a base do teste de abstenção do parecer 03."""
+    ctx = agents.build_context(
+        {"fundamentals": {"name": "X", "ticker": "X", "sector": "S", "series": {},
+                          "years": [], "base": {}, "indicadores": {}},
+         "market": {}, "multiples": {}, "score": {}},
+        {}, {}, {})
+    assert "sem dado" in ctx
+
+
+def test_conjunto_de_abstencao_esta_bem_formado():
+    """O eval de abstenção precisa de chave real, mas o conjunto em si é
+    verificável offline — e um JSON quebrado só apareceria na hora errada."""
+    import json
+    from pathlib import Path
+
+    dados = json.loads(
+        (Path(__file__).parent / "golden" / "abstencao.json").read_text(encoding="utf-8"))
+    assert dados["aceitas_como_abstencao"], "sem frases de abstenção não há teste"
+    ids = [c["id"] for c in dados["casos"]]
+    assert len(ids) == len(set(ids)), "id repetido no conjunto"
+    for caso in dados["casos"]:
+        assert caso["agente"] in agents.AGENTS, caso["id"]
+        assert caso["pergunta"].endswith("?"), caso["id"]
+        assert caso.get("porque"), f"{caso['id']} sem justificativa do caso"
+    # os buracos que o plano ainda não fechou têm de estar cobertos
+    assert {"guidance", "call", "fato_relevante"} <= set(ids)

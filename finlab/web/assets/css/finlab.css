@@ -778,3 +778,26 @@ textarea { font-family: var(--sans); resize: vertical; min-height: 64px; line-he
   background: rgba(103, 232, 249, .045);
 }
 thead .col-ltm { color: var(--brand); }
+
+/* ------------------------------------------------- cenários nomeados ----- */
+.cen-sep {
+  font: 600 10px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase;
+  color: var(--dim2); align-self: center; margin: 0 2px 0 6px;
+}
+/* Chip com duas ações (aplicar e esquecer) sem virar dois chips soltos. */
+.cen-chip {
+  display: inline-flex; align-items: stretch;
+  border: 1px solid var(--line2); border-radius: 999px; overflow: hidden;
+  background: var(--panel);
+}
+.cen-chip.on { border-color: rgba(103, 232, 249, .5); background: rgba(103, 232, 249, .1); }
+.cen-nome {
+  font: 500 11.5px var(--sans); color: var(--paper);
+  background: none; border: 0; padding: 6px 4px 6px 11px; cursor: pointer;
+}
+.cen-x {
+  font: 600 13px/1 var(--mono); color: var(--dim2);
+  background: none; border: 0; padding: 4px 9px 4px 5px; cursor: pointer;
+}
+.cen-x:hover { color: var(--red); }
+.cen-nome:hover { color: var(--brand); }

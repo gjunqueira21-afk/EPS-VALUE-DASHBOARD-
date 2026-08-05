@@ -350,6 +350,63 @@
     return mudou;
   }
 
+  /* ------------------------------------------------- cenários nomeados --- */
+  //
+  // Os chips de cenário (otimista, pessimista…) são receitas do painel: úteis,
+  // mas ninguém guarda a SUA tese neles. Aqui o usuário nomeia o conjunto de
+  // premissas que montou, reencontra depois e compara lado a lado — que é
+  // como uma decisão de fato se toma.
+  //
+  // Guardamos o DELTA contra o padrão, nunca o conjunto inteiro: assim, quando
+  // o painel muda de base (nova DFP, regime diferente), o cenário salvo
+  // continua significando "beta 1,4 e perpetuidade 3%", e não um retrato
+  // congelado de premissas que já não existem.
+
+  function chaveCenarios() { return 'cenarios.' + state.ticker; }
+
+  function cenariosSalvos() {
+    const v = prefs.get(chaveCenarios());
+    return Array.isArray(v) ? v : [];
+  }
+
+  function guardarCenario(nome) {
+    const limpo = String(nome || '').trim().slice(0, 40);
+    if (!limpo) return;
+    const lista = cenariosSalvos().filter((c) => c.nome !== limpo);
+    lista.push({ nome: limpo, delta: premissasEditadas(), criado: Date.now() });
+    prefs.set(chaveCenarios(), lista.slice(-8));   // oito bastam para comparar
+    renderScenarios();
+    if (state.tab === 'valuation') renderValuation();
+  }
+
+  function esquecerCenario(nome) {
+    prefs.set(chaveCenarios(), cenariosSalvos().filter((c) => c.nome !== nome));
+    renderScenarios();
+    if (state.tab === 'valuation') renderValuation();
+  }
+
+  /** Premissas completas de um delta, SEM tocar no estado corrente.
+   *  É o que permite calcular vários cenários para a tabela comparativa. */
+  function paramsDe(delta) {
+    const a = JSON.parse(JSON.stringify(state.base));
+    const d = delta || {};
+    EDITAVEIS.forEach((k) => {
+      if (!(k in d)) return;
+      const v = d[k];
+      if (k === 'growth' && Array.isArray(v) && v.every(isNum)) a.growth = v.slice(0, 5);
+      else if (k === 'rf_modo' && typeof v === 'string') a.rf_modo = v;
+      else if (isNum(v)) a[k] = v;
+    });
+    const modo = ['ultimo', 'media3', 'maduro'].includes(d.fcf_modo)
+      ? d.fcf_modo : state.base.fcf_modo;
+    const cru = modo === 'ultimo' ? a.fcf_ultimo
+      : modo === 'maduro' ? (a.fcf_regime && a.fcf_regime.valor)
+        : a.fcf_media3;
+    const ajuste = isNum(d.fcf_ajuste) ? d.fcf_ajuste : 0;
+    a.fcf_base = isNum(cru) ? cru * (1 + ajuste) : null;
+    return a;
+  }
+
   function chaveSalva() { return 'tese.' + state.ticker; }
 
   function salvarPremissas() {
@@ -770,6 +827,44 @@
       }, label));
     });
 
+    // --- cenários que o usuário nomeou -----------------------------------
+    const meus = cenariosSalvos();
+    if (meus.length) {
+      row.appendChild(h('span', { class: 'cen-sep' }, 'seus'));
+      meus.forEach((c) => {
+        row.appendChild(h('span', { class: 'cen-chip' + (state.cenario === 'n:' + c.nome ? ' on' : '') }, [
+          h('button', {
+            class: 'cen-nome', title: 'Aplicar este cenário',
+            onclick: () => {
+              state.desfazer = {
+                a: JSON.parse(JSON.stringify(state.a)),
+                fcfMode: state.fcfMode, fcfAjuste: state.fcfAjuste, cenario: state.cenario
+              };
+              state.a = JSON.parse(JSON.stringify(state.base));
+              state.fcfMode = state.base.fcf_modo;
+              state.fcfAjuste = 0;
+              aplicarPremissas(c.delta);
+              state.cenario = 'n:' + c.nome;
+              rebuildControls();
+              renderAll();
+            }
+          }, c.nome),
+          h('button', {
+            class: 'cen-x', title: 'Esquecer este cenário',
+            onclick: () => esquecerCenario(c.nome)
+          }, '×')
+        ]));
+      });
+    }
+
+    row.appendChild(h('button', {
+      class: 'chip', title: 'Guarda as premissas de agora com um nome',
+      onclick: () => {
+        const nome = window.prompt('Nome do cenário (ex.: "Resia vendida", "juro a 12%")');
+        if (nome) guardarCenario(nome);
+      }
+    }, '+ salvar como…'));
+
     if (state.desfazer) {
       row.appendChild(h('button', {
         class: 'chip', title: 'Volta às premissas de antes do último cenário',
@@ -1122,6 +1217,50 @@
       ])),
       pontesEV(r, a)
     ]));
+
+    // Cenários nomeados, lado a lado --------------------------------------
+    // Comparar teses é ler as MESMAS linhas em colunas diferentes. Uma aba
+    // por cenário obrigaria a memorizar o número anterior; a tabela deixa a
+    // diferença aparecer sozinha.
+    const meus = cenariosSalvos();
+    if (meus.length) {
+      const colunas = [{ nome: 'Agora', a: a, r: r, atual: true }].concat(
+        meus.map((c) => {
+          const pa = paramsDe(c.delta);
+          return { nome: c.nome, a: pa, r: E.dcf(pa) };
+        }));
+      const LINHAS_CEN = [
+        ['Preço justo', (co) => isNum(co.r.preco_justo) ? fmt.money(co.r.preco_justo) : '—'],
+        ['Upside', (co) => isNum(co.r.upside) ? fmt.pctSigned(co.r.upside, 1) : '—'],
+        ['WACC', (co) => fmt.pct(co.r.wacc, 2)],
+        ['FCL base', (co) => fmt.big(co.a.fcf_base, 2)],
+        ['Crescimento 1º ano', (co) => fmt.pct(E.growthSeries(co.a.growth, co.a.anos)[0], 1)],
+        ['Perpetuidade', (co) => fmt.pct(co.a.g_terminal, 2)],
+        ['Beta', (co) => fmt.num(co.a.beta, 2)]
+      ];
+      host.appendChild(h('section', { class: 'panel' }, [
+        h('div', { class: 'panel-h' }, [
+          h('div', { class: 'ptitle' }, [h('b', {}, 'Suas teses lado a lado'),
+            ' · o que muda de uma para a outra']),
+          h('div', { class: 'psub' }, 'salve em Cenários, no topo da página')
+        ]),
+        h('div', { class: 'table-wrap' }, h('table', {}, [
+          h('thead', {}, h('tr', {}, [h('th', { class: 'left' }, '')].concat(
+            colunas.map((co) => h('th', { class: co.atual ? 'col-ltm' : '' }, co.nome))))),
+          h('tbody', {}, LINHAS_CEN.map(([label, valor]) => h('tr', {}, [
+            h('td', { class: 'left' }, label)
+          ].concat(colunas.map((co) => h('td', {
+            class: 'num ' + (co.atual ? 'col-ltm' : '')
+          }, valor(co)))))))
+        ])),
+        h('div', {
+          class: 'note',
+          html: 'Cada cenário guarda o que você <b>mudou</b> contra o padrão do painel, '
+            + 'não uma cópia de todas as premissas. Quando a base da CVM for atualizada, '
+            + 'eles continuam significando a mesma tese em cima dos números novos.'
+        })
+      ]));
+    }
 
     // DCF reverso contra o histórico realizado ----------------------------
     // O crescimento implícito sozinho é um número sem régua. Ao lado dos

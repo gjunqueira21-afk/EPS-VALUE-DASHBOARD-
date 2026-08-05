@@ -821,6 +821,116 @@
     }
   }
 
+  /* ============================================================= dot plot == */
+
+  /**
+   * Pontos numa régua comum, uma linha por categoria.
+   *
+   * Existe para uma pergunta específica: o preço embute um crescimento — a
+   * empresa já entregou isso alguma vez? Barra ou média esconderiam a
+   * resposta; o que importa é a NUVEM de resultados realizados contra uma
+   * referência. Onde os pontos se acumulam longe da linha, a tese pede algo
+   * que a companhia nunca fez.
+   *
+   * opts:
+   *   items:  [{ label, pontos: [{ x, rotulo }] }]
+   *   ref:    { value, label, color }   linha vertical (o implícito no preço)
+   *   format(v), height
+   */
+  function dots(container, opts) {
+    if (!container) return;
+    const o = opts || {};
+    const items = (o.items || []).filter((i) => (i.pontos || []).length);
+    if (!items.length) { container.innerHTML = ''; return; }
+
+    const linha = 34;
+    const height = o.height || (12 + 26 + items.length * linha);
+    const { svg, width } = frame(container, Object.assign({}, o, { height }));
+    const rot = margemRotulos(items.map((i) => i.label), width, o.labelWidth || 96);
+    const pad = { t: 12, r: 22, b: 26, l: rot.pad };
+    const W = width - pad.l - pad.r;
+
+    const vals = items.flatMap((i) => i.pontos.map((p) => p.x))
+      .concat(isNum(o.ref && o.ref.value) ? [o.ref.value] : []);
+    const escala = niceTicks(Math.min.apply(null, vals), Math.max.apply(null, vals), 5);
+    const sx = (v) => pad.l + ((v - escala.min) / (escala.max - escala.min || 1)) * W;
+
+    const rotTick = escala.ticks.map((t) => (o.format ? o.format(t) : String(t)));
+    const mostra = ticksVisiveis(rotTick, W);
+    escala.ticks.forEach((t, k) => {
+      const x = sx(t);
+      svg.appendChild(el('line', {
+        x1: x, x2: x, y1: pad.t, y2: pad.t + items.length * linha,
+        stroke: COLORS.grid, 'stroke-width': 1
+      }));
+      if (!mostra.has(k)) return;
+      const lb = el('text', {
+        x, y: height - 8, fill: COLORS.text, 'font-size': 10,
+        'text-anchor': ancoraTick(k, escala.ticks.length),
+        'font-family': 'ui-monospace, monospace'
+      });
+      lb.textContent = rotTick[k];
+      svg.appendChild(lb);
+    });
+
+    const tip = ensureTip(container);
+
+    items.forEach((it, i) => {
+      const y = pad.t + i * linha + linha / 2;
+      const lbl = el('text', {
+        x: pad.l - 10, y: y + 3.5, fill: COLORS.text, 'font-size': 10.5,
+        'text-anchor': 'end', 'font-family': 'ui-monospace, monospace'
+      });
+      lbl.textContent = corta(it.label, rot.max);
+      lbl.appendChild(el('title')).textContent = it.label;
+      svg.appendChild(lbl);
+
+      const cor = it.color || COLORS.brand;
+      it.pontos.forEach((p) => {
+        if (!isNum(p.x)) return;
+        const c = el('circle', {
+          cx: sx(p.x), cy: y, r: 5.5, fill: cor, opacity: 0.55,
+          stroke: '#0A1120', 'stroke-width': 1.2, style: 'cursor:default'
+        });
+        c.addEventListener('mouseenter', () => {
+          c.setAttribute('opacity', 0.95);
+          tip.innerHTML = `<span class="k">${p.rotulo || it.label}</span><br>`
+            + (o.format ? o.format(p.x) : p.x);
+          tip.classList.add('on');
+          tip.style.left = Math.min(width - 150, sx(p.x) + 10) + 'px';
+          tip.style.top = (y - 12) + 'px';
+        });
+        c.addEventListener('mouseleave', () => {
+          c.setAttribute('opacity', 0.55);
+          tip.classList.remove('on');
+        });
+        svg.appendChild(c);
+      });
+    });
+
+    if (o.ref && isNum(o.ref.value)) {
+      const x = sx(o.ref.value);
+      svg.appendChild(el('line', {
+        x1: x, x2: x, y1: pad.t - 4, y2: pad.t + items.length * linha + 2,
+        stroke: o.ref.color || '#E6ECF5', 'stroke-width': 1.6, 'stroke-dasharray': '5 4'
+      }));
+      const REF_CHAR = 6.1;
+      const texto = corta(o.ref.label || '', Math.floor((width - 8) / REF_CHAR));
+      const larg = texto.length * REF_CHAR;
+      const cabe = x + 6 + larg <= width - 4;
+      const lb = el('text', {
+        x: cabe ? Math.max(4, Math.min(x + 6, width - 4 - larg))
+                : Math.min(width - 4, Math.max(x - 6, 4 + larg)),
+        y: pad.t + 2, fill: o.ref.color || '#E6ECF5',
+        'font-size': 10, 'font-weight': 700, 'font-family': 'ui-monospace, monospace',
+        'text-anchor': cabe ? 'start' : 'end'
+      });
+      lb.textContent = texto;
+      lb.appendChild(el('title')).textContent = o.ref.label || '';
+      svg.appendChild(lb);
+    }
+  }
+
   /* ==================================================== waterfall / bridge == */
 
   /**
@@ -1040,6 +1150,6 @@
     container.appendChild(bar);
   }
 
-  global.FLChart = { line, bars, spark, ring, heat, stack, hbars, waterfall, tornado,
+  global.FLChart = { line, bars, spark, ring, heat, stack, hbars, dots, waterfall, tornado,
                      niceTicks, observarLargura, COLORS };
 })(window);

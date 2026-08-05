@@ -70,6 +70,66 @@ def process_and_save_statements(years: List[int]) -> None:
             _save_df(df_clean, stmt.lower(), tipo_doc.lower())
 
 
+def process_and_save_ipe(years: List[int]) -> None:
+    """Consolida o índice IPE dos anos pedidos num parquet único.
+
+    O IPE não segue o formato dos demonstrativos: é um CSV por ano, uma linha
+    por documento entregue à CVM, com Link_Download apontando para o PDF no
+    RAD/ENET. Aqui só o índice é guardado — o texto dos PDFs é outra etapa,
+    e o índice sozinho já responde "o que aconteceu nesta empresa desde o
+    balanço", com data e link.
+    """
+    import io
+    import zipfile
+
+    from .config import CSV_ENCODING, CSV_SEP, RAW_DIR
+
+    partes = []
+    for ano in years:
+        zip_path = RAW_DIR / f"ipe_cia_aberta_{ano}.zip"
+        if not zip_path.exists():
+            logger.debug("[IPE %d] ZIP ausente — pulando.", ano)
+            continue
+        try:
+            with zipfile.ZipFile(zip_path) as zf:
+                nomes = [n for n in zf.namelist() if n.lower().endswith(".csv")]
+                if not nomes:
+                    logger.warning("[IPE %d] ZIP sem CSV dentro.", ano)
+                    continue
+                with zf.open(nomes[0]) as fh:
+                    bruto = fh.read()
+            df = pd.read_csv(io.BytesIO(bruto), sep=CSV_SEP, encoding=CSV_ENCODING,
+                             dtype=str, low_memory=False)
+            partes.append(df)
+            logger.info("[IPE %d] %d documentos.", ano, len(df))
+        except Exception as exc:
+            logger.error("[IPE %d] Falha ao ler: %s", ano, exc)
+
+    if not partes:
+        logger.warning("IPE: nenhum ano disponível — o painel segue sem o índice.")
+        return
+
+    df = pd.concat(partes, ignore_index=True)
+    if "Codigo_CVM" in df.columns:
+        df["Codigo_CVM"] = df["Codigo_CVM"].astype(str).str.strip()
+    for col in ("Data_Entrega", "Data_Referencia"):
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors="coerce")
+
+    # Reapresentação: a CVM republica o mesmo protocolo com Versao maior. Fica
+    # a última — senão o painel mostra o mesmo fato relevante três vezes.
+    if {"Protocolo_Entrega", "Versao"} <= set(df.columns):
+        df["Versao"] = pd.to_numeric(df["Versao"], errors="coerce").fillna(0)
+        df = (df.sort_values("Versao")
+                .drop_duplicates(subset=["Protocolo_Entrega"], keep="last"))
+
+    destino = PROCESSED_DIR / "ipe.parquet"
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(destino, index=False)
+    logger.info("Salvo: ipe.parquet (%d documentos, %d companhias)",
+                len(df), df["Codigo_CVM"].nunique() if "Codigo_CVM" in df.columns else 0)
+
+
 def process_and_save_cadastro() -> pd.DataFrame:
     """Processa e salva o cadastro de empresas."""
     from .config import RAW_DIR
@@ -310,6 +370,7 @@ def main() -> None:
     # 4. Processar demonstrativos
     logger.info("Processando demonstrativos financeiros...")
     process_and_save_statements(years)
+    process_and_save_ipe(years)
 
     # 5. Criar template de ticker_mapper
     if not df_cadastro.empty:

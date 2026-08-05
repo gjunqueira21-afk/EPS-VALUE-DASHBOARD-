@@ -14,6 +14,9 @@
   async function ensureConfig() {
     if (cfg) return cfg;
     try { cfg = await api('/api/config'); } catch (e) { cfg = { agents: [], providers: [] }; }
+    // A lista real de agentes é do backend: sem isto, um agente novo não ganha
+    // cartão em ⚙ A mesa e cai calado no slot do primeiro.
+    if (global.FL.setAgentOrder) global.FL.setAgentOrder((cfg.agents || []).map((a) => a.key));
     return cfg;
   }
 

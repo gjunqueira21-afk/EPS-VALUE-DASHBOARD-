@@ -801,3 +801,15 @@ thead .col-ltm { color: var(--brand); }
 }
 .cen-x:hover { color: var(--red); }
 .cen-nome:hover { color: var(--brand); }
+
+/* ------------------------------------------------ documentos da CVM (IPE) */
+.ipe-lista li { gap: 9px; }
+.ipe-cat {
+  font: 600 10px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase;
+  color: var(--dim2); border: 1px solid var(--line2); border-radius: 5px;
+  padding: 4px 6px; flex: none;
+}
+/* O assunto é link para o PDF na origem: a promessa do painel é que todo
+   número e todo fato tenham caminho de volta à fonte. */
+.ipe-assunto { color: var(--dim); text-decoration: none; border-bottom: 1px dotted var(--line2); }
+a.ipe-assunto:hover { color: var(--brand); border-bottom-color: var(--brand); }

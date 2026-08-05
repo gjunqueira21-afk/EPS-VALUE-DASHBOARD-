@@ -14,7 +14,7 @@ from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import (agents, b3data, bdrs, cache, cvm, etfs, market, metrics,
+from . import (agents, b3data, bdrs, cache, cvm, etfs, ipe, market, metrics,
                regime, scoring, universe, valuation)
 from .settings import DEMO_MODE, TTL_CVM, TTL_QUOTE, WEB_DIR
 
@@ -218,6 +218,7 @@ def api_company(ticker: str):
         "itr": cvm.latest_quarter(comp.cd_cvm),
         "trimestral": cvm.quarterly_series(comp.cd_cvm),
         "ltm": cvm.ltm_series(comp.cd_cvm),
+        "ipe": ipe.documentos(comp.cd_cvm),
         "regime": reg,
         "source": snap.get("price_source"),
     }

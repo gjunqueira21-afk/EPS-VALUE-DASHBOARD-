@@ -1012,6 +1012,18 @@ def _bloco_momento(payload: dict) -> list[str]:
             f"lucro {_bi_simples(c.get('lucro_liquido'))} | FCL {_bi_simples(c.get('fcl'))}",
         ]
 
+    docs = (payload.get("ipe") or {}).get("docs") or []
+    if docs:
+        linhas += ["", "DOCUMENTOS PUBLICADOS NA CVM (índice IPE — títulos, não o texto)"]
+        for d in docs[:8]:
+            assunto = d.get("assunto") or "(sem assunto declarado)"
+            linhas.append(f"  [{d.get('data')}] {d.get('categoria')}"
+                          + (f" · {d.get('tipo')}" if d.get("tipo") else "")
+                          + f": {assunto}")
+        linhas.append("  Você tem o TÍTULO e a data, não o conteúdo do documento. Pode dizer "
+                      "que o assunto existe e quando foi publicado; não pode afirmar o que "
+                      "está escrito dentro dele.")
+
     if linhas:
         linhas.append("")
         linhas.append(f"  A mesa enxerga a contabilidade até {_cobertura(payload)}.")

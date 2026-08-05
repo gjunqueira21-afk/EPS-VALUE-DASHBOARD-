@@ -5,7 +5,11 @@
 (function (global) {
   'use strict';
 
-  const { h, el, esc, loadSlots, saveSlots, SLOT_COUNT, AGENT_ORDER } = global.FL;
+  const { h, el, esc, loadSlots, saveSlots } = global.FL;
+  // A lista de agentes é do backend e cresce; ler uma cópia congelada aqui
+  // foi o que deixou o Radar de Contexto sem cartão em ⚙ A mesa.
+  const AGENT_ORDER = () => global.FL.agentOrder();
+  const SLOT_COUNT = () => AGENT_ORDER().length;
 
   let providers = [];
   let onSaved = null;
@@ -31,7 +35,7 @@
   /* ------------------------------------------------- um cartão por agente */
 
   function agentCard(slot, idx) {
-    const chave = AGENT_ORDER[idx];
+    const chave = AGENT_ORDER()[idx];
     const nomes = global.FL.loadAgentNames();
     const padrao = global.FL.AGENT_DEFAULTS[chave];
 
@@ -153,7 +157,7 @@
           }),
           h('button', {
             class: 'btn ghost sm', type: 'button', style: 'margin-top:7px',
-            title: 'Copia provedor, chave e modelo deste agente para os outros três',
+            title: 'Copia provedor, chave e modelo deste agente para os demais',
             onclick: replicar
           }, '⇊ usar em todos')
         ])
@@ -171,8 +175,8 @@
         alert('Preencha a chave e escolha o modelo deste agente antes de copiar.');
         return;
       }
-      if (!confirm('Copiar provedor, chave e modelo deste agente para os outros três?')) return;
-      for (let j = 0; j < SLOT_COUNT; j++) {
+      if (!confirm('Copiar provedor, chave e modelo deste agente para os demais?')) return;
+      for (let j = 0; j < SLOT_COUNT(); j++) {
         if (j === idx) continue;
         el(`slot-prov-${j}`).value = dados.provider;
         el(`slot-key-${j}`).value = dados.api_key;
@@ -207,20 +211,20 @@
 
   function primeiroConfigurado(exceto) {
     const nomes = global.FL.loadAgentNames();
-    for (let j = 0; j < SLOT_COUNT; j++) {
+    for (let j = 0; j < SLOT_COUNT(); j++) {
       if (j === exceto) continue;
       const senha = (el(`slot-key-${j}`) || {}).value || '';
       if (senha.trim() && modeloDe(j)) {
         const campo = el(`slot-label-${j}`);
         const proprio = campo && campo.value.trim();
-        return proprio || nomes[AGENT_ORDER[j]];
+        return proprio || nomes[AGENT_ORDER()[j]];
       }
     }
     return null;
   }
 
   function atualizarTodasHerancas() {
-    for (let j = 0; j < SLOT_COUNT; j++) {
+    for (let j = 0; j < SLOT_COUNT(); j++) {
       const aviso = el(`agent-heranca-${j}`);
       if (!aviso) continue;
       const senha = (el(`slot-key-${j}`) || {}).value || '';
@@ -238,9 +242,9 @@
   }
 
   function collect() {
-    return Array.from({ length: SLOT_COUNT }, (_, i) => ({
+    return Array.from({ length: SLOT_COUNT() }, (_, i) => ({
       id: i + 1,
-      agent: AGENT_ORDER[i],
+      agent: AGENT_ORDER()[i],
       provider: el(`slot-prov-${i}`).value,
       model: modeloDe(i),
       api_key: el(`slot-key-${i}`).value.trim(),
@@ -251,7 +255,7 @@
   /** O nome do agente e o apelido do slot passaram a ser a mesma coisa. */
   function collectNomes() {
     const out = {};
-    AGENT_ORDER.forEach((k, i) => {
+    AGENT_ORDER().forEach((k, i) => {
       const campo = el(`slot-label-${i}`);
       out[k] = campo && campo.value.trim()
         ? campo.value.trim() : global.FL.AGENT_DEFAULTS[k];

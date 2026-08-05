@@ -1840,3 +1840,88 @@ def test_conjunto_de_abstencao_esta_bem_formado():
         assert caso.get("porque"), f"{caso['id']} sem justificativa do caso"
     # os buracos que o plano ainda não fechou têm de estar cobertos
     assert {"guidance", "call", "fato_relevante"} <= set(ids)
+
+
+# ---------------------------------------------------------------------------
+# Índice IPE (o que a companhia comunicou)
+# ---------------------------------------------------------------------------
+
+def test_ipe_degrada_sem_o_indice(tmp_path, monkeypatch):
+    """Sem o parquet do IPE o painel segue — como segue sem o ITR."""
+    from finlab.backend import ipe
+
+    monkeypatch.setattr(ipe, "CVM_PROCESSED_DIR", tmp_path)
+    ipe._indice.cache_clear()
+    try:
+        assert ipe.disponivel() is False
+        assert ipe.cobertura() is None
+        assert ipe.documentos("009512") == {"docs": [], "cobertura": None, "total": 0}
+        assert ipe.documentos("") == {"docs": [], "cobertura": None, "total": 0}
+    finally:
+        ipe._indice.cache_clear()
+
+
+def test_ipe_casa_o_codigo_com_e_sem_zero_a_esquerda(tmp_path, monkeypatch):
+    """O CD_CVM do universo vem zero-preenchido ("009512") e o do IPE nem
+    sempre. Errar isso faria toda companhia aparecer sem documento nenhum."""
+    import pandas as pd
+    from finlab.backend import ipe
+
+    monkeypatch.setattr(ipe, "CVM_PROCESSED_DIR", tmp_path)
+    ipe._indice.cache_clear()
+    try:
+        pd.DataFrame([{
+            "Codigo_CVM": "9512", "Categoria": "Fato Relevante", "Tipo": "",
+            "Assunto": "Alienação de controlada", "Data_Entrega": pd.Timestamp("2026-07-01"),
+            "Link_Download": "https://exemplo/1",
+        }]).to_parquet(tmp_path / "ipe.parquet", index=False)
+        ipe._indice.cache_clear()
+
+        for chave in ("009512", "9512", " 009512 "):
+            out = ipe.documentos(chave)
+            assert out["total"] == 1, chave
+            assert out["docs"][0]["link"] == "https://exemplo/1"
+        assert ipe.documentos("000001")["total"] == 0
+    finally:
+        ipe._indice.cache_clear()
+
+
+def test_ipe_prioriza_o_que_muda_tese_e_ordena_do_mais_novo(tmp_path, monkeypatch):
+    """O IPE tem dezenas de categorias — assembleia, aviso aos acionistas,
+    política de negociação. Mostrar tudo afogaria o fato relevante."""
+    import pandas as pd
+    from finlab.backend import ipe
+
+    monkeypatch.setattr(ipe, "CVM_PROCESSED_DIR", tmp_path)
+    ipe._indice.cache_clear()
+    try:
+        linhas = [
+            ("Assembleia", "2026-07-30", "Edital de convocação"),
+            ("Fato Relevante", "2026-07-01", "Venda de ativo"),
+            ("Política de Negociação", "2026-06-20", "Atualização"),
+            ("Comunicado ao Mercado", "2026-07-10", "Esclarecimento"),
+        ]
+        pd.DataFrame([{
+            "Codigo_CVM": "9512", "Categoria": c, "Tipo": "", "Assunto": a,
+            "Data_Entrega": pd.Timestamp(d), "Link_Download": "https://exemplo",
+        } for c, d, a in linhas]).to_parquet(tmp_path / "ipe.parquet", index=False)
+        ipe._indice.cache_clear()
+
+        docs = ipe.documentos("9512")["docs"]
+        cats = [d["categoria"] for d in docs]
+        assert "Assembleia" not in cats and "Política de Negociação" not in cats
+        # do mais novo para o mais velho: o que aconteceu por último é o que importa
+        assert [d["data"] for d in docs] == ["2026-07-10", "2026-07-01"]
+    finally:
+        ipe._indice.cache_clear()
+
+
+def test_ipe_entra_no_contexto_como_titulo_e_avisa_que_nao_leu_o_pdf():
+    """A tentação óbvia é o agente inventar o conteúdo a partir do título."""
+    texto = "\n".join(agents._bloco_momento({
+        "fundamentals": {"last_year": 2025},
+        "ipe": {"docs": [{"data": "2026-07-01", "categoria": "Fato Relevante",
+                          "tipo": "", "assunto": "Venda de controlada"}]},
+    }))
+    assert "[2026-07-01] Fato Relevante: Venda de controlada" in texto
+    assert "não pode afirmar o que está escrito dentro dele" in texto

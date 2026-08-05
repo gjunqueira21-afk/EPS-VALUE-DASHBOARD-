@@ -404,3 +404,44 @@ def test_observador_redesenha_so_quando_a_largura_muda_de_fato(pagina):
     assert saida["inicial"] == 0, "montar o observador não pode redesenhar nada"
     assert saida["ruido"] == 0, "variação menor que o limiar não pode redesenhar"
     assert saida["real"] == 1, saida
+
+
+def test_dot_plot_posiciona_pontos_e_referencia_no_mesmo_eixo(pagina):
+    """O crescimento implícito sozinho é um número sem régua. Ao lado dos
+    CAGRs realizados ele vira pergunta respondível — e para isso os pontos e
+    a linha tracejada precisam viver na mesma escala."""
+    saida = pagina("""
+        const box = document.getElementById('box');
+        FLChart.dots(box, {
+          items: [
+            {label: 'Receita', color: '#38BDF8',
+             pontos: [{x: 0.10, rotulo: '21→24'}, {x: 0.20, rotulo: '22→25'}]},
+            {label: 'EBITDA', color: '#7DD3FC', pontos: [{x: 0.30, rotulo: '22→25'}]}
+          ],
+          ref: {value: 0.60, label: 'implícito no preço 60%'},
+          format: v => (v * 100).toFixed(0) + '%'
+        });
+        const cs = [...box.querySelectorAll('circle')].map(c => +c.getAttribute('cx'));
+        const ref = [...box.querySelectorAll('line')]
+          .filter(l => l.getAttribute('stroke-dasharray'))
+          .map(l => +l.getAttribute('x1'))[0];
+        const linhas = [...box.querySelectorAll('circle')].map(c => +c.getAttribute('cy'));
+        return {n: cs.length, cs, ref, linhasDistintas: new Set(linhas).size};
+    """)
+    assert saida["n"] == 3
+    # os três pontos crescem da esquerda para a direita, na ordem dos valores
+    assert saida["cs"][0] < saida["cs"][1] < saida["cs"][2]
+    # a referência (60%) fica à direita de todos os realizados
+    assert saida["ref"] > saida["cs"][2]
+    # duas categorias, duas alturas
+    assert saida["linhasDistintas"] == 2
+
+
+def test_dot_plot_sem_pontos_nao_desenha(pagina):
+    vazio = pagina("""
+        const box = document.getElementById('box');
+        box.innerHTML = 'sujeira';
+        FLChart.dots(box, {items: [{label: 'x', pontos: []}], ref: {value: 1}});
+        return box.innerHTML;
+    """)
+    assert vazio == ""

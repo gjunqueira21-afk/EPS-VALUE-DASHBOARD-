@@ -37,6 +37,43 @@
     baixo: '#FDBA74', muito_baixo: '#FB923C'
   };
 
+  /** CAGRs de 3 anos que a empresa realizou, em janelas móveis.
+   *
+   *  Só entra janela com as duas pontas positivas: CAGR entre números de
+   *  sinais diferentes não é taxa de crescimento, é ruído com cara de número.
+   *  Por isso o FCL costuma ter menos pontos que a receita — e tudo bem, a
+   *  ausência é informação.
+   */
+  function cagrsRealizados() {
+    const f = state.data.fundamentals || {};
+    const s = f.series || {};
+    const anos = f.years || [];
+    const metricas = [['receita', 'Receita', '#38BDF8'],
+                      ['ebitda', 'EBITDA', '#7DD3FC'],
+                      ['fcl', 'FCL', '#A78BFA']];
+    return metricas.map(([chave, label, color]) => {
+      const v = s[chave] || [];
+      // Janela que parte de uma base ínfima produz CAGR absurdo: um FCL que
+      // saiu de quase zero "cresceu 295% ao ano", número que espicha o eixo e
+      // esmaga a nuvem que interessa. O piso é contra a mediana da própria
+      // série — não é recorte de conveniência, é o mesmo cuidado de sempre com
+      // razão de denominador pequeno.
+      const positivos = v.filter((x) => isNum(x) && x > 0).sort((x, y) => x - y);
+      if (!positivos.length) return { label, color, pontos: [] };
+      const mediana = positivos[Math.floor(positivos.length / 2)];
+      const piso = mediana * 0.2;
+
+      const pontos = [];
+      for (let i = 3; i < anos.length; i++) {
+        const ini = v[i - 3], fim = v[i];
+        if (!isNum(ini) || !isNum(fim) || ini <= piso || fim <= 0) continue;
+        pontos.push({ x: Math.pow(fim / ini, 1 / 3) - 1,
+                      rotulo: `${anos[i - 3]}→${anos[i]}` });
+      }
+      return { label, color, pontos };
+    }).filter((m) => m.pontos.length);
+  }
+
   function fcfCru(modo) {
     const a = state.a;
     const reg = a.fcf_regime;
@@ -1085,6 +1122,46 @@
       ])),
       pontesEV(r, a)
     ]));
+
+    // DCF reverso contra o histórico realizado ----------------------------
+    // O crescimento implícito sozinho é um número sem régua. Ao lado dos
+    // CAGRs que a empresa de fato entregou, ele vira uma pergunta
+    // respondível: isso já aconteceu aqui alguma vez?
+    const realizados = cagrsRealizados();
+    // g_implicito não vem no retorno do dcf() — ele é do resumo(). Aqui o
+    // reverso é recalculado com as premissas correntes.
+    const impl = E.crescimentoImplicito(a);
+    if (realizados.length && isNum(impl)) {
+      const reversoBox = h('div', { class: 'chartbox', style: 'height:auto' });
+      const todos = realizados.flatMap((m) => m.pontos.map((p) => p.x));
+      const acima = todos.filter((v) => v >= impl).length;
+      host.appendChild(h('section', { class: 'panel' }, [
+        h('div', { class: 'panel-h' }, [
+          h('div', { class: 'ptitle' }, [h('b', {}, 'O preço pede quanto de crescimento'),
+            ' · e o que a empresa já entregou']),
+          h('div', { class: 'psub' }, 'cada ponto é um CAGR de 3 anos realizado')
+        ]),
+        reversoBox,
+        h('div', {
+          class: 'note',
+          html: `<b>O preço de tela embute ${esc(fmt.pct(impl, 1))} ao ano</b> de `
+            + 'crescimento do fluxo. Nas janelas de 3 anos que a CVM cobre, a empresa '
+            + `alcançou ou superou isso em <b>${acima} de ${todos.length}</b>. `
+            + (acima === 0
+              ? 'Nenhuma vez — a tese depende de algo que não está no histórico.'
+              : acima === todos.length
+                ? 'Sempre — pelo histórico, o preço não está pedindo muito.'
+                : 'Onde a nuvem fica longe da linha tracejada, o mercado está '
+                  + 'pedindo um desempenho fora do padrão da casa.')
+        })
+      ]));
+      setTimeout(() => C.dots(reversoBox, {
+        items: realizados,
+        ref: { value: impl, label: 'implícito no preço ' + fmt.pct(impl, 1) },
+        format: (v) => fmt.pct(v, 0),
+        ariaLabel: 'Crescimento implícito no preço contra os CAGRs realizados'
+      }), 0);
+    }
 
     // Tornado: qual premissa move mais ------------------------------------
     // A sidebar tem 15 controles de mesmo peso visual; isto responde onde

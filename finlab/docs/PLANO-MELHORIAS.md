@@ -76,8 +76,13 @@ Parecer 01 (dataviz) + estruturais do 02. Tudo em SVG próprio — o gargalo med
       ("🔗 link da tese"); "📋 copiar resumo". *(02 — stateless confirmado)*
 - [ ] **1.7 Cenários nomeados** — salvar, reencontrar e comparar em colunas.
       *(02 estrutural)*
-- [ ] **1.8 DCF reverso como dot plot** vs. crescimento histórico realizado.
+- [x] **1.8 DCF reverso como dot plot** vs. crescimento histórico realizado.
       *(01 §3.5)*
+      Uma linha por métrica (receita, EBITDA, FCL), um ponto por janela de 3
+      anos realizada, e o implícito no preço como linha tracejada no mesmo
+      eixo. A nota conta em quantas janelas a empresa alcançou o que o preço
+      pede. Janela que parte de base ínfima é descartada: CAGR de denominador
+      quase zero espichava o eixo e escondia a nuvem que interessa.
 - [x] **1.9 Render barato × estrutural** separados + `ResizeObserver`. *(01 §5.1)*
       O SVG tem viewBox fixo e `preserveAspectRatio: none`: arrastar a janela
       de 1366 para 626px mantinha o desenho antigo esmagado. O redesenho

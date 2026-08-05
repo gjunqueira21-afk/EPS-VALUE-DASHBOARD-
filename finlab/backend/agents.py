@@ -923,12 +923,21 @@ def build_context(payload: dict, assumptions: dict, resultado: dict, macro: dict
         f"  Lucro líquido — {hist('lucro_liquido')}",
         f"  FCL — {hist('fcl')}",
         f"  Dívida líquida — {hist('divida_liquida')}",
+    ]
+    # O que não muda quando o usuário arrasta um slider fica ANTES do que muda.
+    # Não é organização: é o que torna o cache de prefixo do provedor efetivo.
+    # Sete agentes lendo a mesma empresa compartilham este trecho inteiro, e
+    # rearrastar um slider revalida só a cauda.
+    linhas += _bloco_momento(payload)
+    linhas += [
         "",
         "MACRO",
         "  " + " | ".join(
             f"{k.upper()} {v.get('value')}" + (f" ({v.get('source')})" if v.get("source") else "")
             for k, v in (macro or {}).items() if isinstance(v, dict)
         ),
+        "",
+        "--- daqui para baixo muda a cada ajuste de premissa ---",
         "",
         "PREMISSAS ATUAIS DO PAINEL",
         f"  Rf {pc(assumptions.get('rf'))} | ERP {pc(assumptions.get('erp'))} | beta {assumptions.get('beta')} "
@@ -946,7 +955,6 @@ def build_context(payload: dict, assumptions: dict, resultado: dict, macro: dict
         f"  EPV (poder de lucro): R$ {resultado.get('epv_por_acao')} por ação",
         f"  Crescimento implícito no preço atual (DCF reverso): {pc(resultado.get('g_implicito'))}",
     ]
-    linhas += _bloco_momento(payload)
     return "\n".join(linhas)
 
 

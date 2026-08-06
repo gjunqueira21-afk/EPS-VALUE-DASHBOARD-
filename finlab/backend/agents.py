@@ -1240,10 +1240,53 @@ def _bloco_momento(payload: dict) -> list[str]:
                       "que o assunto existe e quando foi publicado; não pode afirmar o que "
                       "está escrito dentro dele.")
 
+    # O placar de promessas: a terceira camada de memória, depois do que a
+    # empresa contabilizou e do que ela comunicou — o que ela DISSE QUE IA
+    # FAZER, com prazo. Vem inteiro do registro do usuário, e o bloco já traz
+    # a instrução de não inventar promessa fora da lista.
+    placar = payload.get("promessas") or {}
+    if placar.get("total"):
+        linhas += ["", _bloco_promessas(placar)]
+
     if linhas:
         linhas.append("")
         linhas.append(f"  A mesa enxerga a contabilidade até {_cobertura(payload)}.")
     return linhas
+
+
+def _bloco_promessas(placar: dict) -> str:
+    """O placar como texto para o contexto.
+
+    Recebe o dicionário pronto (backend.promessas.placar) em vez de ler o
+    arquivo: o contexto se monta a partir do payload da tela, e assim este
+    módulo continua sem saber onde as promessas moram.
+    """
+    linhas = [
+        "PLACAR DE PROMESSAS DA GESTÃO (registrado pelo usuário)",
+        f"  {placar.get('total', 0)} promessa(s) · {placar.get('aberta', 0)} aberta(s) "
+        f"({placar.get('vencidas', 0)} com prazo vencido) · "
+        f"{placar.get('cumprida', 0)} cumprida(s) · {placar.get('quebrada', 0)} quebrada(s) "
+        f"· {placar.get('parcial', 0)} parcial(is)"
+        + (f" · cumprimento {placar['taxa']:.0%} das resolvidas"
+           if placar.get("taxa") is not None else ""),
+    ]
+    for item in (placar.get("itens") or [])[:12]:
+        marca = "VENCIDA" if item.get("vencida") else str(item.get("estado", "")).upper()
+        cab = f"  [{marca}]"
+        if item.get("prazo"):
+            cab += f" prazo {item['prazo']}"
+        if item.get("doc"):
+            cab += f" (doc {item['doc']})"
+        if item.get("revisoes"):
+            # Promessa replanejada é sinal sobre a gestão, não ruído.
+            cab += f" · replanejada {item['revisoes']}x"
+        linhas.append(f"{cab}: {item.get('texto')}")
+        if item.get("nota"):
+            linhas.append(f"      nota do usuário: {item['nota']}")
+    linhas.append("  Promessa VENCIDA passou do prazo sem baixa — cobre-a explicitamente "
+                  "quando for relevante para a pergunta. NUNCA afirme cumprimento ou "
+                  "descumprimento de promessa que não esteja nesta lista.")
+    return "\n".join(linhas)
 
 
 def _bi_simples(v) -> str:

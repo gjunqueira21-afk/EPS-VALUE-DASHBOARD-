@@ -199,8 +199,17 @@ documento.
 - [ ] **4.1 ASR das calls** — transcrição + diarização + segmentação do Q&A por
       par pergunta→resposta. Maior custo operacional do projeto → última fase.
       Transcrições ficam locais, nunca no repositório. *(03 §3.4, riscos)*
-- [ ] **4.2 Placar de promessas** — promessas da gestão versionadas e cobradas
+- [x] **4.2 Placar de promessas** — promessas da gestão versionadas e cobradas
       tri a tri; memória por ticker. *(05 §3.4, 04 F3)*
+      `backend/promessas.py` guarda por ticker em `finlab/data/promessas.json`
+      (fora do repositório, como as transcrições). Toda mudança vira uma
+      VERSÃO nova, nunca um sobrescrito: promessa que muda de prazo duas vezes
+      é o dado mais valioso do placar. O painel marca o que passou do prazo,
+      conta cumpridas/quebradas/parciais e só calcula taxa de cumprimento
+      quando há promessa resolvida. A mesa lê o placar e cobra o vencido, com
+      proibição explícita de inventar promessa fora da lista.
+      *Fora deste item:* extrair promessas dos documentos automaticamente —
+      é escopo próprio, e o registro hoje é do usuário.
 - [x] **4.3 Reconciliador** — delta de premissa proposto pela mesa aplicável com
       um clique via `recalcular_valuation` no cliente, com gates humanos. *(04 F3)*
       O Engenheiro de Premissas fecha a fala com um bloco JSON quando propõe

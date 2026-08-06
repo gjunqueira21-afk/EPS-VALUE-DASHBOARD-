@@ -2178,6 +2178,159 @@
         + 'isso a confiança não passa de <i>média</i>. O tratamento do fluxo-base acima é '
         + 'uma recomendação: o modelo ao lado continua usando a base que você escolheu.'
     }));
+
+    renderPromessas(corpo);
+  }
+
+  /* ========================================== placar de promessas (4.2) === */
+  /* O que a gestão DISSE QUE IA FAZER, com prazo, e no que deu. É a única
+     parte do painel escrita pelo usuário: o painel não extrai promessa de
+     lugar nenhum sozinho, ele guarda, cobra o prazo e mostra o histórico. */
+
+  const ESTADO_PROMESSA = {
+    aberta: { rotulo: 'aberta', cor: 'var(--blue)' },
+    cumprida: { rotulo: 'cumprida', cor: 'var(--green)' },
+    quebrada: { rotulo: 'quebrada', cor: 'var(--red)' },
+    parcial: { rotulo: 'parcial', cor: 'var(--amber)' }
+  };
+
+  async function recarregarPromessas() {
+    try {
+      state.data.promessas = await api(`/api/company/${state.ticker}/promessas`);
+    } catch (e) { /* mantém o que tinha */ }
+    renderRegime();
+  }
+
+  function renderPromessas(corpo) {
+    const p = state.data.promessas || { total: 0, itens: [] };
+
+    corpo.appendChild(h('div', { class: 'regime-h', style: 'margin-top:16px' },
+      'Placar de promessas da gestão'));
+
+    if (p.total) {
+      const chips = [
+        ['aberta', p.aberta], ['cumprida', p.cumprida],
+        ['quebrada', p.quebrada], ['parcial', p.parcial]
+      ].filter(([, n]) => n > 0).map(([k, n]) => h('span', {
+        class: 'prom-chip', style: `--pc:${ESTADO_PROMESSA[k].cor}`
+      }, `${n} ${ESTADO_PROMESSA[k].rotulo}${n > 1 && k !== 'parcial' ? 's' : ''}`));
+      if (p.vencidas) {
+        chips.unshift(h('span', { class: 'prom-chip alerta', style: '--pc:var(--red)' },
+          `⏰ ${p.vencidas} com prazo vencido`));
+      }
+      if (p.taxa !== null && p.taxa !== undefined) {
+        chips.push(h('span', { class: 'prom-taxa' },
+          `cumprimento ${fmt.pct(p.taxa, 0)} das resolvidas`));
+      }
+      corpo.appendChild(h('div', { class: 'prom-resumo' }, chips));
+
+      corpo.appendChild(h('ul', { class: 'prom-lista' }, p.itens.map((it) => {
+        const est = ESTADO_PROMESSA[it.estado] || ESTADO_PROMESSA.aberta;
+        const acoes = it.estado === 'aberta'
+          ? ['cumprida', 'parcial', 'quebrada'].map((novo) => h('button', {
+              class: 'btn ghost sm', title: 'Dar baixa como ' + novo,
+              onclick: () => darBaixa(it, novo)
+            }, ESTADO_PROMESSA[novo].rotulo))
+          : [h('button', {
+              class: 'btn ghost sm', title: 'Reabrir esta promessa',
+              onclick: () => darBaixa(it, 'aberta')
+            }, 'reabrir')];
+        acoes.push(h('button', {
+          class: 'btn ghost sm', title: 'Apagar (registro por engano)',
+          onclick: () => apagarPromessa(it)
+        }, '🗑'));
+
+        return h('li', { class: 'prom-item' + (it.vencida ? ' vencida' : '') }, [
+          h('div', { class: 'topo' }, [
+            h('span', { class: 'prom-estado', style: `--pc:${est.cor}` },
+              it.vencida ? 'vencida' : est.rotulo),
+            h('span', { class: 'prazo' },
+              it.prazo ? 'prazo ' + fmt.date(it.prazo) : 'sem prazo'),
+            it.revisoes > 0
+              ? h('span', { class: 'rev', title: 'Quantas vezes esta promessa foi revisada' },
+                  `replanejada ${it.revisoes}×`)
+              : null,
+            it.link
+              ? h('a', { class: 'fonte-doc', href: it.link, target: '_blank', rel: 'noopener' },
+                  it.doc ? `doc ${it.doc} ↗` : 'fonte ↗')
+              : (it.doc ? h('span', { class: 'fonte-doc' }, 'doc ' + it.doc) : null)
+          ]),
+          h('div', { class: 'texto' }, it.texto),
+          it.nota ? h('div', { class: 'nota' }, it.nota) : null,
+          h('div', { class: 'acoes' }, acoes)
+        ]);
+      })));
+    }
+
+    corpo.appendChild(formPromessa());
+    corpo.appendChild(h('div', {
+      class: 'note',
+      html: p.total
+        ? '<b>Este placar é seu.</b> O painel não extrai promessa de lugar nenhum: ele guarda '
+          + 'o que você registrou, marca o que passou do prazo e preserva cada revisão — '
+          + 'promessa que muda de prazo duas vezes é o dado mais valioso aqui. A mesa de IA lê '
+          + 'o placar e cobra o que venceu, sem inventar promessa que não esteja na lista.'
+        : '<b>Nada registrado ainda.</b> Anote aqui o que a gestão prometeu — capex, meta de '
+          + 'alavancagem, prazo de venda de ativo — com o prazo declarado. O painel cobra a '
+          + 'data e guarda cada revisão, e a mesa de IA passa a cobrar junto.'
+    }));
+  }
+
+  function formPromessa() {
+    const texto = h('input', { type: 'text', id: 'prom-texto', autocomplete: 'off',
+      placeholder: 'O que a gestão prometeu — ex.: "desalavancar para 2,0× até o 4T26"' });
+    const prazo = h('input', { type: 'date', id: 'prom-prazo', title: 'Prazo declarado' });
+    const metrica = h('input', { type: 'text', id: 'prom-metrica', autocomplete: 'off',
+      placeholder: 'métrica (opcional)' });
+
+    async function salvar() {
+      const t = texto.value.trim();
+      if (!t) { texto.focus(); return; }
+      try {
+        await api(`/api/company/${state.ticker}/promessas`, {
+          method: 'POST',
+          body: JSON.stringify({ texto: t, prazo: prazo.value || null,
+                                 metrica: metrica.value.trim() || null })
+        });
+        await recarregarPromessas();
+      } catch (err) {
+        alert('Não foi possível registrar: ' + err.message);
+      }
+    }
+
+    texto.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') salvar(); });
+    return h('div', { class: 'prom-form' }, [
+      texto, prazo, metrica,
+      h('button', { class: 'btn primary sm', onclick: salvar }, '+ registrar')
+    ]);
+  }
+
+  async function darBaixa(item, estado) {
+    // A nota é opcional, mas é ela que transforma o placar em memória: sem o
+    // porquê, daqui a um ano fica só um rótulo.
+    const nota = prompt(estado === 'aberta'
+      ? 'Reabrindo. Por quê? (opcional)'
+      : `Dando baixa como "${estado}". O que aconteceu? (opcional)`, item.nota || '');
+    if (nota === null) return;   // cancelou
+    try {
+      await api(`/api/company/${state.ticker}/promessas/${item.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ estado: estado, nota: nota.trim() || null })
+      });
+      await recarregarPromessas();
+    } catch (err) {
+      alert('Não foi possível atualizar: ' + err.message);
+    }
+  }
+
+  async function apagarPromessa(item) {
+    if (!confirm('Apagar esta promessa e todo o histórico dela?\n\n' + item.texto)) return;
+    try {
+      await api(`/api/company/${state.ticker}/promessas/${item.id}`, { method: 'DELETE' });
+      await recarregarPromessas();
+    } catch (err) {
+      alert('Não foi possível apagar: ' + err.message);
+    }
   }
 
   function renderAll() {

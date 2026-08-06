@@ -624,6 +624,26 @@ textarea { font-family: var(--sans); resize: vertical; min-height: 64px; line-he
 .chat-vazio-mark { width: 54px; height: 54px; margin: 0 auto 10px; opacity: .85; }
 .chat-vazio-mark svg { width: 100%; height: 100%; }
 
+/* -------------------------------------------------- proposta de premissas */
+.chat-proposta {
+  margin-top: 8px; padding: 11px 13px; width: 100%;
+  border: 1px solid rgba(167, 139, 250, .4); border-radius: var(--r-sm);
+  background: rgba(167, 139, 250, .07);
+}
+.chat-proposta .tt {
+  font: 700 10px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase;
+  color: var(--brand2); margin-bottom: 9px;
+}
+.chat-proposta .grade { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
+.chat-proposta .linha {
+  display: flex; align-items: baseline; gap: 8px;
+  font: 500 11px/1.5 var(--mono); color: var(--paper);
+}
+.chat-proposta .linha .r { color: var(--dim); flex: 0 0 96px; }
+.chat-proposta .linha .de { color: var(--dim2); text-decoration: line-through; }
+.chat-proposta .linha .seta { color: var(--dim2); }
+.chat-proposta .dica { font: 400 10.5px/1.4 var(--mono); color: var(--dim2); }
+
 /* ------------------------------------------------------------ anexo no chat */
 .chat-anexo {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;

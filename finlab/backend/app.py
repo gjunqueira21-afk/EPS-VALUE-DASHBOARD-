@@ -650,6 +650,15 @@ def api_agent_chat(body: dict = Body(...)):
     # citação se aplica, porque não dá para retroeditar o que já desceu. O
     # navegador troca o texto acumulado pelo final ao fechar. Erro no meio do
     # caminho vira evento também: a resposta HTTP já partiu como 200.
+    # O reconciliador (4.3): a proposta de premissas do quant vira dado
+    # estruturado que o chat transforma em botão — aplicar é decisão humana.
+    # Só com empresa do universo aberta: sem modelo na tela, não há onde aplicar.
+    def proposta_de(texto_final: str):
+        if agente != "premissas" or not (ticker and universe.get(ticker)):
+            return None
+        p = agents.parse_assumption_json(texto_final)
+        return p if p and p.get("premissas") else None
+
     if body.get("stream"):
         def eventos():
             try:
@@ -657,11 +666,12 @@ def api_agent_chat(body: dict = Body(...)):
                         slot.get("provider"), api_key, model, contexto,
                         body.get("historico") or [], pergunta, agente, buscar):
                     if ev.get("fim"):
-                        ev = {"fim": True,
-                              "texto": docs.validar_citacoes(ev.get("texto") or "",
-                                                             trechos_docs),
+                        texto_final = docs.validar_citacoes(ev.get("texto") or "",
+                                                            trechos_docs)
+                        ev = {"fim": True, "texto": texto_final,
                               "uso": ev.get("uso"), "modelo": model,
-                              "provedor": slot.get("provider"), "agente": agente}
+                              "provedor": slot.get("provider"), "agente": agente,
+                              "proposta": proposta_de(texto_final)}
                     yield "data: " + json.dumps(ev, ensure_ascii=False) + "\n\n"
             except agents.LLMError as exc:
                 yield "data: " + json.dumps({"erro": str(exc)},
@@ -682,7 +692,8 @@ def api_agent_chat(body: dict = Body(...)):
     texto = docs.validar_citacoes(texto, trechos_docs)
 
     return {"texto": texto, "modelo": model, "provedor": slot.get("provider"),
-            "ticker": ticker or None, "agente": agente}
+            "ticker": ticker or None, "agente": agente,
+            "proposta": proposta_de(texto)}
 
 
 @app.post("/api/agents/run")

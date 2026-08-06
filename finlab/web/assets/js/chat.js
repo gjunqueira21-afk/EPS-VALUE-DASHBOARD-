@@ -12,7 +12,8 @@
 (function (global) {
   'use strict';
 
-  const { h, el, esc, api, markdown, loadSlots, loadAgentNames, agentIcon, prefs } = global.FL;
+  const { h, el, esc, api, markdown, loadSlots, loadAgentNames, agentIcon, prefs,
+          fmt, isNum } = global.FL;
 
   const HIST_KEY = 'finlab.chat.hist.v1';
   const SAVED_KEY = 'finlab.chat.saved.v1';
@@ -128,7 +129,64 @@
       caixa.appendChild(h('div', { class: 'chat-autor' }, cracha));
     }
     caixa.appendChild(corpo);
+    if (!meu && msg.proposta && msg.proposta.premissas) {
+      caixa.appendChild(cartaoProposta(msg.proposta));
+    }
     return caixa;
+  }
+
+  /* O reconciliador (4.3): a proposta do quant vira um cartão de→para com um
+     botão. O gate é humano — nada muda no modelo sem o clique — e o "de" vem
+     das premissas correntes da tela, para a decisão ser informada. */
+
+  const ROTULO_PREMISSA = {
+    rf: 'Rf', erp: 'ERP', beta: 'Beta', premio_extra: 'Prêmio extra',
+    spread_credito: 'Spread crédito', wd: 'Dívida/(D+E)', g_terminal: 'Perpetuidade'
+  };
+
+  function cartaoProposta(proposta) {
+    const p = proposta.premissas || {};
+    const atuais = ((state.ctx && state.ctx()) || {}).assumptions || {};
+    const linhas = [];
+    Object.entries(ROTULO_PREMISSA).forEach(([k, rotulo]) => {
+      if (!isNum(p[k])) return;
+      const de = atuais[k];
+      const fmtV = (v) => (k === 'beta' ? fmt.num(v, 2) : fmt.pct(v, 2));
+      linhas.push(h('div', { class: 'linha' }, [
+        h('span', { class: 'r' }, rotulo),
+        h('span', { class: 'de' }, isNum(de) ? fmtV(de) : '—'),
+        h('span', { class: 'seta' }, '→'),
+        h('b', {}, fmtV(p[k]))
+      ]));
+    });
+    if (Array.isArray(p.growth) && p.growth.length) {
+      linhas.push(h('div', { class: 'linha' }, [
+        h('span', { class: 'r' }, 'Crescimento'),
+        h('span', { class: 'de' },
+          Array.isArray(atuais.growth) ? atuais.growth.map((g) => fmt.pct(g, 1)).join(' ') : '—'),
+        h('span', { class: 'seta' }, '→'),
+        h('b', {}, p.growth.map((g) => fmt.pct(g, 1)).join(' '))
+      ]));
+    }
+    if (!linhas.length) return h('span');
+
+    const botao = h('button', {
+      class: 'btn primary sm',
+      onclick: (ev) => {
+        global.dispatchEvent(new CustomEvent('finlab:aplicar-premissas',
+          { detail: p }));
+        ev.target.textContent = '✓ aplicado nos sliders';
+        ev.target.disabled = true;
+      }
+    }, '⇩ Aplicar estas premissas no painel');
+
+    return h('div', { class: 'chat-proposta' }, [
+      h('div', { class: 'tt' },
+        'Premissas propostas' + (proposta.confianca ? ' · confiança ' + esc(proposta.confianca) : '')),
+      h('div', { class: 'grade' }, linhas),
+      state.ticker ? botao
+        : h('div', { class: 'dica' }, 'abra a empresa para aplicar no modelo')
+    ]);
   }
 
   function pintarHistorico() {
@@ -289,9 +347,16 @@
         });
         return null;
       }
+      // Com proposta reconhecida, o bloco JSON sai do texto: o cartão de→para
+      // o substitui — mostrar os dois seria a mesma coisa duas vezes.
+      const proposta = (fim && fim.proposta) || null;
+      const exibivel = proposta
+        ? definitivo.replace(/```json[\s\S]*?```/g, '').trim() || definitivo
+        : definitivo;
       empilhar({ role: 'assistant', autor: rotulo, icone: icone, agente: agente,
                  modelo: (fim && fim.modelo) || (slot && slot.model),
-                 uso: (fim && fim.uso) || null, content: definitivo });
+                 uso: (fim && fim.uso) || null,
+                 proposta: proposta, content: exibivel });
       return { texto: definitivo, uso: (fim && fim.uso) || null };
     } catch (err) {
       marca.remove();

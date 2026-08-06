@@ -953,9 +953,10 @@ def test_cada_agente_fala_com_a_propria_especialidade(mock_llm):
     assert "economista" in macro.lower()
     assert gestor != macro
 
-    # o quant, na conversa, escreve texto — o JSON é só da aba Mesa de IA
+    # o quant conversa em texto e, quando propõe calibragem, fecha com o bloco
+    # JSON que o painel transforma em botão — a decisão de aplicar é do usuário
     quant = sistema_de("premissas")
-    assert "NÃO devolva JSON" in quant
+    assert "```json" in quant and "decisão de aplicar é do usuário" in quant
 
     # sem agente, é a mesa inteira falando junto
     mesa = sistema_de(None)
@@ -2390,3 +2391,29 @@ def test_fato_com_doc_id_e_contestacao_verificavel():
     # e o Cético é instruído a contestar pelo MESMO ID
     assert "(doc ID)" in agents.FECHAMENTO_DA_RODADA["cetico"]
     assert "doc ID" in agents.AGENTS["cetico"]["system"]
+
+
+def test_reconciliador_devolve_proposta_so_do_quant_com_empresa_aberta(monkeypatch):
+    """4.3: a proposta de premissas vira dado estruturado na resposta do chat —
+    mas só quando quem falou é o Engenheiro de Premissas E há empresa aberta."""
+    from finlab.backend import app as bapp
+
+    resposta = ("Rf de 14% e beta 1,1 fazem mais sentido hoje.\n\n"
+                "```json\n"
+                '{"premissas": {"rf": 0.14, "beta": 1.1}, "confianca": "media"}\n'
+                "```")
+    monkeypatch.setattr(bapp.agents, "chat_conversa", lambda *a, **kw: resposta)
+
+    corpo = {"slot": {"provider": "openrouter", "api_key": "k", "model": "m"},
+             "ticker": "PETR4", "pergunta": "calibra o modelo",
+             "agente": "premissas"}
+    r = bapp.api_agent_chat(dict(corpo))
+    assert r["proposta"]["premissas"] == {"rf": 0.14, "beta": 1.1}
+
+    # outro agente com o mesmo texto: nada de proposta
+    r2 = bapp.api_agent_chat(dict(corpo, agente="equity"))
+    assert r2["proposta"] is None
+
+    # sem ticker do universo: não há onde aplicar
+    r3 = bapp.api_agent_chat(dict(corpo, ticker=""))
+    assert r3["proposta"] is None

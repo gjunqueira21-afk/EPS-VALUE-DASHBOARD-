@@ -2285,6 +2285,24 @@
         rebuildControls();
         renderAll();
       });
+
+      // O reconciliador do chat (4.3): o Engenheiro de Premissas propõe, o
+      // usuário clica, e SÓ então o modelo muda. A trava de Gordon continua
+      // valendo — perpetuidade proposta acima do WACC seria um modelo sem
+      // significado, então ela é rebaixada em vez de aplicada cegamente.
+      window.addEventListener('finlab:aplicar-premissas', (ev) => {
+        const p = ev.detail || {};
+        if (!state.a || !state.a.aplicavel) return;
+        ['rf', 'erp', 'beta', 'premio_extra', 'spread_credito', 'wd', 'g_terminal']
+          .forEach((k) => { if (isNum(p[k])) state.a[k] = p[k]; });
+        if (Array.isArray(p.growth) && p.growth.length) {
+          state.a.growth = p.growth.slice(0, 5).map(Number).filter(isNum);
+        }
+        const w = E.wacc(state.a).wacc;
+        if (state.a.g_terminal >= w - 0.005) state.a.g_terminal = Math.max(0, w - 0.015);
+        rebuildControls();
+        renderAll();
+      });
     } catch (err) {
       el('alertZone').appendChild(h('div', { class: 'callout bad' },
         'Não foi possível carregar ' + state.ticker + ': ' + err.message));

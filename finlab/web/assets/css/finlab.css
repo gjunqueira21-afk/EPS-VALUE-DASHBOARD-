@@ -624,6 +624,42 @@ textarea { font-family: var(--sans); resize: vertical; min-height: 64px; line-he
 .chat-vazio-mark { width: 54px; height: 54px; margin: 0 auto 10px; opacity: .85; }
 .chat-vazio-mark svg { width: 100%; height: 100%; }
 
+/* ------------------------------------------------------ placar de promessas */
+.prom-resumo { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 11px; }
+.prom-chip {
+  font: 700 10px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase;
+  color: var(--pc); border: 1px solid var(--pc); border-radius: 999px;
+  padding: 5px 9px; opacity: .9;
+}
+.prom-chip.alerta { background: rgba(248, 113, 113, .1); }
+.prom-taxa { font: 400 10.5px/1 var(--mono); color: var(--dim2); }
+
+.prom-lista { list-style: none; margin: 0 0 12px; padding: 0;
+  display: flex; flex-direction: column; gap: 8px; }
+.prom-item {
+  border: 1px solid var(--line); border-left: 3px solid var(--line2);
+  border-radius: var(--r-sm); background: var(--panel2); padding: 10px 12px;
+}
+.prom-item.vencida { border-left-color: var(--red); }
+.prom-item .topo { display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+  font: 400 10px/1 var(--mono); color: var(--dim2); }
+.prom-estado {
+  font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--pc);
+}
+.prom-item .rev { color: var(--amber); cursor: help; }
+.prom-item .fonte-doc { color: var(--brand); margin-left: auto; }
+.prom-item .texto { font: 400 12px/1.55 var(--sans); color: var(--paper); margin: 7px 0 0; }
+.prom-item .nota {
+  font: 400 10.5px/1.5 var(--mono); color: var(--dim); margin-top: 6px;
+  padding-left: 9px; border-left: 1px solid var(--line2);
+}
+.prom-item .acoes { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 9px; }
+
+.prom-form { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+.prom-form input { flex: 1 1 200px; min-width: 0; }
+.prom-form input[type="date"] { flex: 0 0 auto; }
+.prom-form #prom-metrica { flex: 0 1 150px; }
+
 /* -------------------------------------------------- proposta de premissas */
 .chat-proposta {
   margin-top: 8px; padding: 11px 13px; width: 100%;

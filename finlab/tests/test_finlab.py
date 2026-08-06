@@ -2417,3 +2417,129 @@ def test_reconciliador_devolve_proposta_so_do_quant_com_empresa_aberta(monkeypat
     # sem ticker do universo: não há onde aplicar
     r3 = bapp.api_agent_chat(dict(corpo, ticker=""))
     assert r3["proposta"] is None
+
+
+# ---------------------------------------------------------------------------
+# Placar de promessas (4.2)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def placar_limpo(tmp_path, monkeypatch):
+    """Cada teste com o seu arquivo — o placar é estado em disco."""
+    from finlab.backend import promessas as pr
+    monkeypatch.setattr(pr, "ARQUIVO", tmp_path / "promessas.json")
+    return pr
+
+
+def test_promessa_versionada_nunca_perde_o_historico(placar_limpo):
+    """O ponto do placar: promessa que muda de prazo duas vezes é o dado mais
+    valioso aqui. Um UPDATE que sobrescrevesse apagaria exatamente isso."""
+    pr = placar_limpo
+
+    p = pr.registrar("MRVE3", {"texto": "desalavancar para 2,0x",
+                               "prazo": "2026-12-31", "metrica": "DL/EBITDA"})
+    assert p["estado"] == "aberta" and p["revisoes"] == 0
+
+    pr.atualizar("MRVE3", p["id"], {"prazo": "2027-06-30",
+                                    "nota": "adiado no call do 3T"})
+    depois = pr.atualizar("MRVE3", p["id"], {"estado": "quebrada",
+                                             "nota": "fechou 2027 em 2,8x"})
+
+    assert depois["estado"] == "quebrada"
+    assert depois["prazo"] == "2027-06-30"     # herdou o prazo revisado
+    assert depois["texto"] == "desalavancar para 2,0x"   # texto nunca reenviado
+    assert depois["revisoes"] == 2
+    # o histórico inteiro sobreviveu, na ordem
+    prazos = [v["prazo"] for v in depois["versoes"]]
+    assert prazos == ["2026-12-31", "2027-06-30", "2027-06-30"]
+    assert [v["estado"] for v in depois["versoes"]] == ["aberta", "aberta", "quebrada"]
+
+
+def test_placar_conta_vencidas_e_so_calcula_taxa_com_resolvidas(placar_limpo):
+    """Taxa de cumprimento sem nenhuma promessa resolvida seria 0% — uma
+    mentira aritmética sobre uma gestão que ainda não foi cobrada."""
+    from datetime import date
+    pr = placar_limpo
+    hoje = date(2026, 8, 6)
+
+    pr.registrar("PETR4", {"texto": "capex de 20 bi", "prazo": "2026-01-31"})
+    pr.registrar("PETR4", {"texto": "venda de refinaria", "prazo": "2027-12-31"})
+    pr.registrar("PETR4", {"texto": "sem prazo declarado"})
+
+    p = pr.placar("PETR4", hoje)
+    assert p["total"] == 3 and p["aberta"] == 3
+    assert p["vencidas"] == 1, "só a de 31/01 passou do prazo"
+    assert p["taxa"] is None, "nada resolvido ainda"
+    # vencida primeiro na lista: é o que exige ação
+    assert p["itens"][0]["texto"] == "capex de 20 bi"
+
+    alvo = p["itens"][0]["id"]
+    pr.atualizar("PETR4", alvo, {"estado": "cumprida"})
+    p2 = pr.placar("PETR4", hoje)
+    assert p2["cumprida"] == 1 and p2["vencidas"] == 0
+    assert p2["taxa"] == 1.0, "1 de 1 resolvida foi cumprida"
+
+
+def test_promessas_isoladas_por_ticker_e_remocao(placar_limpo):
+    pr = placar_limpo
+    a = pr.registrar("VALE3", {"texto": "dividendo extraordinário"})
+    pr.registrar("PETR4", {"texto": "outra empresa"})
+
+    assert len(pr.listar("VALE3")) == 1
+    assert len(pr.listar("PETR4")) == 1
+    assert pr.listar("BBAS3") == []
+
+    assert pr.remover("VALE3", a["id"]) is True
+    assert pr.listar("VALE3") == []
+    assert pr.remover("VALE3", a["id"]) is False       # já não existe
+    assert len(pr.listar("PETR4")) == 1, "remover num ticker não toca no outro"
+
+    with pytest.raises(ValueError):
+        pr.registrar("VALE3", {"texto": "   "})        # texto é obrigatório
+    with pytest.raises(ValueError):
+        pr.registrar("VALE3", {"texto": "x", "estado": "talvez"})
+    with pytest.raises(KeyError):
+        pr.atualizar("VALE3", "inexistente", {"estado": "cumprida"})
+
+
+def test_arquivo_corrompido_nao_derruba_o_placar(placar_limpo):
+    pr = placar_limpo
+    pr.ARQUIVO.parent.mkdir(parents=True, exist_ok=True)
+    pr.ARQUIVO.write_text("{isto não é json", encoding="utf-8")
+    assert pr.listar("PETR4") == []
+    assert pr.placar("PETR4")["total"] == 0
+    # e volta a gravar por cima, sem exigir intervenção
+    assert pr.registrar("PETR4", {"texto": "recomeço"})["texto"] == "recomeço"
+
+
+def test_placar_entra_no_contexto_da_mesa_com_a_proibicao_de_inventar():
+    """Sem a proibição, o agente completa a lista com promessa plausível —
+    que é a falha mais cara que este placar pode ter."""
+    from datetime import date
+
+    payload = {
+        "fundamentals": {"last_year": 2025},
+        "promessas": {
+            "total": 2, "aberta": 1, "cumprida": 1, "quebrada": 0, "parcial": 0,
+            "vencidas": 1, "taxa": 1.0,
+            "itens": [
+                {"texto": "desalavancar para 2,0x", "prazo": "2026-01-31",
+                 "estado": "aberta", "vencida": True, "revisoes": 2,
+                 "doc": "F1", "nota": "adiado duas vezes"},
+                {"texto": "venda da Resia", "prazo": "2025-12-31",
+                 "estado": "cumprida", "vencida": False, "revisoes": 0},
+            ],
+        },
+    }
+    texto = "\n".join(agents._bloco_momento(payload))
+    assert "PLACAR DE PROMESSAS" in texto
+    assert "[VENCIDA] prazo 2026-01-31 (doc F1) · replanejada 2x" in texto
+    assert "adiado duas vezes" in texto
+    assert "cumprimento 100%" in texto
+    assert "NUNCA afirme cumprimento ou descumprimento de promessa que não esteja" in texto
+
+    # sem promessa registrada, o bloco não aparece — silêncio em vez de
+    # cabeçalho vazio, que o modelo tende a preencher sozinho
+    vazio = "\n".join(agents._bloco_momento({"fundamentals": {"last_year": 2025},
+                                             "promessas": {"total": 0, "itens": []}}))
+    assert "PLACAR DE PROMESSAS" not in vazio

@@ -15,6 +15,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import promessas  # noqa: F401  (rotas abaixo)
 from . import (agents, b3data, bdrs, cache, cvm, docs, etfs, ipe, market, metrics,
                regime, scoring, universe, valuation)
 from .settings import DEMO_MODE, TTL_CVM, TTL_QUOTE, WEB_DIR
@@ -174,6 +175,45 @@ def api_config():
     }
 
 
+@app.get("/api/company/{ticker}/promessas")
+def api_promessas(ticker: str):
+    """Placar de promessas da gestão para este ticker."""
+    return promessas.placar(_ticker_valido(ticker))
+
+
+@app.post("/api/company/{ticker}/promessas")
+def api_promessa_nova(ticker: str, body: dict = Body(...)):
+    try:
+        return promessas.registrar(_ticker_valido(ticker), body or {})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.patch("/api/company/{ticker}/promessas/{promessa_id}")
+def api_promessa_versao(ticker: str, promessa_id: str, body: dict = Body(...)):
+    """Nova versão: dar baixa, corrigir prazo, anotar. Nunca sobrescreve."""
+    try:
+        return promessas.atualizar(_ticker_valido(ticker), promessa_id, body or {})
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Promessa não encontrada.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/company/{ticker}/promessas/{promessa_id}")
+def api_promessa_remover(ticker: str, promessa_id: str):
+    if not promessas.remover(_ticker_valido(ticker), promessa_id):
+        raise HTTPException(status_code=404, detail="Promessa não encontrada.")
+    return {"ok": True}
+
+
+def _ticker_valido(ticker: str) -> str:
+    tk = (ticker or "").upper().strip()
+    if not universe.get(tk) and not bdrs.get(tk):
+        raise HTTPException(status_code=404, detail=f"Ticker fora do universo: {tk}")
+    return tk
+
+
 @app.get("/api/company/{ticker}/docs")
 def api_company_docs(ticker: str, q: str = ""):
     """Busca no conteúdo dos documentos indexados da empresa (BM25/FTS5).
@@ -239,6 +279,7 @@ def api_company(ticker: str):
         "ltm": cvm.ltm_series(comp.cd_cvm),
         "ipe": ipe.documentos(comp.cd_cvm),
         "docs": docs.stats(comp.cd_cvm),
+        "promessas": promessas.placar(ticker),
         "regime": reg,
         "source": snap.get("price_source"),
     }

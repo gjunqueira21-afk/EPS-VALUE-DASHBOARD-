@@ -162,14 +162,17 @@ Parecer 04. Depende da Fase 2 expor `buscar_dossie_momento(ticker)`.
       Regime com evidência datada, trimestres do ITR, LTM, os títulos do IPE e
       — com o índice da etapa `--docs` — os trechos dos documentos, com data e
       link, recuperados pela pergunta do usuário.
-- [~] **3.4 Deliberação** — schema de afirmação tipada (fato com doc_id ×
+- [x] **3.4 Deliberação** — schema de afirmação tipada (fato com doc_id ×
       interpretação), blackboard da rodada, agente **Cético** contestando por ID,
       **Moderador** produzindo mapa de convergência/disputa no lugar da síntese
       de consenso. *(04 F2)*
-      *Parcial:* a rodada virou ondas — Radar, corpo da mesa em paralelo,
-      Cético, Moderador — e só quem fecha recebe o blackboard das falas. O
-      schema de afirmação TIPADA com doc_id depende do índice documental
-      (2.1–2.3): sem doc_id não há por onde contestar por ID.
+      A rodada é em ondas (Radar → corpo → Cético → Moderador) e o blackboard
+      são as falas. Com o índice documental, cada trecho carrega o protocolo
+      da CVM como ID: fato tirado de trecho termina com `(doc ID)`,
+      interpretação não leva doc, o Cético contesta citando o mesmo ID e o
+      filtro em código marca `(doc X)` que não existe no recuperado. A
+      "tipagem" é etiqueta em texto validada em código, não JSON por
+      afirmação — o custo do schema completo não se pagava.
 - [~] **3.5 Eval em CI** — golden set + promptfoo; teste de abstenção
       bloqueante (a mesa DEVE dizer "não tenho dado" quando não tem). *(03 §6, 04)*
       *Parcial:* conjunto dourado em `tests/golden/abstencao.json` e executor em

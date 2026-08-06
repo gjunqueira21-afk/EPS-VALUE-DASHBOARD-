@@ -202,6 +202,11 @@ AGENTS = {
             "\nOs alvos, em ordem de prioridade:\n"
             "1. **Número que não está no CONTEXTO.** Se alguém citou um dado que não existe "
             "ali, esse é o erro mais grave da mesa — aponte primeiro.\n"
+            "1b. **Fato documental sem etiqueta ou com etiqueta errada.** Quando o contexto "
+            "traz DOCUMENTOS DA EMPRESA, todo fato tirado deles deve terminar com (doc ID). "
+            "Afirmação factual sem etiqueta, ou cujo (doc ID) não corresponde ao que o trecho "
+            "daquele ID realmente diz, é contestada CITANDO O MESMO (doc ID) — a disputa fica "
+            "verificável, dos dois lados.\n"
             "2. **Conversa tratada como fato.** Item que veio do LEVANTAMENTO EXTERNO e foi "
             "usado como se estivesse confirmado.\n"
             "3. **Média histórica usada fora do regime.** Se a empresa não está em operação "
@@ -229,6 +234,8 @@ AGENTS = {
             "\n**DISPUTA** — onde eles se contradizem. Uma linha por disputa, no formato:\n"
             "  tema → posição A (quem) × posição B (quem) → **o que decidiria**: o dado "
             "concreto que resolveria isso.\n"
+            "Quando a disputa envolve um documento, carregue o (doc ID) das falas para a "
+            "linha — quem ler o mapa precisa saber ONDE conferir cada lado.\n"
             "O \"o que decidiria\" é a parte mais importante da sua resposta. Se a disputa não "
             "for decidível com dado nenhum, diga que é diferença de julgamento, não de fato.\n"
             "\n**O QUE A MESA NÃO SABE** — o que ficou de fora por falta de dado. Se algum "
@@ -414,7 +421,9 @@ CHAT_PERSONAS = {
     "cetico": (
         "\nSeu papel na mesa: o cético. Quando as falas da mesa vierem na pergunta, conteste "
         "as afirmações uma a uma — qual não se sustenta nos números do contexto, qual depende "
-        "de premissa não dita, qual contradiz outra. Sem falas para ler, aplique o mesmo rigor "
+        "de premissa não dita, qual contradiz outra. Quando o contexto traz DOCUMENTOS DA "
+        "EMPRESA, fato sem (doc ID) ou com (doc ID) que não bate com o trecho vem primeiro, "
+        "e a contestação cita o mesmo (doc ID). Sem falas para ler, aplique o mesmo rigor "
         "à pergunta do usuário: o que precisaria ser verdade para a afirmação ficar de pé. "
         "Você não propõe tese própria; seu produto é a lista do que não convenceu e por quê."
     ),
@@ -710,9 +719,13 @@ def monta_pergunta_sintese(pergunta: str, respostas: list[dict],
 
 # O que cada leitor da rodada faz com as falas — usado pelo endpoint do chat.
 FECHAMENTO_DA_RODADA = {
-    "cetico": "Conteste agora as afirmações da mesa, uma a uma.",
-    "moderador": ("Escreva agora o mapa da mesa: convergência, disputa, o que decide "
-                  "cada disputa, e a conclusão prática em uma frase."),
+    "cetico": ("Conteste agora as afirmações da mesa, uma a uma. Fato documental sem "
+               "(doc ID), ou com (doc ID) que não bate com o trecho daquele ID, vem "
+               "primeiro — e a contestação cita o mesmo (doc ID), para a disputa ser "
+               "verificável dos dois lados."),
+    "moderador": ("Escreva agora o mapa da mesa: convergência, disputa (carregando o "
+                  "(doc ID) quando houver documento envolvido), o que decide cada "
+                  "disputa, e a conclusão prática em uma frase."),
 }
 
 

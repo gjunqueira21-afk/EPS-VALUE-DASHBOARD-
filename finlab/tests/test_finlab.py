@@ -2192,8 +2192,8 @@ def test_bloco_de_contexto_data_antes_do_trecho_e_abstencao_no_vazio():
         "assunto": "Venda da Resia", "link": "https://rad.cvm.gov.br/ENET/doc1.pdf",
         "protocolo": "P1", "trecho": "venda da operação Resia",
     }])
-    # a data aparece antes do texto do trecho, e o link vai junto
-    assert bloco.index("[2026-06-20]") < bloco.index("venda da operação")
+    # o ID e a data aparecem antes do texto do trecho, e o link vai junto
+    assert bloco.index("[doc P1 · 2026-06-20]") < bloco.index("venda da operação")
     assert "https://rad.cvm.gov.br/ENET/doc1.pdf" in bloco
 
     vazio = bdocs.bloco_contexto([])
@@ -2365,3 +2365,28 @@ def test_chat_em_streaming_deltas_uso_e_queda_para_inteiro(monkeypatch):
     eventos = list(agents.chat_conversa_stream("xai", "k", "m", "CTX", [], "oi",
                                                "contexto", buscar=True))
     assert eventos[-1]["texto"] == "radar"
+
+
+def test_fato_com_doc_id_e_contestacao_verificavel():
+    """3.4: o bloco carrega o ID de cada trecho e a regra fato × interpretação;
+    (doc X) com ID fora do recuperado é marcado em código, não em prompt."""
+    from finlab.backend import docs as bdocs
+
+    trechos = [{"data": "2026-06-20", "categoria": "Fato Relevante",
+                "assunto": "Venda", "link": "https://rad.cvm.gov.br/ENET/doc1.pdf",
+                "protocolo": "F1", "trecho": "venda por US$ 800 milhões"}]
+    bloco = bdocs.bloco_contexto(trechos)
+    assert "[doc F1 · 2026-06-20]" in bloco
+    assert "(doc ID)" in bloco and "INTERPRETAÇÃO" in bloco
+
+    texto = ("A venda foi por US$ 800 milhões (doc F1). O follow-on está "
+             "aprovado (doc F9). Minha leitura: a alavancagem cai.")
+    saida = bdocs.validar_citacoes(texto, trechos)
+    assert "(doc F1)." in saida and "(doc F1) ⚠" not in saida
+    assert "(doc F9) ⚠[doc inexistente no recuperado]" in saida
+    # interpretação sem etiqueta passa intocada
+    assert "Minha leitura: a alavancagem cai." in saida
+
+    # e o Cético é instruído a contestar pelo MESMO ID
+    assert "(doc ID)" in agents.FECHAMENTO_DA_RODADA["cetico"]
+    assert "doc ID" in agents.AGENTS["cetico"]["system"]

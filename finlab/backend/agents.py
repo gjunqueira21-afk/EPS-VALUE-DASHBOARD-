@@ -506,13 +506,113 @@ def _sistema_da_conversa(agente: str | None, contexto: str) -> str:
     return base + "\n\nCONTEXTO\n========\n" + contexto
 
 
+def _prompt_da_conversa(agente: str | None, contexto: str, historico: list[dict],
+                        pergunta: str) -> tuple[str, list[dict]]:
+    """Sistema + turnos da conversa. O histórico chega do navegador (a conversa
+    vive lá) e é truncado: as 12 últimas mensagens bastam para manter o fio."""
+    sistema = _sistema_da_conversa(agente, contexto)
+    turnos = []
+    for msg in (historico or [])[-12:]:
+        papel = "assistant" if msg.get("role") == "assistant" else "user"
+        texto = str(msg.get("content") or "").strip()
+        if texto:
+            turnos.append({"role": papel, "content": texto})
+    turnos.append({"role": "user", "content": pergunta})
+    return sistema, turnos
+
+
+class _StreamIndisponivel(Exception):
+    """O provedor recusou o modo streaming — resolve-se inteiro, sem drama."""
+
+
+def _stream_openai(cfg: dict, api_key: str, model: str, sistema: str,
+                   turnos: list[dict]):
+    """Deltas do /chat/completions com stream ligado.
+
+    Gera {"delta": str} a cada pedaço e fecha com {"fim": True, "texto",
+    "uso"}. `stream_options.include_usage` faz o último chunk trazer os
+    tokens gastos — é a medida do custo por rodada que o 3.2 pede, vinda do
+    provedor e não de estimativa.
+    """
+    resp = requests.post(
+        cfg["url"], headers=_cabecalho_openai(api_key),
+        json={"model": model, "temperature": 0.3, "max_tokens": CHAT_MAX_TOKENS,
+              "messages": [{"role": "system", "content": sistema}] + turnos,
+              "stream": True, "stream_options": {"include_usage": True}},
+        timeout=max(HTTP_TIMEOUT, 120), stream=True,
+    )
+    if resp.status_code >= 400:
+        resp.close()
+        raise _StreamIndisponivel(str(resp.status_code))
+
+    partes: list[str] = []
+    uso = None
+    for linha in resp.iter_lines(decode_unicode=True):
+        if not linha or not linha.startswith("data:"):
+            continue                      # comentários de keep-alive não são dado
+        corpo = linha[5:].strip()
+        if corpo == "[DONE]":
+            break
+        try:
+            chunk = json.loads(corpo)
+        except ValueError:
+            continue
+        if isinstance(chunk.get("usage"), dict):
+            uso = {"entrada": chunk["usage"].get("prompt_tokens"),
+                   "saida": chunk["usage"].get("completion_tokens")}
+        for escolha in chunk.get("choices") or []:
+            delta = (escolha.get("delta") or {}).get("content")
+            if delta:
+                partes.append(delta)
+                yield {"delta": delta}
+
+    texto = "".join(partes)
+    if not texto.strip():
+        raise LLMError("O provedor devolveu uma resposta vazia no streaming. "
+                       "Tente de novo.")
+    yield {"fim": True, "texto": texto, "uso": uso}
+
+
+def chat_conversa_stream(provider: str, api_key: str, model: str, contexto: str,
+                         historico: list[dict], pergunta: str,
+                         agente: str | None = None, buscar: bool = False):
+    """A conversa em deltas: a fala aparece enquanto nasce.
+
+    Só o dialeto OpenAI sem busca ao vivo transmite de verdade; Anthropic,
+    Gemini e o caminho com ferramentas resolvem inteiro e saem num delta
+    único — o chat não precisa saber a diferença. Provedor que recusar o
+    stream cai para a chamada inteira em vez de falhar.
+    """
+    cfg = PROVIDERS.get(provider)
+    if not cfg:
+        raise LLMError(f"Provedor desconhecido: {provider}")
+
+    if cfg["style"] == "openai" and not (buscar and cfg.get("busca_ao_vivo")):
+        sistema, turnos = _prompt_da_conversa(agente, contexto, historico, pergunta)
+        try:
+            yield from _stream_openai(cfg, api_key, model, sistema, turnos)
+            return
+        except _StreamIndisponivel:
+            pass
+        except requests.Timeout as exc:
+            raise LLMError(f"{cfg['label']} não respondeu a tempo. Tente de novo.") from exc
+        except requests.RequestException as exc:
+            raise LLMError(
+                f"Não foi possível alcançar {cfg['label']}. Verifique a conexão "
+                f"(ou o proxy da sua rede). Detalhe: {type(exc).__name__}"
+            ) from exc
+
+    texto = chat_conversa(provider, api_key, model, contexto, historico,
+                          pergunta, agente, buscar)
+    yield {"delta": texto}
+    yield {"fim": True, "texto": texto, "uso": None}
+
+
 def chat_conversa(provider: str, api_key: str, model: str, contexto: str,
                   historico: list[dict], pergunta: str, agente: str | None = None,
                   buscar: bool = False) -> str:
     """Conversa multi-turno com o contexto do painel injetado no sistema.
 
-    O histórico chega do navegador (a conversa vive lá) e é truncado para
-    caber num prompt: as 12 últimas mensagens bastam para manter o fio.
     `agente` escolhe a voz: None é a mesa junto, uma chave de CHAT_PERSONAS é
     o especialista, e "sintese" é a conclusão que fecha a rodada. `buscar`
     liga as ferramentas de busca quando o provedor as tem — é o que o Agente
@@ -522,15 +622,7 @@ def chat_conversa(provider: str, api_key: str, model: str, contexto: str,
     if not cfg:
         raise LLMError(f"Provedor desconhecido: {provider}")
 
-    sistema = _sistema_da_conversa(agente, contexto)
-
-    turnos = []
-    for msg in (historico or [])[-12:]:
-        papel = "assistant" if msg.get("role") == "assistant" else "user"
-        texto = str(msg.get("content") or "").strip()
-        if texto:
-            turnos.append({"role": papel, "content": texto})
-    turnos.append({"role": "user", "content": pergunta})
+    sistema, turnos = _prompt_da_conversa(agente, contexto, historico, pergunta)
 
     style = cfg["style"]
     try:

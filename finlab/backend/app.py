@@ -10,11 +10,11 @@ from __future__ import annotations
 import statistics
 from typing import Optional
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import (agents, b3data, bdrs, cache, cvm, etfs, ipe, market, metrics,
+from . import (agents, b3data, bdrs, cache, cvm, docs, etfs, ipe, market, metrics,
                regime, scoring, universe, valuation)
 from .settings import DEMO_MODE, TTL_CVM, TTL_QUOTE, WEB_DIR
 
@@ -173,6 +173,24 @@ def api_config():
     }
 
 
+@app.get("/api/company/{ticker}/docs")
+def api_company_docs(ticker: str, q: str = ""):
+    """Busca no conteúdo dos documentos indexados da empresa (BM25/FTS5).
+
+    Sem `q`, devolve os documentos mais recentes com o primeiro trecho — a
+    resposta de "o que a empresa comunicou por último". Sem índice (o pipeline
+    ainda não rodou com --docs), lista vazia e o painel segue só com o IPE.
+    """
+    ticker = ticker.upper().strip()
+    comp = universe.get(ticker)
+    if comp is None:
+        raise HTTPException(status_code=404, detail=f"Ticker fora do universo: {ticker}")
+    q = q.strip()
+    trechos = docs.search(comp.cd_cvm, q) if q else docs.recentes(comp.cd_cvm)
+    return {"ticker": ticker, "q": q or None, "disponivel": docs.available(),
+            "trechos": trechos}
+
+
 @app.get("/api/company/{ticker}")
 def api_company(ticker: str):
     ticker = ticker.upper().strip()
@@ -219,6 +237,7 @@ def api_company(ticker: str):
         "trimestral": cvm.quarterly_series(comp.cd_cvm),
         "ltm": cvm.ltm_series(comp.cd_cvm),
         "ipe": ipe.documentos(comp.cd_cvm),
+        "docs": docs.stats(comp.cd_cvm),
         "regime": reg,
         "source": snap.get("price_source"),
     }
@@ -501,6 +520,23 @@ def api_llm_models(body: dict = Body(...)):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post("/api/docs/extrair")
+async def api_docs_extrair(request: Request):
+    """Extrai o texto de um PDF enviado pelo chat (corpo binário, sem gravação).
+
+    O corpo é o PDF cru — sem multipart, sem dependência nova. O texto volta
+    para o navegador e é ELE quem decide mandar junto da próxima pergunta;
+    o servidor não guarda nada, mesma regra das chaves de API.
+    """
+    conteudo = await request.body()
+    if not conteudo:
+        raise HTTPException(status_code=400, detail="Envie o PDF no corpo da requisição.")
+    try:
+        return docs.extrair_pdf(conteudo)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/agents/chat")
 def api_agent_chat(body: dict = Body(...)):
     """Conversa livre com a mesa, no contexto do ativo aberto na tela."""
@@ -533,6 +569,7 @@ def api_agent_chat(body: dict = Body(...)):
 
     ticker = (body.get("ticker") or "").upper().strip()
     tela = (body.get("tela") or "").strip().lower()
+    trechos_docs: list = []
     if ticker and (universe.get(ticker) or bdrs.get(ticker)):
         payload = api_company(ticker)
         contexto = agents.build_context(
@@ -541,6 +578,18 @@ def api_agent_chat(body: dict = Body(...)):
             body.get("resultado") or {},
             payload.get("macro") or {},
         )
+        # Recuperação sobre o CONTEÚDO dos documentos (2.3): a pergunta do
+        # usuário é a consulta. O bloco carrega data e link em cada trecho, e
+        # a abstenção vem pronta quando nada é recuperado — desde que o índice
+        # exista; sem ele, nada é dito para o modelo não negar documento que
+        # simplesmente não foi ingerido.
+        comp = universe.get(ticker)
+        if comp is not None and docs.available():
+            trechos_docs = docs.search(comp.cd_cvm, pergunta)
+            if not trechos_docs:
+                trechos_docs = docs.recentes(comp.cd_cvm)
+            contexto += "\n\n" + docs.bloco_contexto(trechos_docs)
+
     elif tela in ("acoes", "etfs", "bdrs"):
         # Telas de lista: a mesa enxerga a tabela inteira que está na tela —
         # é o que permite perguntar sobre o conjunto ("quais para uma carteira?").
@@ -567,6 +616,17 @@ def api_agent_chat(body: dict = Body(...)):
                    for k, v in (macro_data or {}).items() if isinstance(v, dict)]
         contexto = "\n".join(linhas)
 
+    # PDF anexado pelo usuário: entra no contexto de QUEM foi endereçado,
+    # rotulado como material do usuário — não como fonte oficial. O texto já
+    # chegou extraído (o navegador chamou /api/docs/extrair antes) e vale em
+    # qualquer tela, com ou sem ativo aberto.
+    anexo = body.get("anexo") or {}
+    if isinstance(anexo, dict) and (anexo.get("texto") or "").strip():
+        contexto += "\n\n" + docs.bloco_anexo(
+            str(anexo.get("nome") or "documento.pdf")[:120],
+            {"texto": str(anexo["texto"])[:docs.ANEXO_MAX_CHARS],
+             "truncado": bool(anexo.get("truncado"))})
+
     # O que o Radar levantou na abertura da rodada chega aos demais cercado e
     # rotulado — mesma regra do /api/agents/run: é a única parte do contexto
     # que NÃO saiu das demonstrações, e post de rede social não é fato.
@@ -589,6 +649,10 @@ def api_agent_chat(body: dict = Body(...)):
             buscar=bool(agents.AGENTS.get(agente or "", {}).get("busca_ao_vivo")))
     except agents.LLMError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    # Validação de citação em código (03 §5): link do RAD que o modelo citou
+    # sem ter recebido é invenção — sai marcado, não passa como fonte.
+    texto = docs.validar_citacoes(texto, trechos_docs)
 
     return {"texto": texto, "modelo": model, "provedor": slot.get("provider"),
             "ticker": ticker or None, "agente": agente}
@@ -622,6 +686,18 @@ def api_agent_run(body: dict = Body(...)):
         payload.get("macro") or {},
     )
     pergunta = (body.get("pergunta") or "").strip()
+
+    # O conteúdo dos documentos entra na rodada (2.3): com pergunta, ela é a
+    # consulta; sem, os documentos mais recentes — "o que a companhia
+    # comunicou por último". Cada trecho com data e link.
+    comp = universe.get(ticker)
+    trechos_docs: list = []
+    if comp is not None and docs.available():
+        trechos_docs = docs.search(comp.cd_cvm, pergunta) if pergunta else []
+        if not trechos_docs:
+            trechos_docs = docs.recentes(comp.cd_cvm)
+        contexto += "\n\n" + docs.bloco_contexto(trechos_docs)
+
     user = f"CONTEXTO\n========\n{contexto}\n"
 
     # O Radar de Contexto abre a rodada e o que ele levantou entra aqui. Vem
@@ -664,6 +740,10 @@ def api_agent_run(body: dict = Body(...)):
                             buscar=bool(agents.AGENTS[agent_key].get("busca_ao_vivo")))
     except agents.LLMError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    # Link do RAD citado sem estar no conjunto recuperado é invenção — marcado
+    # em código, não em prompt (03 §5).
+    texto = docs.validar_citacoes(texto, trechos_docs)
 
     resposta = {"agent": agent_key, "ticker": ticker, "texto": texto,
                 "modelo": model, "provedor": provider}

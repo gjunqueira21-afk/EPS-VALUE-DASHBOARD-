@@ -624,6 +624,19 @@ textarea { font-family: var(--sans); resize: vertical; min-height: 64px; line-he
 .chat-vazio-mark { width: 54px; height: 54px; margin: 0 auto 10px; opacity: .85; }
 .chat-vazio-mark svg { width: 100%; height: 100%; }
 
+/* ------------------------------------------------------------ anexo no chat */
+.chat-anexo {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 8px; padding: 7px 10px;
+  border: 1px dashed var(--line2); border-radius: var(--r-sm);
+  background: var(--panel2);
+  font: 500 10.5px/1.4 var(--mono); color: var(--paper);
+}
+.chat-anexo .nome { color: var(--brand); }
+.chat-anexo .dica { color: var(--dim2); font-weight: 400; }
+.chat-anexo button { margin-left: auto; }
+#chat-clip { flex: 0 0 auto; padding-inline: 10px; }
+
 /* ------------------------------------------------- análises salvas no chat */
 .chat-salvas-topo {
   display: flex; align-items: center; gap: 8px;

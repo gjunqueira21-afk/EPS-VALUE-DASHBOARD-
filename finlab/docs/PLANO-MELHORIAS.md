@@ -201,8 +201,12 @@ documento.
       Transcrições ficam locais, nunca no repositório. *(03 §3.4, riscos)*
 - [ ] **4.2 Placar de promessas** — promessas da gestão versionadas e cobradas
       tri a tri; memória por ticker. *(05 §3.4, 04 F3)*
-- [ ] **4.3 Reconciliador** — delta de premissa proposto pela mesa aplicável com
+- [x] **4.3 Reconciliador** — delta de premissa proposto pela mesa aplicável com
       um clique via `recalcular_valuation` no cliente, com gates humanos. *(04 F3)*
+      O Engenheiro de Premissas fecha a fala com um bloco JSON quando propõe
+      calibragem; o chat o transforma num cartão de→para (valor atual riscado,
+      proposto ao lado) com o botão de aplicar — o gate humano. O clique muda
+      `state.a`, com a trava de Gordon, e os sliders acompanham.
 
 ## Transversal
 

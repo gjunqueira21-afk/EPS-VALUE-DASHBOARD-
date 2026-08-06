@@ -2443,6 +2443,12 @@
       // usuário clica, e SÓ então o modelo muda. A trava de Gordon continua
       // valendo — perpetuidade proposta acima do WACC seria um modelo sem
       // significado, então ela é rebaixada em vez de aplicada cegamente.
+      // A mesa acabou de registrar promessas achadas nos documentos: o placar
+      // na tela precisa refletir isso sem exigir um F5.
+      window.addEventListener('finlab:promessas-registradas', () => {
+        recarregarPromessas();
+      });
+
       window.addEventListener('finlab:aplicar-premissas', (ev) => {
         const p = ev.detail || {};
         if (!state.a || !state.a.aplicavel) return;

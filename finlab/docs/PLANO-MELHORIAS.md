@@ -208,8 +208,11 @@ documento.
       conta cumpridas/quebradas/parciais e só calcula taxa de cumprimento
       quando há promessa resolvida. A mesa lê o placar e cobra o vencido, com
       proibição explícita de inventar promessa fora da lista.
-      *Fora deste item:* extrair promessas dos documentos automaticamente —
-      é escopo próprio, e o registro hoje é do usuário.
+      A mesa também EXTRAI: com documentos no contexto, o agente propõe as
+      promessas que achou, cada uma ancorada num `doc ID`; o filtro em código
+      descarta as de documento não recuperado, o link vem do índice (não do
+      que o modelo escreveu), e o usuário registra item a item — o mesmo gate
+      humano do 4.3.
 - [x] **4.3 Reconciliador** — delta de premissa proposto pela mesa aplicável com
       um clique via `recalcular_valuation` no cliente, com gates humanos. *(04 F3)*
       O Engenheiro de Premissas fecha a fala com um bloco JSON quando propõe

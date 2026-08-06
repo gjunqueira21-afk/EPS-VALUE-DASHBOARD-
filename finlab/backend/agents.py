@@ -375,6 +375,27 @@ _CHAT_REGRAS = (
     "• Nunca responda vazio. Se não tiver o dado, escreva isso em uma frase.\n"
 )
 
+# Extração de promessas: só quando o usuário PEDE, e só a partir de documento
+# que está no contexto. É a ponte entre o índice documental e o placar — e o
+# painel só registra o que o usuário escolher, item a item.
+_REGRA_PROMESSAS = (
+    "\nEXTRAIR PROMESSAS DA GESTÃO — quando, e só quando, o usuário pedir isso "
+    "(\"quais promessas\", \"o que a gestão prometeu\", \"extraia os compromissos\"):\n"
+    "Responda em texto o que encontrou e FECHE com um bloco ```json neste formato:\n"
+    '{"promessas": [{"texto": "desalavancar para 2,0x", "prazo": "2026-12-31", '
+    '"metrica": "DL/EBITDA", "doc": "ID do documento"}]}\n'
+    "Regras duras:\n"
+    "• Só entra promessa que esteja num trecho de DOCUMENTOS DA EMPRESA, e o `doc` é o "
+    "ID daquele trecho. Sem documento no contexto, não proponha nada — diga que não há "
+    "documento recuperado para extrair.\n"
+    "• `prazo` no formato AAAA-MM-DD. Prazo declarado como \"no 4T26\" vira o último dia "
+    "do período (2026-12-31). Sem prazo declarado, omita o campo — não invente data.\n"
+    "• Compromisso concreto e verificável, com sujeito e objeto. Intenção vaga "
+    "(\"seguimos focados em eficiência\") NÃO é promessa.\n"
+    "• O painel transforma o bloco numa lista com caixas de seleção: quem registra é o "
+    "usuário, item a item. Você propõe, ele decide.\n"
+)
+
 # Voz padrão quando o usuário não escolheu um agente: a mesa falando junto.
 CHAT_SYSTEM = _COMUM + (
     "\nSeu papel: você é a mesa inteira, em conversa. O usuário está com o painel aberto e "
@@ -512,13 +533,19 @@ def _texto_openai(data: dict) -> str:
 
 
 def _sistema_da_conversa(agente: str | None, contexto: str) -> str:
-    """Prompt de sistema conforme quem está falando na mesa."""
+    """Prompt de sistema conforme quem está falando na mesa.
+
+    A regra de extração de promessas só entra quando há documento no contexto:
+    ensinar o formato a quem não tem de onde extrair é convite a inventar.
+    """
     if agente == "sintese":
         base = SINTESE_SYSTEM
     elif agente and agente in CHAT_PERSONAS:
         base = _COMUM + CHAT_PERSONAS[agente] + _CHAT_REGRAS
     else:
         base = CHAT_SYSTEM
+    if "DOCUMENTOS DA EMPRESA (trechos oficiais" in contexto:
+        base += _REGRA_PROMESSAS
     return base + "\n\nCONTEXTO\n========\n" + contexto
 
 

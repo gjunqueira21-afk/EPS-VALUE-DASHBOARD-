@@ -7,11 +7,12 @@ contábil, score e o proxy dos agentes de IA.
 
 from __future__ import annotations
 
+import json
 import statistics
 from typing import Optional
 
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import (agents, b3data, bdrs, cache, cvm, docs, etfs, ipe, market, metrics,
@@ -642,11 +643,37 @@ def api_agent_chat(body: dict = Body(...)):
             "demonstrações vencem.\n\n"
             f"{radar[:6000]}\n")
 
+    buscar = bool(agents.AGENTS.get(agente or "", {}).get("busca_ao_vivo"))
+
+    # Streaming (3.6): a fala desce delta a delta como text/event-stream, e o
+    # evento de fechamento traz o texto DEFINITIVO — é nele que a validação de
+    # citação se aplica, porque não dá para retroeditar o que já desceu. O
+    # navegador troca o texto acumulado pelo final ao fechar. Erro no meio do
+    # caminho vira evento também: a resposta HTTP já partiu como 200.
+    if body.get("stream"):
+        def eventos():
+            try:
+                for ev in agents.chat_conversa_stream(
+                        slot.get("provider"), api_key, model, contexto,
+                        body.get("historico") or [], pergunta, agente, buscar):
+                    if ev.get("fim"):
+                        ev = {"fim": True,
+                              "texto": docs.validar_citacoes(ev.get("texto") or "",
+                                                             trechos_docs),
+                              "uso": ev.get("uso"), "modelo": model,
+                              "provedor": slot.get("provider"), "agente": agente}
+                    yield "data: " + json.dumps(ev, ensure_ascii=False) + "\n\n"
+            except agents.LLMError as exc:
+                yield "data: " + json.dumps({"erro": str(exc)},
+                                            ensure_ascii=False) + "\n\n"
+        return StreamingResponse(eventos(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-store",
+                                          "X-Accel-Buffering": "no"})
+
     try:
         texto = agents.chat_conversa(
             slot.get("provider"), api_key, model, contexto,
-            body.get("historico") or [], pergunta, agente,
-            buscar=bool(agents.AGENTS.get(agente or "", {}).get("busca_ao_vivo")))
+            body.get("historico") or [], pergunta, agente, buscar=buscar)
     except agents.LLMError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

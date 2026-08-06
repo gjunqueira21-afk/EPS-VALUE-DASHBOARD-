@@ -91,6 +91,11 @@
 
   /* ----------------------------------------------------------------- render */
 
+  function fmtTok(n) {
+    if (!n && n !== 0) return '?';
+    return n >= 1000 ? (n / 1000).toFixed(1).replace('.0', '') + 'k' : String(n);
+  }
+
   function bolha(msg) {
     const meu = msg.role === 'user';
     const corpo = h('div', {
@@ -113,6 +118,12 @@
         cracha.push(h('span', {
           class: 'chat-modelo', title: 'Slot usado por este agente'
         }, msg.modelo));
+      }
+      // O custo da fala, quando o provedor informa: entrada → saída.
+      if (msg.uso && (msg.uso.entrada || msg.uso.saida)) {
+        cracha.push(h('span', {
+          class: 'chat-modelo', title: 'Tokens: entrada → saída (informado pelo provedor)'
+        }, `${fmtTok(msg.uso.entrada)}→${fmtTok(msg.uso.saida)} tok`));
       }
       caixa.appendChild(h('div', { class: 'chat-autor' }, cracha));
     }
@@ -203,13 +214,28 @@
     return n;
   }
 
-  /** Uma fala. Devolve o texto ou null, e nunca deixa bolha vazia na tela. */
+  /** Uma fala, em streaming: a bolha cresce enquanto o modelo escreve.
+   *  Devolve {texto, uso} ou null, e nunca deixa bolha vazia na tela. */
   async function falar(agente, rotulo, icone, pergunta, historico, extra) {
     const slot = slotDo(agente);
     const marca = pensando(rotulo, icone, slot && slot.model);
+    const balao = marca.querySelector('.chat-bubble');
+    const corpo = el('chat-body');
+    let vivo = false;
+    let texto = '';
+
+    function pinga(delta) {
+      texto += delta;
+      if (!vivo) { vivo = true; marca.classList.remove('pensando'); }
+      // Texto cru durante o voo (é rápido e seguro); o markdown entra no fim.
+      balao.textContent = texto;
+      corpo.scrollTop = corpo.scrollHeight;
+    }
+
     try {
-      const r = await api('/api/agents/chat', {
+      const resp = await fetch('/api/agents/chat', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(Object.assign({
           slot: { provider: slot.provider, api_key: slot.api_key, model: slot.model },
           ticker: state.ticker,
@@ -218,12 +244,45 @@
           resultado: (state.ctxAtual || {}).resultado || null,
           historico: historico,
           pergunta: pergunta,
-          agente: agente || null
+          agente: agente || null,
+          stream: true
         }, extra || {}))
       });
+      if (!resp.ok) {
+        let msg = 'HTTP ' + resp.status;
+        try { msg = (await resp.json()).detail || msg; } catch (e) { /* corpo não-JSON */ }
+        throw new Error(msg);
+      }
+
+      // O corpo é um event-stream: eventos "data: {...}" separados por linha
+      // em branco. O de fechamento traz o texto DEFINITIVO — já com a
+      // validação de citação aplicada no servidor — e os tokens gastos.
+      const leitor = resp.body.getReader();
+      const decodificador = new TextDecoder();
+      let fila = '';
+      let fim = null;
+      let erro = null;
+      for (;;) {
+        const { done, value } = await leitor.read();
+        if (done) break;
+        fila += decodificador.decode(value, { stream: true });
+        let corte;
+        while ((corte = fila.indexOf('\n\n')) >= 0) {
+          const linha = fila.slice(0, corte).trim();
+          fila = fila.slice(corte + 2);
+          if (!linha.startsWith('data:')) continue;
+          let ev;
+          try { ev = JSON.parse(linha.slice(5)); } catch (e) { continue; }
+          if (ev.erro) erro = ev.erro;
+          else if (ev.fim) fim = ev;
+          else if (ev.delta) pinga(ev.delta);
+        }
+      }
       marca.remove();
-      const texto = (r.texto || '').trim();
-      if (!texto) {
+      if (erro) throw new Error(erro);
+
+      const definitivo = ((fim && fim.texto) || texto).trim();
+      if (!definitivo) {
         empilhar({
           role: 'assistant', autor: rotulo, icone: icone, agente: agente, local: true,
           content: '⚠️ Resposta vazia do provedor. Tente de novo ou troque o modelo do slot.'
@@ -231,8 +290,9 @@
         return null;
       }
       empilhar({ role: 'assistant', autor: rotulo, icone: icone, agente: agente,
-                 modelo: r.modelo || (slot && slot.model), content: texto });
-      return texto;
+                 modelo: (fim && fim.modelo) || (slot && slot.model),
+                 uso: (fim && fim.uso) || null, content: definitivo });
+      return { texto: definitivo, uso: (fim && fim.uso) || null };
     } catch (err) {
       marca.remove();
       empilhar({
@@ -298,10 +358,22 @@
 
         let radar = '';
         const respostas = [];
+        const custo = { entrada: 0, saida: 0, falas: 0, medidas: 0 };
+        const soma = (r) => {
+          custo.falas += 1;
+          if (r.uso && (r.uso.entrada || r.uso.saida)) {
+            custo.medidas += 1;
+            custo.entrada += r.uso.entrada || 0;
+            custo.saida += r.uso.saida || 0;
+          }
+        };
         for (const a of abre) {
           const r = await falar(a.key, nomes[a.key] || a.key, agentIcon(a.key),
             texto, anterior, comAnexo);
-          if (r) { radar = r; respostas.push({ agente: a.key, nome: nomes[a.key], texto: r }); }
+          if (r) {
+            radar = r.texto; soma(r);
+            respostas.push({ agente: a.key, nome: nomes[a.key], texto: r.texto });
+          }
         }
         // Com o Radar falando, o que ele leu do anexo segue via radar; sem
         // Radar (ou se ele falhou), o anexo não pode evaporar — vai ao corpo.
@@ -310,7 +382,10 @@
         for (const a of corpo) {
           const r = await falar(a.key, nomes[a.key] || a.key, agentIcon(a.key),
             texto, anterior, extra);
-          if (r) respostas.push({ agente: a.key, nome: nomes[a.key], texto: r });
+          if (r) {
+            soma(r);
+            respostas.push({ agente: a.key, nome: nomes[a.key], texto: r.texto });
+          }
         }
         // Com uma fala só não há mesa para ler: os leitores só entram quando
         // existe divergência possível.
@@ -318,8 +393,22 @@
           for (const a of leitores) {
             const r = await falar(a.key, nomes[a.key] || a.key, agentIcon(a.key),
               texto, anterior, Object.assign({ respostas: respostas.slice() }, extra));
-            if (r) respostas.push({ agente: a.key, nome: nomes[a.key], texto: r });
+            if (r) {
+              soma(r);
+              respostas.push({ agente: a.key, nome: nomes[a.key], texto: r.texto });
+            }
           }
+        }
+        // O custo da rodada, medido pelo provedor — não estimado. Só aparece
+        // quando pelo menos uma fala veio com a contagem.
+        if (custo.medidas) {
+          empilhar({
+            role: 'assistant', local: true, agente: 'custo',
+            content: `💰 Rodada: ${custo.falas} falas · ${fmtTok(custo.entrada)} tokens de `
+              + `entrada → ${fmtTok(custo.saida)} de saída`
+              + (custo.medidas < custo.falas
+                ? ` (${custo.falas - custo.medidas} fala(s) sem contagem do provedor)` : '')
+          });
         }
       }
     } finally {

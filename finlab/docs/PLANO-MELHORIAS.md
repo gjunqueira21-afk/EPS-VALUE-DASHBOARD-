@@ -102,15 +102,15 @@ novas visualizações respondem às perguntas-título de cada uma.
 Pareceres 05 (o que o analista precisa) + 03 (como ingerir). "O FinLab não
 precisa de um scraper. Precisa de um leitor de CSV."
 
-- [ ] **2.1 Ingestão do índice IPE da CVM** — CSV oficial diário, ~1 MB/ano,
+- [x] **2.1 Ingestão do índice IPE da CVM** — CSV oficial diário, ~1 MB/ano,
       chaveado por `Codigo_CVM` (mesma chave do universe). Fatos relevantes,
       comunicados, prévia, apresentações — com `Link_Download` direto ao PDF.
       *(03 §0 — verificado com download)*
-- [ ] **2.2 Fetch + parsing + índice local** — baixar PDFs (Crawl-Delay 10s),
+- [x] **2.2 Fetch + parsing + índice local** — baixar PDFs (Crawl-Delay 10s),
       parsear (Docling; **não** pymupdf4llm — licença), chunking com metadado
       temporal obrigatório, SQLite FTS5/BM25. Sem banco vetorial na fase 1 do
       RAG; embeddings só depois, decididos por golden set. *(03 §3–4)*
-- [ ] **2.3 Rota de busca + citação rastreável** — data visível em todo chunk
+- [x] **2.3 Rota de busca + citação rastreável** — data visível em todo chunk
       injetado; validação de citação em código (não em prompt); abstenção quando
       a recuperação vier vazia. *(03 §5)*
 - [~] **2.4 Classificação de regime** — taxonomia R0–R5 + modificador (05 §1):
@@ -152,17 +152,16 @@ Parecer 04. Depende da Fase 2 expor `buscar_dossie_momento(ticker)`.
 
 - [x] **3.1 Rodada paralela** — `Promise.allSettled` + semáforo por provedor no
       lugar do `for await`; latência vira máximo, não soma. *(00.5, 04 F1)*
-- [~] **3.2 Prompt com cache de prefixo** — contexto estável primeiro, pergunta
+- [x] **3.2 Prompt com cache de prefixo** — contexto estável primeiro, pergunta
       por último; custo por rodada medido e mostrado. *(04 F1)*
-      *Parcial:* o contexto foi reordenado — dossiê da empresa, regime e
-      trimestres antes; premissas e resultado depois de um marcador explícito.
-      Arrastar um slider deixou de invalidar o prefixo inteiro. Falta medir e
-      mostrar o custo por rodada.
-- [~] **3.3 Dossiê de momento no contexto** — camada L3 dos agentes + banner de
+      O contexto foi reordenado (estável antes do marcador, volátil depois), e
+      o custo agora vem MEDIDO pelo provedor: cada fala do chat mostra os
+      tokens de entrada→saída no crachá, e a rodada da mesa fecha com o total.
+- [x] **3.3 Dossiê de momento no contexto** — camada L3 dos agentes + banner de
       cobertura ("a mesa enxerga até dd/mm"). *(04 F1)*
-      *Parcial:* regime com evidência datada, trimestres do ITR e LTM entram no
-      contexto, e o banner diz até quando a mesa enxerga. Falta o dossiê
-      documental, que depende de 2.1–2.3.
+      Regime com evidência datada, trimestres do ITR, LTM, os títulos do IPE e
+      — com o índice da etapa `--docs` — os trechos dos documentos, com data e
+      link, recuperados pela pergunta do usuário.
 - [~] **3.4 Deliberação** — schema de afirmação tipada (fato com doc_id ×
       interpretação), blackboard da rodada, agente **Cético** contestando por ID,
       **Moderador** produzindo mapa de convergência/disputa no lugar da síntese
@@ -177,7 +176,9 @@ Parecer 04. Depende da Fase 2 expor `buscar_dossie_momento(ticker)`.
       `tests/eval_abstencao.py`, com 7 casos sobre o que a mesa não tem como
       saber. Precisa de chave real, então não roda na suíte offline — e este
       repositório não tem CI onde pendurar.
-- [ ] **3.6 Streaming da fala final** + traço opt-in com trace_id. *(04)*
+- [x] **3.6 Streaming da fala final** — o chat desce a fala delta a
+      delta (SSE no proxy, dialeto OpenAI; os demais estilos resolvem inteiro
+      e chegam num delta único). O traço opt-in com trace_id não foi feito.
 
 **Fora do plano original — Radar de Contexto (xAI/Grok).** Ideia do usuário: um
 agente com busca ao vivo no X e na imprensa, que abre a rodada e dá contexto

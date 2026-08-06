@@ -378,6 +378,9 @@ class _RespFake:
     def json(self):
         return self._payload
 
+    def close(self):
+        pass
+
 
 def test_xai_busca_usa_agent_tools_no_responses(monkeypatch):
     """O Live Search por search_parameters morreu (o provedor devolve 410).
@@ -2313,3 +2316,52 @@ def test_extrair_pdf_do_anexo_e_bloco_rotulado():
     assert "truncado" in bloco
     # o rótulo separa material do usuário de fonte oficial
     assert "NÃO" in bloco and "demonstrações da CVM" in bloco
+
+
+def test_chat_em_streaming_deltas_uso_e_queda_para_inteiro(monkeypatch):
+    """3.6: deltas enquanto o modelo escreve, tokens no fechamento — e o
+    provedor que recusar o stream cai para a chamada inteira sem falhar."""
+    class RespStream:
+        status_code = 200
+
+        def iter_lines(self, decode_unicode=False):
+            yield ": keep-alive"
+            yield 'data: {"choices":[{"delta":{"content":"fundamentos "}}]}'
+            yield 'data: {"choices":[{"delta":{"content":"sólidos"}}]}'
+            yield 'data: {"choices":[],"usage":{"prompt_tokens":900,"completion_tokens":42}}'
+            yield "data: [DONE]"
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(agents.requests, "post", lambda *a, **kw: RespStream())
+    eventos = list(agents.chat_conversa_stream("openrouter", "k", "m", "CTX", [], "oi"))
+    assert [e.get("delta") for e in eventos[:-1]] == ["fundamentos ", "sólidos"]
+    fim = eventos[-1]
+    assert fim["fim"] is True and fim["texto"] == "fundamentos sólidos"
+    assert fim["uso"] == {"entrada": 900, "saida": 42}
+
+    # provedor recusa o stream (400) → resolve inteiro, num delta único
+    chamadas = []
+
+    def post_sem_stream(url, **kw):
+        chamadas.append(bool((kw.get("json") or {}).get("stream")))
+        if (kw.get("json") or {}).get("stream"):
+            return _RespFake(400, {"error": "stream não suportado"})
+        return _RespFake(200, {"choices": [{"message": {"content": "inteiro"}}]})
+
+    monkeypatch.setattr(agents.requests, "post", post_sem_stream)
+    eventos = list(agents.chat_conversa_stream("openrouter", "k", "m", "CTX", [], "oi"))
+    assert chamadas == [True, False]
+    assert eventos == [{"delta": "inteiro"},
+                       {"fim": True, "texto": "inteiro", "uso": None}]
+
+    # busca ao vivo não passa pelo stream: vai direto ao /v1/responses
+    def post_responses(url, **kw):
+        assert url.endswith("/responses"), "busca tinha de ir ao responses"
+        return _RespFake(200, {"output_text": "radar"})
+
+    monkeypatch.setattr(agents.requests, "post", post_responses)
+    eventos = list(agents.chat_conversa_stream("xai", "k", "m", "CTX", [], "oi",
+                                               "contexto", buscar=True))
+    assert eventos[-1]["texto"] == "radar"

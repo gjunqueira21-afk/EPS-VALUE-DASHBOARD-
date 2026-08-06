@@ -2064,3 +2064,252 @@ def test_ipe_entra_no_contexto_como_titulo_e_avisa_que_nao_leu_o_pdf():
     }))
     assert "[2026-07-01] Fato Relevante: Venda de controlada" in texto
     assert "não pode afirmar o que está escrito dentro dele" in texto
+
+
+# ---------------------------------------------------------------------------
+# Conteúdo dos documentos (2.2/2.3): índice FTS5, busca e citação validada
+# ---------------------------------------------------------------------------
+
+def _pdf_minimo(texto: str) -> bytes:
+    """Um PDF de verdade, com uma página e o texto pedido, sem dependência.
+
+    Os offsets do xref são calculados, não chutados — pypdf valida a
+    estrutura, e é justamente a extração real que o teste quer exercitar.
+    """
+    conteudo = f"BT /F1 11 Tf 40 700 Td ({texto}) Tj ET".encode("latin-1", "replace")
+    objetos = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+         b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>"),
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(conteudo), conteudo),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    saida = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for i, corpo in enumerate(objetos, start=1):
+        offsets.append(len(saida))
+        saida += b"%d 0 obj\n%s\nendobj\n" % (i, corpo)
+    inicio_xref = len(saida)
+    saida += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objetos) + 1)
+    for off in offsets:
+        saida += b"%010d 00000 n \n" % off
+    saida += (b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF"
+              % (len(objetos) + 1, inicio_xref))
+    return bytes(saida)
+
+
+def _importar_ipe_docs():
+    raiz = Path(__file__).resolve().parents[2] / "valuation_cvm"
+    sys.path.insert(0, str(raiz))
+    try:
+        from src import ipe_docs  # noqa: E402
+        return ipe_docs
+    finally:
+        sys.path.pop(0)
+
+
+def _montar_indice(tmp_path, registros):
+    """docs.sqlite de teste, escrito pelas MESMAS funções do pipeline."""
+    ipe_docs = _importar_ipe_docs()
+    db = tmp_path / "docs.sqlite"
+    original = ipe_docs.DB_PATH
+    ipe_docs.DB_PATH = db
+    try:
+        con = ipe_docs._abrir_db()
+        for meta, trechos in registros:
+            ipe_docs._gravar_documento(con, meta, trechos, "ok" if trechos else "sem_texto")
+        con.close()
+    finally:
+        ipe_docs.DB_PATH = original
+    return db
+
+
+_META_RESIA = {
+    "protocolo": "P1", "cd_cvm": "9512", "categoria": "Fato Relevante",
+    "tipo": "", "assunto": "Venda da Resia", "data_entrega": "2026-06-20",
+    "data_referencia": None, "link": "https://rad.cvm.gov.br/ENET/doc1.pdf",
+}
+_META_DIV = {
+    "protocolo": "P2", "cd_cvm": "9512", "categoria": "Comunicado ao Mercado",
+    "tipo": "", "assunto": "Dividendos", "data_entrega": "2026-07-05",
+    "data_referencia": None, "link": "https://rad.cvm.gov.br/ENET/doc2.pdf",
+}
+
+
+def test_busca_nos_documentos_devolve_data_e_link_sempre(tmp_path, monkeypatch):
+    """O coração do 2.3: trecho sem data e sem link não pode existir.
+
+    E a busca precisa ser insensível a acento — quem digita "aquisicao"
+    tem de achar "aquisição".
+    """
+    from finlab.backend import docs as bdocs
+
+    db = _montar_indice(tmp_path, [
+        (_META_RESIA, ["A companhia comunica a venda da operação Resia nos EUA "
+                       "por US$ 800 milhões, com efeito no 3T.",
+                       "A aquisição de terrenos fica suspensa até a conclusão."]),
+        (_META_DIV, ["Distribuição de dividendos intermediários aprovada."]),
+    ])
+    monkeypatch.setattr(bdocs, "DB_PATH", db)
+
+    achados = bdocs.search("009512", "o que aconteceu com a Resia?")
+    assert achados, "a busca tinha de achar o fato relevante"
+    assert achados[0]["data"] == "2026-06-20"
+    assert achados[0]["link"].startswith("https://rad.cvm.gov.br/")
+    assert "Resia" in achados[0]["trecho"]
+
+    # sem acento acha com acento
+    sem_acento = bdocs.search("9512", "aquisicao de terrenos")
+    assert any("aquisição" in t["trecho"] for t in sem_acento)
+
+    # recentes: mais novo primeiro, só o primeiro trecho de cada documento
+    rec = bdocs.recentes("9512", n=2)
+    assert [r["data"] for r in rec] == ["2026-07-05", "2026-06-20"]
+
+    st = bdocs.stats("9512")
+    assert st["disponivel"] is True and st["documentos"] == 2
+    assert st["ultimo"] == "2026-07-05"
+
+
+def test_documentos_degradam_para_vazio_sem_indice(tmp_path, monkeypatch):
+    from finlab.backend import docs as bdocs
+    monkeypatch.setattr(bdocs, "DB_PATH", tmp_path / "nao-existe.sqlite")
+    assert bdocs.available() is False
+    assert bdocs.search("9512", "resia") == []
+    assert bdocs.recentes("9512") == []
+    assert bdocs.stats()["disponivel"] is False
+
+
+def test_bloco_de_contexto_data_antes_do_trecho_e_abstencao_no_vazio():
+    from finlab.backend import docs as bdocs
+
+    bloco = bdocs.bloco_contexto([{
+        "data": "2026-06-20", "categoria": "Fato Relevante",
+        "assunto": "Venda da Resia", "link": "https://rad.cvm.gov.br/ENET/doc1.pdf",
+        "protocolo": "P1", "trecho": "venda da operação Resia",
+    }])
+    # a data aparece antes do texto do trecho, e o link vai junto
+    assert bloco.index("[2026-06-20]") < bloco.index("venda da operação")
+    assert "https://rad.cvm.gov.br/ENET/doc1.pdf" in bloco
+
+    vazio = bdocs.bloco_contexto([])
+    assert "nenhum trecho recuperado" in vazio
+    assert "não há documento recuperado" in vazio
+
+
+def test_citacao_de_link_inventado_e_marcada_em_codigo():
+    """Parecer 03 §5: validação em código, não em prompt. Link do RAD que o
+    modelo não recebeu sai marcado; o recebido passa limpo."""
+    from finlab.backend import docs as bdocs
+
+    trechos = [{"link": "https://rad.cvm.gov.br/ENET/doc1.pdf"}]
+    texto = ("A venda consta em https://rad.cvm.gov.br/ENET/doc1.pdf e o guidance "
+             "em https://rad.cvm.gov.br/ENET/inventado.pdf.")
+    saida = bdocs.validar_citacoes(texto, trechos)
+    assert "doc1.pdf e o guidance" in saida
+    assert "inventado.pdf. ⚠[link não recuperado nesta consulta]" in saida
+    # link de outro domínio não é da alçada desta validação
+    assert bdocs.validar_citacoes("veja https://exemplo.com/x", []) == "veja https://exemplo.com/x"
+
+
+def test_etapa_de_documentos_extrai_indexa_e_e_incremental(tmp_path, monkeypatch):
+    """A etapa inteira do pipeline com um PDF de verdade — e sem rede: o
+    arquivo já está no lugar, então nem download nem Crawl-Delay acontecem.
+    Na segunda rodada o protocolo já indexado não é tocado."""
+    import pandas as pd
+    ipe_docs = _importar_ipe_docs()
+
+    ipe = pd.DataFrame([{
+        "Codigo_CVM": "9512", "Categoria": "Fato Relevante", "Tipo": "",
+        "Assunto": "Venda da Resia", "Data_Entrega": "2026-06-20",
+        "Data_Referencia": "2026-06-20", "Protocolo_Entrega": "PX1",
+        "Link_Download": "https://rad.cvm.gov.br/ENET/doc1.pdf", "Versao": "1",
+    }])
+    (tmp_path / "processed").mkdir()
+    ipe.to_parquet(tmp_path / "processed" / "ipe.parquet", index=False)
+
+    monkeypatch.setattr(ipe_docs, "PROCESSED_DIR", tmp_path / "processed")
+    monkeypatch.setattr(ipe_docs, "DOCS_DIR", tmp_path / "docs")
+    monkeypatch.setattr(ipe_docs, "DB_PATH", tmp_path / "processed" / "docs.sqlite")
+    monkeypatch.setattr(ipe_docs, "_codigos_do_universo", lambda: {"9512"})
+    monkeypatch.setattr(ipe_docs.time, "sleep",
+                        lambda s: (_ for _ in ()).throw(AssertionError("dormiu sem baixar")))
+
+    destino = tmp_path / "docs" / "9512" / "PX1.pdf"
+    destino.parent.mkdir(parents=True)
+    destino.write_bytes(_pdf_minimo("Venda da operacao Resia por US$ 800 milhoes"))
+
+    placar = ipe_docs.indexar(meses=6000, por_empresa=5)
+    assert placar == {"baixados": 1, "pulados": 0, "falhas": 0}
+
+    from finlab.backend import docs as bdocs
+    monkeypatch.setattr(bdocs, "DB_PATH", tmp_path / "processed" / "docs.sqlite")
+    achados = bdocs.search("9512", "Resia")
+    assert achados and "Resia" in achados[0]["trecho"]
+    assert achados[0]["data"] == "2026-06-20"
+
+    # segunda rodada: nada a baixar, nada refeito
+    placar2 = ipe_docs.indexar(meses=6000, por_empresa=5)
+    assert placar2 == {"baixados": 0, "pulados": 1, "falhas": 0}
+
+
+def test_selecao_respeita_categoria_universo_janela_e_teto():
+    import pandas as pd
+    ipe_docs = _importar_ipe_docs()
+
+    hoje = pd.Timestamp.today()
+    linhas = []
+    for i in range(10):
+        linhas.append({"Codigo_CVM": "9512", "Categoria": "Fato Relevante",
+                       "Data_Entrega": hoje - pd.Timedelta(days=i * 30),
+                       "Protocolo_Entrega": f"A{i}", "Link_Download": "https://x/a.pdf"})
+    linhas.append({"Codigo_CVM": "9512", "Categoria": "Assembleia",
+                   "Data_Entrega": hoje, "Protocolo_Entrega": "IRRELEV",
+                   "Link_Download": "https://x/b.pdf"})
+    linhas.append({"Codigo_CVM": "777777", "Categoria": "Fato Relevante",
+                   "Data_Entrega": hoje, "Protocolo_Entrega": "FORA",
+                   "Link_Download": "https://x/c.pdf"})
+    linhas.append({"Codigo_CVM": "9512", "Categoria": "Fato Relevante",
+                   "Data_Entrega": hoje - pd.Timedelta(days=900),
+                   "Protocolo_Entrega": "VELHO", "Link_Download": "https://x/d.pdf"})
+
+    sel = ipe_docs._selecionar(pd.DataFrame(linhas), meses=24, por_empresa=4,
+                               universo={"9512"})
+    protocolos = list(sel["Protocolo_Entrega"])
+    assert len(protocolos) == 4                      # teto por empresa
+    assert "IRRELEV" not in protocolos               # categoria fora da lista
+    assert "FORA" not in protocolos                  # empresa fora do universo
+    assert "VELHO" not in protocolos                 # fora da janela
+    assert protocolos == sorted(protocolos, key=lambda p: int(p[1:]))  # mais novos
+
+
+def test_corte_em_paragrafos_com_rabicho_juntado():
+    ipe_docs = _importar_ipe_docs()
+    paragrafo = "x" * 500
+    texto = "\n\n".join([paragrafo, paragrafo, paragrafo, "fim curto"])
+    trechos = ipe_docs._cortar(texto)
+    assert all(len(t) <= ipe_docs.CHUNK_ALVO + 600 for t in trechos)
+    # o rabicho curto não vira trecho próprio
+    assert trechos[-1].endswith("fim curto") and len(trechos[-1]) > len("fim curto")
+    assert ipe_docs._cortar("") == []
+
+
+def test_extrair_pdf_do_anexo_e_bloco_rotulado():
+    """O anexo do chat: extração real, teto de tamanho e rótulo honesto."""
+    from finlab.backend import docs as bdocs
+
+    anexo = bdocs.extrair_pdf(_pdf_minimo("Release de resultados do 2T26"))
+    assert "Release de resultados" in anexo["texto"]
+    assert anexo["paginas"] == 1 and anexo["truncado"] is False
+
+    with pytest.raises(ValueError, match="não parece ser um PDF"):
+        bdocs.extrair_pdf(b"isto e um txt")
+    with pytest.raises(ValueError, match="15 MB"):
+        bdocs.extrair_pdf(b"%PDF" + b"0" * (bdocs.ANEXO_MAX_BYTES + 1))
+
+    bloco = bdocs.bloco_anexo("release.pdf", {"texto": "conteudo", "truncado": True})
+    assert "DOCUMENTO ENVIADO PELO USUÁRIO — release.pdf" in bloco
+    assert "truncado" in bloco
+    # o rótulo separa material do usuário de fonte oficial
+    assert "NÃO" in bloco and "demonstrações da CVM" in bloco

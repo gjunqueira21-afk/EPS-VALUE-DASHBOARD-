@@ -39,7 +39,8 @@
     } catch (e) { /* fica o padrão */ }
   }
 
-  const state = { aberto: false, enviando: false, ticker: null, tela: null, ctx: null, montado: false };
+  const state = { aberto: false, enviando: false, ticker: null, tela: null, ctx: null,
+                  montado: false, anexo: null };
 
   /* -------------------------------------------------------------- histórico */
 
@@ -274,9 +275,17 @@
     const dirigido = alvoDaPergunta(texto);
     const escolha = dirigido || alvo();
 
+    // O anexo vale para ESTA pergunta: vai para quem foi endereçado — na mesa
+    // inteira, para o Radar, que abre a rodada e repassa o que leu.
+    const anexo = state.anexo;
+    state.anexo = null;
+    pintarAnexo();
+    const comAnexo = anexo ? { anexo: anexo } : {};
+
     try {
       if (escolha !== 'mesa') {
-        await falar(escolha, nomes[escolha] || escolha, agentIcon(escolha), texto, anterior);
+        await falar(escolha, nomes[escolha] || escolha, agentIcon(escolha), texto,
+          anterior, comAnexo);
       } else {
         // A rodada acontece em ondas, como na mesa: o Radar abre (o que ele
         // levanta chega aos outros cercado como não verificado), o corpo fala,
@@ -291,10 +300,13 @@
         const respostas = [];
         for (const a of abre) {
           const r = await falar(a.key, nomes[a.key] || a.key, agentIcon(a.key),
-            texto, anterior);
+            texto, anterior, comAnexo);
           if (r) { radar = r; respostas.push({ agente: a.key, nome: nomes[a.key], texto: r }); }
         }
+        // Com o Radar falando, o que ele leu do anexo segue via radar; sem
+        // Radar (ou se ele falhou), o anexo não pode evaporar — vai ao corpo.
         const extra = radar ? { radar: radar } : {};
+        if (!radar && anexo) extra.anexo = anexo;
         for (const a of corpo) {
           const r = await falar(a.key, nomes[a.key] || a.key, agentIcon(a.key),
             texto, anterior, extra);
@@ -315,6 +327,56 @@
       el('chat-send').disabled = false;
       el('chat-input').focus();
     }
+  }
+
+  /* ------------------------------------------------------------ anexo (PDF) */
+  /* O usuário pode anexar um PDF — release, apresentação, relatório — e pedir
+     que um agente o leia. O texto é extraído pelo servidor na hora do anexo
+     (nada fica gravado lá) e viaja junto da PRÓXIMA pergunta, para o agente
+     endereçado; na rodada da mesa, quem lê é o Radar de Contexto e o resumo
+     dele chega aos outros. */
+
+  async function anexarPdf(arquivo) {
+    if (!arquivo) return;
+    if (!/\.pdf$/i.test(arquivo.name)) {
+      alert('Só PDF por enquanto — os documentos da CVM são PDFs.');
+      return;
+    }
+    const chip = el('chat-anexo');
+    chip.hidden = false;
+    chip.innerHTML = '<span class="spinner"></span> lendo ' + esc(arquivo.name) + '…';
+    try {
+      const resp = await fetch('/api/docs/extrair', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/pdf' },
+        body: arquivo
+      });
+      const dados = await resp.json();
+      if (!resp.ok) throw new Error(dados.detail || 'falha na extração');
+      state.anexo = { nome: arquivo.name, texto: dados.texto, truncado: dados.truncado };
+      pintarAnexo();
+    } catch (err) {
+      state.anexo = null;
+      chip.hidden = false;
+      chip.innerHTML = '⚠ ' + esc(err.message);
+      setTimeout(() => { if (!state.anexo) chip.hidden = true; }, 5000);
+    }
+  }
+
+  function pintarAnexo() {
+    const chip = el('chat-anexo');
+    if (!chip) return;
+    if (!state.anexo) { chip.hidden = true; chip.innerHTML = ''; return; }
+    chip.hidden = false;
+    chip.innerHTML = '';
+    chip.appendChild(h('span', { class: 'nome' },
+      '📎 ' + state.anexo.nome + (state.anexo.truncado ? ' (truncado)' : '')));
+    chip.appendChild(h('span', { class: 'dica' },
+      'vai junto da próxima pergunta, para quem você endereçar'));
+    chip.appendChild(h('button', {
+      class: 'btn ghost sm', title: 'Remover o anexo',
+      onclick: () => { state.anexo = null; pintarAnexo(); }
+    }, '✕'));
   }
 
   /* --------------------------------------------------------- análises salvas */
@@ -467,7 +529,18 @@
       ]),
       h('div', { class: 'chat-body', id: 'chat-body' }),
       h('div', { class: 'chat-foot' }, [
+        h('div', { class: 'chat-anexo', id: 'chat-anexo', hidden: 'hidden' }),
         h('div', { class: 'chat-inputrow' }, [
+          h('input', {
+            type: 'file', id: 'chat-arquivo', accept: '.pdf,application/pdf',
+            hidden: 'hidden',
+            onchange: (ev) => { anexarPdf(ev.target.files[0]); ev.target.value = ''; }
+          }),
+          h('button', {
+            class: 'btn ghost', id: 'chat-clip',
+            title: 'Anexar um PDF para o agente ler (release, apresentação, relatório)',
+            onclick: () => el('chat-arquivo').click()
+          }, '📎'),
           h('textarea', {
             id: 'chat-input', rows: '1', placeholder: 'Pergunte sobre este ativo…',
             oninput: (ev) => {

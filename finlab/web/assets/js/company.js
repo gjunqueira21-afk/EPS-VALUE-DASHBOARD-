@@ -2141,12 +2141,29 @@
               d.assunto || '(sem assunto declarado)')
           : h('span', { class: 'ipe-assunto' }, d.assunto || '(sem assunto declarado)')
       ]))));
+    }
+    // A nota diz a verdade conforme o estado: com o índice de conteúdo (etapa
+    // --docs do pipeline), a mesa passa a ler trechos dos PDFs; sem ele, o
+    // painel conhece só os títulos — e afirma isso. Ela é independente da
+    // lista acima: o índice de conteúdo pode existir mesmo quando o ipe.parquet
+    // desta instalação não traz os títulos.
+    const idx = state.data.docs || {};
+    if (idx.disponivel && idx.documentos) {
+      corpo.appendChild(h('div', {
+        class: 'note',
+        html: `<b>Conteúdo indexado.</b> O texto de <b>${idx.documentos}</b> documento(s) está `
+          + 'no índice local' + (idx.ultimo ? ` (mais novo: ${fmt.date(idx.ultimo)})` : '')
+          + '. A mesa de IA recebe os trechos relevantes com data e link, e citação de '
+          + 'documento fora do recuperado é marcada como não verificada.'
+      }));
+    } else if (docs.length) {
       corpo.appendChild(h('div', {
         class: 'note',
         html: '<b>São os títulos, não o conteúdo.</b> O painel lê o índice de documentos da '
           + 'CVM — categoria, data e assunto — e cada linha leva ao PDF original. Ele não abre '
           + 'os documentos, então nada aqui foi interpretado: se o assunto importa para a sua '
-          + 'tese, o link é o caminho.'
+          + 'tese, o link é o caminho. Para indexar o conteúdo, rode o pipeline com '
+          + '<code>--docs</code>.'
       }));
     }
 

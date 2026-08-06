@@ -15,7 +15,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import promessas  # noqa: F401  (rotas abaixo)
+from . import calls, promessas  # noqa: F401  (rotas abaixo)
 from . import (agents, b3data, bdrs, cache, cvm, docs, etfs, ipe, market, metrics,
                regime, scoring, universe, valuation)
 from .settings import DEMO_MODE, TTL_CVM, TTL_QUOTE, WEB_DIR
@@ -207,6 +207,43 @@ def api_promessa_remover(ticker: str, promessa_id: str):
     return {"ok": True}
 
 
+@app.get("/api/company/{ticker}/calls")
+def api_calls(ticker: str):
+    """Transcrições de teleconferência já indexadas para este ticker."""
+    comp = universe.get(_ticker_valido(ticker))
+    return {"calls": calls.listar(comp.cd_cvm) if comp else []}
+
+
+@app.post("/api/company/{ticker}/calls")
+def api_call_nova(ticker: str, body: dict = Body(...)):
+    """Indexa uma transcrição colada pelo usuário.
+
+    O painel não transcreve: de onde veio o texto — ASR local, serviço pago
+    ou o site de RI — é escolha de quem usa. Aqui ele é segmentado em pares
+    pergunta→resposta e entra no MESMO índice dos documentos da CVM, então a
+    mesa passa a citá-lo com data e `doc ID` como qualquer outro.
+    """
+    comp = universe.get(_ticker_valido(ticker))
+    if comp is None or not comp.cd_cvm:
+        raise HTTPException(status_code=400,
+                            detail="Empresa sem código CVM — não dá para indexar.")
+    try:
+        return calls.indexar(comp.cd_cvm, (body or {}).get("data") or "",
+                             (body or {}).get("texto") or "",
+                             (body or {}).get("titulo") or "",
+                             (body or {}).get("link") or "")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/company/{ticker}/calls/{protocolo}")
+def api_call_remover(ticker: str, protocolo: str):
+    comp = universe.get(_ticker_valido(ticker))
+    if comp is None or not calls.remover(comp.cd_cvm, protocolo):
+        raise HTTPException(status_code=404, detail="Transcrição não encontrada.")
+    return {"ok": True}
+
+
 def _ticker_valido(ticker: str) -> str:
     tk = (ticker or "").upper().strip()
     if not universe.get(tk) and not bdrs.get(tk):
@@ -279,6 +316,7 @@ def api_company(ticker: str):
         "ltm": cvm.ltm_series(comp.cd_cvm),
         "ipe": ipe.documentos(comp.cd_cvm),
         "docs": docs.stats(comp.cd_cvm),
+        "calls": calls.listar(comp.cd_cvm),
         "promessas": promessas.placar(ticker),
         "regime": reg,
         "source": snap.get("price_source"),

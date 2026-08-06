@@ -196,9 +196,18 @@ documento.
 
 ## Fase 4 — Call, memória e ação (≈4–6 semanas) · última de propósito
 
-- [ ] **4.1 ASR das calls** — transcrição + diarização + segmentação do Q&A por
+- [~] **4.1 ASR das calls** — transcrição + diarização + segmentação do Q&A por
       par pergunta→resposta. Maior custo operacional do projeto → última fase.
       Transcrições ficam locais, nunca no repositório. *(03 §3.4, riscos)*
+      *Entregue a metade que independe do provedor:* o painel recebe a
+      transcrição em texto (colada, `.txt` ou legenda `.vtt`/`.srt`), separa a
+      apresentação da sessão de perguntas, agrupa em pares pergunta→resposta e
+      indexa no MESMO `docs.sqlite` dos documentos da CVM — a call vira um
+      documento citável, com data e `doc ID`, e herda de graça a recuperação
+      BM25 e a validação de citação. *Falta:* o ASR em si (transcrição +
+      diarização do áudio), que exige escolher entre Whisper local e serviço
+      pago — decisão de custo do usuário, não do código. O ponto de encaixe é
+      uma função só: qualquer caminho entrega texto para `calls.indexar`.
 - [x] **4.2 Placar de promessas** — promessas da gestão versionadas e cobradas
       tri a tri; memória por ticker. *(05 §3.4, 04 F3)*
       `backend/promessas.py` guarda por ticker em `finlab/data/promessas.json`

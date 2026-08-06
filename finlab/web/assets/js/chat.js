@@ -132,7 +132,67 @@
     if (!meu && msg.proposta && msg.proposta.premissas) {
       caixa.appendChild(cartaoProposta(msg.proposta));
     }
+    if (!meu && Array.isArray(msg.promessas) && msg.promessas.length) {
+      caixa.appendChild(cartaoPromessas(msg.promessas));
+    }
     return caixa;
+  }
+
+  /* Promessas achadas nos documentos: o agente propõe, o usuário escolhe item
+     a item. Mesmo gate do reconciliador — nada entra no placar sem o clique. */
+
+  function cartaoPromessas(lista) {
+    const marcadas = new Set(lista.map((_, i) => i));
+
+    const linhas = lista.map((p, i) => {
+      const caixa = h('input', {
+        type: 'checkbox', checked: 'checked',
+        onchange: (ev) => {
+          if (ev.target.checked) marcadas.add(i); else marcadas.delete(i);
+          botao.textContent = rotulo();
+          botao.disabled = marcadas.size === 0;
+        }
+      });
+      return h('label', { class: 'linha' }, [
+        caixa,
+        h('span', { class: 'txt' }, [
+          h('span', {}, p.texto),
+          h('span', { class: 'meta' }, [
+            p.prazo ? 'prazo ' + p.prazo : 'sem prazo declarado',
+            p.doc ? ' · doc ' + p.doc : ''
+          ].join(''))
+        ])
+      ]);
+    });
+
+    const rotulo = () => `+ registrar ${marcadas.size} no placar`;
+    const botao = h('button', { class: 'btn primary sm' }, rotulo());
+    botao.addEventListener('click', async () => {
+      const escolhidas = lista.filter((_, i) => marcadas.has(i));
+      botao.disabled = true;
+      botao.innerHTML = '<span class="spinner"></span> registrando…';
+      try {
+        // Uma a uma: o backend versiona cada promessa desde o nascimento, e
+        // uma falha no meio não pode perder as que já entraram.
+        for (const p of escolhidas) {
+          await api(`/api/company/${state.ticker}/promessas`, {
+            method: 'POST', body: JSON.stringify(p)
+          });
+        }
+        botao.textContent = `✓ ${escolhidas.length} no placar`;
+        global.dispatchEvent(new CustomEvent('finlab:promessas-registradas'));
+      } catch (err) {
+        botao.disabled = false;
+        botao.textContent = 'falhou: ' + err.message;
+      }
+    });
+
+    return h('div', { class: 'chat-promessas' }, [
+      h('div', { class: 'tt' }, `Promessas encontradas nos documentos (${lista.length})`),
+      h('div', { class: 'grade' }, linhas),
+      state.ticker ? botao
+        : h('div', { class: 'dica' }, 'abra a empresa para registrar no placar')
+    ]);
   }
 
   /* O reconciliador (4.3): a proposta do quant vira um cartão de→para com um
@@ -347,16 +407,17 @@
         });
         return null;
       }
-      // Com proposta reconhecida, o bloco JSON sai do texto: o cartão de→para
-      // o substitui — mostrar os dois seria a mesma coisa duas vezes.
+      // Com proposta reconhecida, o bloco JSON sai do texto: o cartão o
+      // substitui — mostrar os dois seria a mesma coisa duas vezes.
       const proposta = (fim && fim.proposta) || null;
-      const exibivel = proposta
+      const promessas = (fim && fim.promessas) || null;
+      const exibivel = (proposta || promessas)
         ? definitivo.replace(/```json[\s\S]*?```/g, '').trim() || definitivo
         : definitivo;
       empilhar({ role: 'assistant', autor: rotulo, icone: icone, agente: agente,
                  modelo: (fim && fim.modelo) || (slot && slot.model),
                  uso: (fim && fim.uso) || null,
-                 proposta: proposta, content: exibivel });
+                 proposta: proposta, promessas: promessas, content: exibivel });
       return { texto: definitivo, uso: (fim && fim.uso) || null };
     } catch (err) {
       marca.remove();

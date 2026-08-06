@@ -700,6 +700,15 @@ def api_agent_chat(body: dict = Body(...)):
         p = agents.parse_assumption_json(texto_final)
         return p if p and p.get("premissas") else None
 
+    # Promessas extraídas dos documentos: qualquer agente pode propor (quem lê
+    # o documento é quem acha), mas só com empresa aberta — é onde o placar
+    # vive. Cada item já vem filtrado pelo conjunto recuperado.
+    def promessas_de(texto_final: str):
+        if not (ticker and universe.get(ticker)) or not trechos_docs:
+            return None
+        achadas = docs.promessas_propostas(texto_final, trechos_docs)
+        return achadas or None
+
     if body.get("stream"):
         def eventos():
             try:
@@ -712,7 +721,8 @@ def api_agent_chat(body: dict = Body(...)):
                         ev = {"fim": True, "texto": texto_final,
                               "uso": ev.get("uso"), "modelo": model,
                               "provedor": slot.get("provider"), "agente": agente,
-                              "proposta": proposta_de(texto_final)}
+                              "proposta": proposta_de(texto_final),
+                              "promessas": promessas_de(texto_final)}
                     yield "data: " + json.dumps(ev, ensure_ascii=False) + "\n\n"
             except agents.LLMError as exc:
                 yield "data: " + json.dumps({"erro": str(exc)},
@@ -734,7 +744,7 @@ def api_agent_chat(body: dict = Body(...)):
 
     return {"texto": texto, "modelo": model, "provedor": slot.get("provider"),
             "ticker": ticker or None, "agente": agente,
-            "proposta": proposta_de(texto)}
+            "proposta": proposta_de(texto), "promessas": promessas_de(texto)}
 
 
 @app.post("/api/agents/run")

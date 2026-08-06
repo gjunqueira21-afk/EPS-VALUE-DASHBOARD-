@@ -21,6 +21,7 @@ from __future__ import annotations
 import re
 import sqlite3
 import unicodedata
+from datetime import date
 from typing import Optional
 
 from .settings import CVM_PROCESSED_DIR
@@ -256,6 +257,67 @@ def bloco_anexo(nome: str, anexo: dict) -> str:
             "trechos dele quando afirmar algo baseado nele, e não o confunda "
             "com as demonstrações da CVM.\n\n"
             f"{anexo.get('texto', '')}")
+
+
+def promessas_propostas(texto: str, trechos: list[dict]) -> list[dict]:
+    """Promessas que o agente extraiu dos documentos, filtradas pelo recuperado.
+
+    O modelo devolve um bloco ```json com uma lista. Aqui ele vira dado
+    utilizável, e cada item precisa passar por duas peneiras em CÓDIGO:
+
+      * o `doc` tem de ser um dos trechos realmente recuperados — proposta
+        ancorada em documento inventado não chega à tela;
+      * o prazo, quando vier, tem de ser data ISO válida.
+
+    O link e a data do documento vêm do índice, não do modelo: assim a
+    promessa registrada aponta para a fonte certa mesmo que o agente tenha
+    escrito a URL errada.
+    """
+    import json as _json
+
+    if not texto or "promessas" not in texto:
+        return []
+    bruto = None
+    for parte in texto.split("```"):
+        limpo = parte.strip()
+        if limpo.startswith("json"):
+            limpo = limpo[4:].strip()
+        if limpo.startswith("{") and '"promessas"' in limpo:
+            bruto = limpo
+            break
+    if bruto is None:
+        return []
+    try:
+        dados = _json.loads(bruto)
+    except ValueError:
+        return []
+
+    porta = {str(t.get("protocolo")): t for t in trechos if t.get("protocolo")}
+    saida = []
+    for item in (dados.get("promessas") or [])[:20]:
+        if not isinstance(item, dict):
+            continue
+        corpo = str(item.get("texto") or "").strip()
+        doc = str(item.get("doc") or "").strip()
+        if not corpo or doc not in porta:
+            continue
+        prazo = str(item.get("prazo") or "").strip()[:10]
+        if prazo:
+            try:
+                date.fromisoformat(prazo)
+            except ValueError:
+                prazo = ""
+        origem = porta[doc]
+        saida.append({
+            "texto": corpo[:400],
+            "prazo": prazo or None,
+            "metrica": (str(item.get("metrica") or "").strip() or None),
+            "doc": doc,
+            "link": origem.get("link"),
+            "data_origem": origem.get("data"),
+            "origem": "documento",
+        })
+    return saida
 
 
 def validar_citacoes(texto: str, trechos: list[dict]) -> str:

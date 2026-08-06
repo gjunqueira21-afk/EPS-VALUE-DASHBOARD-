@@ -2543,3 +2543,53 @@ def test_placar_entra_no_contexto_da_mesa_com_a_proibicao_de_inventar():
     vazio = "\n".join(agents._bloco_momento({"fundamentals": {"last_year": 2025},
                                              "promessas": {"total": 0, "itens": []}}))
     assert "PLACAR DE PROMESSAS" not in vazio
+
+
+def test_promessa_extraida_e_filtrada_pelo_documento_recuperado():
+    """A ponte documento → placar: o agente propõe, mas quem valida a
+    procedência é o código. Promessa ancorada em doc inventado não chega
+    à tela, e o link vem do índice, não do que o modelo escreveu."""
+    from finlab.backend import docs as bdocs
+
+    trechos = [{"protocolo": "F1", "data": "2026-06-20",
+                "link": "https://rad.cvm.gov.br/ENET/doc1.pdf",
+                "categoria": "Fato Relevante", "assunto": "Venda",
+                "trecho": "..."}]
+    texto = (
+        "Encontrei dois compromissos.\n\n```json\n"
+        '{"promessas": ['
+        '{"texto": "desalavancar para 2,0x", "prazo": "2026-12-31", '
+        '"metrica": "DL/EBITDA", "doc": "F1", "link": "https://mentira.com/x"},'
+        '{"texto": "promessa de documento que não veio", "doc": "F9"},'
+        '{"texto": "prazo impossível", "prazo": "2026-13-45", "doc": "F1"},'
+        '{"texto": "", "doc": "F1"}'
+        ']}\n```'
+    )
+    achadas = bdocs.promessas_propostas(texto, trechos)
+
+    assert len(achadas) == 2, "só as ancoradas em F1 com texto"
+    primeira = achadas[0]
+    assert primeira["texto"] == "desalavancar para 2,0x"
+    assert primeira["prazo"] == "2026-12-31"
+    assert primeira["origem"] == "documento"
+    # o link e a data vêm do ÍNDICE, não do que o modelo escreveu
+    assert primeira["link"] == "https://rad.cvm.gov.br/ENET/doc1.pdf"
+    assert primeira["data_origem"] == "2026-06-20"
+    # data inválida é descartada, mas a promessa continua (sem prazo)
+    assert achadas[1]["texto"] == "prazo impossível" and achadas[1]["prazo"] is None
+
+    # sem bloco, sem documento, ou com JSON quebrado: lista vazia, sem exceção
+    assert bdocs.promessas_propostas("só texto", trechos) == []
+    assert bdocs.promessas_propostas(texto, []) == []
+    assert bdocs.promessas_propostas('```json\n{"promessas": [ quebrado\n```', trechos) == []
+
+
+def test_regra_de_extracao_so_entra_com_documento_no_contexto():
+    """Ensinar o formato a quem não tem de onde extrair é convite a inventar."""
+    com_doc = agents._sistema_da_conversa(
+        "equity", "DOCUMENTOS DA EMPRESA (trechos oficiais recuperados)\n[doc F1 · 2026-01-01]")
+    sem_doc = agents._sistema_da_conversa("equity", "MOMENTO DA EMPRESA\n  Regime: R0")
+
+    assert "EXTRAIR PROMESSAS DA GESTÃO" in com_doc
+    assert "AAAA-MM-DD" in com_doc and "não invente data" in com_doc
+    assert "EXTRAIR PROMESSAS DA GESTÃO" not in sem_doc

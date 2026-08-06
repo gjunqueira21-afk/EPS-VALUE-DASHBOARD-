@@ -172,17 +172,26 @@ def bloco_contexto(trechos: list[dict]) -> str:
     """O bloco que entra no contexto dos agentes.
 
     A data vem ANTES do trecho, sempre — parecer 03 §5: data visível em todo
-    chunk injetado. Vazio devolve a abstenção pronta, para o agente não fingir
-    que leu documento que não existe.
+    chunk injetado. Cada trecho carrega o ID do documento (o protocolo da
+    CVM): é o que permite à mesa separar FATO (afirmação que termina com
+    `(doc ID)`) de INTERPRETAÇÃO (que não leva doc) — e ao Cético contestar
+    por ID, não por impressão. Vazio devolve a abstenção pronta, para o
+    agente não fingir que leu documento que não existe.
     """
     if not trechos:
         return ("DOCUMENTOS DA EMPRESA: nenhum trecho recuperado para esta "
                 "consulta. Não cite fato relevante, comunicado ou guidance — "
                 "diga que não há documento recuperado sobre o assunto.")
-    linhas = ["DOCUMENTOS DA EMPRESA (trechos oficiais recuperados; cite sempre "
-              "a data e o link)"]
+    linhas = ["DOCUMENTOS DA EMPRESA (trechos oficiais recuperados)",
+              "Regra de citação, obrigatória para a mesa inteira:",
+              "• FATO tirado de um trecho: a frase termina com (doc ID), usando o "
+              "ID entre colchetes abaixo. Fato sem (doc ID) será tratado como "
+              "não fundamentado.",
+              "• INTERPRETAÇÃO sua não leva (doc ID) — é assim que o leitor "
+              "separa o que o documento diz do que você conclui.",
+              "• Nunca invente um ID: só os listados abaixo existem."]
     for t in trechos:
-        cab = f"[{t['data']}] {t['categoria'] or 'Documento'}"
+        cab = f"[doc {t['protocolo']} · {t['data']}] {t['categoria'] or 'Documento'}"
         if t.get("assunto"):
             cab += f" — {t['assunto']}"
         linhas.append(f"\n{cab}\nLink: {t['link']}\n{t['trecho']}")
@@ -252,16 +261,28 @@ def bloco_anexo(nome: str, anexo: dict) -> str:
 def validar_citacoes(texto: str, trechos: list[dict]) -> str:
     """Validação de citação em código, não em prompt (03 §5).
 
-    Qualquer URL de RAD/ENET no texto do agente que NÃO esteja no conjunto
-    recuperado é link inventado: fica marcado como não verificado, em vez de
-    seguir adiante com cara de fonte oficial.
+    Duas verificações, mesma lógica: referência que NÃO está no conjunto
+    recuperado é invenção e sai marcada, em vez de seguir adiante com cara
+    de fonte oficial.
+
+      * URL de RAD/ENET fora do conjunto → marcada.
+      * `(doc ID)` com ID fora do conjunto → marcado. É a metade em código do
+        esquema fato × interpretação (04 F2): o prompt pede a etiqueta, mas
+        quem garante que ela aponta para documento real é este filtro.
     """
     permitidos = {t["link"] for t in trechos}
+    ids = {str(t.get("protocolo")) for t in trechos if t.get("protocolo")}
 
-    def marca(m: re.Match) -> str:
+    def marca_link(m: re.Match) -> str:
         url = m.group(0).rstrip('.,;)»"')
         if url in permitidos:
             return m.group(0)
         return f"{m.group(0)} ⚠[link não recuperado nesta consulta]"
 
-    return re.sub(r"https?://(?:www\.)?rad\.cvm\.gov\.br\S+", marca, texto)
+    def marca_doc(m: re.Match) -> str:
+        if m.group(1) in ids:
+            return m.group(0)
+        return f"{m.group(0)} ⚠[doc inexistente no recuperado]"
+
+    texto = re.sub(r"https?://(?:www\.)?rad\.cvm\.gov\.br\S+", marca_link, texto)
+    return re.sub(r"\(doc\s+([A-Za-z0-9_.-]+)\)", marca_doc, texto)

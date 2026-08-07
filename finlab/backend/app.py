@@ -642,7 +642,8 @@ def api_agent_chat(body: dict = Body(...)):
     respostas = body.get("respostas") or []
     if agente == "sintese":
         pergunta = agents.monta_pergunta_sintese(pergunta, respostas)
-    elif agente and respostas and agents.AGENTS.get(agente, {}).get("le_a_mesa"):
+    elif agente and respostas and (agente in agents.FECHAMENTO_DA_RODADA
+                                   or agents.AGENTS.get(agente, {}).get("le_a_mesa")):
         pergunta = agents.monta_pergunta_sintese(
             pergunta, respostas,
             agents.FECHAMENTO_DA_RODADA.get(agente, "Comente agora o que a mesa disse."))

@@ -2728,3 +2728,45 @@ def test_esquema_do_indice_nao_diverge_entre_app_e_pipeline(tmp_path):
         return fora
 
     assert colunas(bdocs.ESQUEMA, "a.sqlite") == colunas(ipe_docs.ESQUEMA, "b.sqlite")
+
+
+def test_mesa_fecha_com_modelo_lendo_as_falas(monkeypatch):
+    """A discussão vira um conjunto de premissas defensável: o quant recebe as
+    falas da rodada e o fechamento exige a curva de crescimento — que é a
+    projeção do fluxo — e a declaração de onde a mesa discordou."""
+    from finlab.backend import app as bapp
+
+    visto = {}
+
+    def fake_chat(provider, api_key, model, contexto, historico, pergunta,
+                  agente=None, buscar=False):
+        visto["pergunta"] = pergunta
+        visto["agente"] = agente
+        return ("Adotei o lado do Cético na margem.\n\n```json\n"
+                '{"premissas": {"rf": 0.14, "growth": [0.05,0.04,0.04,0.03,0.03]},'
+                ' "confianca": "media"}\n```')
+
+    monkeypatch.setattr(bapp.agents, "chat_conversa", fake_chat)
+
+    r = bapp.api_agent_chat({
+        "slot": {"provider": "openrouter", "api_key": "k", "model": "m"},
+        "ticker": "PETR4", "pergunta": "vale a posição?", "agente": "premissas",
+        "respostas": [{"agente": "equity", "nome": "Analista", "texto": "margem sobe"},
+                      {"agente": "cetico", "nome": "Cético", "texto": "margem não sobe"}],
+    })
+
+    # as falas chegaram ao quant, com a instrução de fechamento
+    assert "O QUE A MESA RESPONDEU" in visto["pergunta"]
+    assert "margem não sobe" in visto["pergunta"]
+    assert "curva de crescimento" in visto["pergunta"]
+    assert "onde a mesa DISCORDOU" in visto["pergunta"]
+    # e a proposta volta estruturada, com a curva
+    assert r["proposta"]["premissas"]["growth"] == [0.05, 0.04, 0.04, 0.03, 0.03]
+
+    # sem respostas, o quant continua respondendo a pergunta crua
+    visto.clear()
+    bapp.api_agent_chat({
+        "slot": {"provider": "openrouter", "api_key": "k", "model": "m"},
+        "ticker": "PETR4", "pergunta": "e o beta?", "agente": "premissas",
+    })
+    assert visto["pergunta"] == "e o beta?"

@@ -760,6 +760,20 @@ FECHAMENTO_DA_RODADA = {
     "moderador": ("Escreva agora o mapa da mesa: convergência, disputa (carregando o "
                   "(doc ID) quando houver documento envolvido), o que decide cada "
                   "disputa, e a conclusão prática em uma frase."),
+    # O fechamento com MODELO: a discussão vira um conjunto de premissas que
+    # alguém teria de defender. É o que transforma opinião em número auditável.
+    "premissas": (
+        "Traduza agora a discussão acima em UM conjunto de premissas para o modelo "
+        "desta empresa.\n"
+        "Antes do JSON, escreva no máximo 120 palavras justificando as escolhas que "
+        "dependem da discussão — e diga explicitamente onde a mesa DISCORDOU e qual "
+        "lado você adotou, porque é aí que o número deixa de ser consenso.\n"
+        "A curva de crescimento (`growth`, 5 anos) é obrigatória neste fechamento: ela "
+        "é a projeção do fluxo que a mesa defenderia, ano a ano, e não pode ser um "
+        "número repetido sem razão. Se o regime da empresa desmente a média histórica, "
+        "a curva reflete isso.\n"
+        "Feche com o bloco ```json de premissas. Você propõe; quem aplica é o usuário."
+    ),
 }
 
 

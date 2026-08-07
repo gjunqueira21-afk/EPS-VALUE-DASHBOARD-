@@ -10,6 +10,10 @@
   const state = {
     ticker: null,
     data: null,
+    // Resultado da última indexação de call: vive aqui porque o painel de
+    // momento é reconstruído inteiro a cada recarga, e a mensagem tem de
+    // sobreviver a isso.
+    avisoCall: null,
     universe: null,
     a: null,        // premissas correntes
     base: null,     // premissas originais (para "restaurar")
@@ -2179,7 +2183,113 @@
         + 'uma recomendação: o modelo ao lado continua usando a base que você escolheu.'
     }));
 
+    renderCalls(corpo);
     renderPromessas(corpo);
+  }
+
+  /* ============================================== transcrição de call (4.1) */
+  /* O painel não transcreve: de onde veio o texto — ASR local, serviço pago ou
+     o site de RI — é escolha de quem usa. Aqui ele é segmentado em pares
+     pergunta→resposta e entra no MESMO índice dos documentos da CVM, então a
+     mesa passa a citá-lo com data e doc ID como qualquer outro. */
+
+  async function recarregarCalls() {
+    try {
+      const r = await api(`/api/company/${state.ticker}/calls`);
+      state.data.calls = r.calls || [];
+    } catch (e) { /* mantém o que tinha */ }
+    renderRegime();
+  }
+
+  function renderCalls(corpo) {
+    const lista = state.data.calls || [];
+
+    corpo.appendChild(h('div', { class: 'regime-h', style: 'margin-top:16px' },
+      'Transcrições de teleconferência'));
+
+    if (lista.length) {
+      corpo.appendChild(h('ul', { class: 'call-lista' }, lista.map((c) => h('li', {}, [
+        h('span', { class: 'regime-ano' }, fmt.date(c.data)),
+        h('span', { class: 'call-tit' }, c.titulo || 'Call'),
+        h('span', { class: 'call-n' }, `${c.trechos} trechos`),
+        h('button', {
+          class: 'btn ghost sm', title: 'Remover esta transcrição do índice',
+          onclick: () => removerCall(c)
+        }, '🗑')
+      ]))));
+    }
+
+    corpo.appendChild(formCall());
+    corpo.appendChild(h('div', {
+      class: 'note',
+      html: lista.length
+        ? '<b>A call vira documento.</b> Cada par pergunta→resposta é um trecho no mesmo '
+          + 'índice dos arquivos da CVM: a mesa recupera a troca inteira, cita com data e '
+          + '<code>doc</code>, e a validação de citação vale igual. A transcrição fica no seu '
+          + 'computador — nunca no repositório.'
+        : '<b>Cole a transcrição de uma call.</b> O painel separa a apresentação da sessão de '
+          + 'perguntas e guarda cada par <i>pergunta→resposta</i> como um trecho — que é a '
+          + 'unidade que faz sentido recuperar depois. Aceita texto corrido ou legenda '
+          + '(.vtt/.srt). Ele não transcreve áudio: o texto vem de onde você preferir.'
+    }));
+  }
+
+  function formCall() {
+    const data = h('input', { type: 'date', id: 'call-data', title: 'Data da call' });
+    const titulo = h('input', { type: 'text', id: 'call-titulo', autocomplete: 'off',
+      placeholder: 'título (ex.: Call do 2T26)' });
+    const texto = h('textarea', { id: 'call-texto', rows: '3',
+      placeholder: 'Cole aqui a transcrição — "Fulano, CEO: ..." em cada fala ajuda a '
+        + 'segmentação, mas ela funciona sem isso.' });
+    // O resultado vive no estado, não neste nó: indexar recarrega o painel e
+    // reconstrói o formulário inteiro, o que apagaria a mensagem no mesmo
+    // instante em que ela apareceu.
+    const aviso = h('div', { class: 'call-aviso', hidden: state.avisoCall ? null : 'hidden' },
+      state.avisoCall || '');
+
+    async function salvar(ev) {
+      const t = texto.value.trim();
+      if (!t) { texto.focus(); return; }
+      if (!data.value) { data.focus(); return; }
+      const botao = ev.target;
+      botao.disabled = true;
+      botao.innerHTML = '<span class="spinner"></span> lendo…';
+      try {
+        const r = await api(`/api/company/${state.ticker}/calls`, {
+          method: 'POST',
+          body: JSON.stringify({ data: data.value, texto: t,
+                                 titulo: titulo.value.trim() })
+        });
+        state.avisoCall = `✓ ${r.qa} par(es) de pergunta→resposta e `
+          + `${r.apresentacao} bloco(s) de apresentação indexados.`;
+        await recarregarCalls();
+      } catch (err) {
+        state.avisoCall = '⚠ ' + err.message;
+        aviso.hidden = false;
+        aviso.textContent = state.avisoCall;
+        botao.disabled = false;
+        botao.textContent = '+ indexar call';
+      }
+    }
+
+    return h('div', { class: 'call-form' }, [
+      h('div', { class: 'linha' }, [
+        data, titulo,
+        h('button', { class: 'btn primary sm', onclick: salvar }, '+ indexar call')
+      ]),
+      texto,
+      aviso
+    ]);
+  }
+
+  async function removerCall(c) {
+    if (!confirm('Remover esta transcrição do índice?\n\n' + (c.titulo || c.data))) return;
+    try {
+      await api(`/api/company/${state.ticker}/calls/${c.protocolo}`, { method: 'DELETE' });
+      await recarregarCalls();
+    } catch (err) {
+      alert('Não foi possível remover: ' + err.message);
+    }
   }
 
   /* ========================================== placar de promessas (4.2) === */

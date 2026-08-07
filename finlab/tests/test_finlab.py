@@ -2593,3 +2593,138 @@ def test_regra_de_extracao_so_entra_com_documento_no_contexto():
     assert "EXTRAIR PROMESSAS DA GESTÃO" in com_doc
     assert "AAAA-MM-DD" in com_doc and "não invente data" in com_doc
     assert "EXTRAIR PROMESSAS DA GESTÃO" not in sem_doc
+
+
+# ---------------------------------------------------------------------------
+# Transcrição de teleconferência (4.1)
+# ---------------------------------------------------------------------------
+
+_CALL = """WEBVTT
+
+1
+00:00:01.000 --> 00:00:05.000
+Operador: Bom dia. Iniciamos a teleconferência do 2T26.
+
+João Silva, CEO: O trimestre teve margem de 34%, recorde da companhia.
+
+Maria Souza, CFO: A dívida líquida fechou em 2,8x EBITDA.
+
+Operador: Iniciaremos agora a sessão de perguntas e respostas.
+
+Operador: A próxima pergunta vem de Pedro Lima, do Banco X.
+
+Pedro Lima: Qual o prazo para chegar em 2,0x? E o capex de 2027 muda?
+
+João Silva, CEO: Esperamos 2,0x até o 4T27. O capex segue em 3 bilhões.
+
+Operador: Próxima pergunta, de Ana Costa.
+
+Ana Costa: A venda da unidade internacional continua no radar?
+
+Maria Souza, CFO: Sim, mantemos o processo, sem prazo definido.
+"""
+
+
+def test_call_segmenta_em_pares_pergunta_resposta():
+    """A unidade de recuperação de uma call é a TROCA inteira: quem pergunta
+    sobre alavancagem precisa da pergunta e da resposta juntas — metade
+    engana. Legenda .vtt e falas do operador não podem virar conteúdo."""
+    from finlab.backend import calls
+
+    s = calls.segmentar(_CALL)
+
+    assert len(s["qa"]) == 2
+    assert s["qa"][0]["quem_pergunta"] == "Pedro Lima"
+    assert "2,0x" in s["qa"][0]["pergunta"] and "capex" in s["qa"][0]["pergunta"]
+    assert s["qa"][0]["quem_resposta"] == "João Silva, CEO"
+    assert "4T27" in s["qa"][0]["resposta"]
+    assert s["qa"][1]["quem_pergunta"] == "Ana Costa"
+
+    # apresentação: só os dois executivos; o operador não entra
+    assert len(s["apresentacao"]) == 2
+    assert not any("Operador" in b for b in s["apresentacao"])
+    # nem o cabeçalho da legenda nem o timestamp sobrevivem
+    juntos = "\n".join(s["trechos"])
+    assert "WEBVTT" not in juntos and "00:00:01" not in juntos
+    # o trecho do Q&A carrega a troca inteira
+    qa = [t for t in s["trechos"] if t.startswith("[Q&A]")]
+    assert len(qa) == 2 and "P (Pedro Lima)" in qa[0] and "R (João Silva" in qa[0]
+
+
+def test_call_sem_rotulo_de_falante_e_sem_sessao_de_perguntas():
+    """Transcrição crua (ASR sem diarização) não pode falhar — vira
+    apresentação inteira em vez de exceção. E a marca de sessão de perguntas
+    aparecendo sem que haja perguntas não pode engolir a call: melhor tudo
+    como apresentação do que texto perdido."""
+    from finlab.backend import calls
+
+    s = calls.segmentar("Texto corrido, sem falantes rotulados nesta gravação. " * 5)
+    assert s["qa"] == []
+    assert s["apresentacao"] and s["trechos"]
+
+    # a marca no meio da apresentação, sem nenhum "?" depois
+    falso = calls.segmentar("Ana, CEO: Depois vem a sessão de perguntas e respostas. "
+                            "Seguimos com o plano de capex.")
+    assert falso["qa"] == []
+    assert falso["apresentacao"], "o corte errado apagou a call inteira"
+    assert "capex" in " ".join(falso["trechos"])
+    assert calls.segmentar("")["trechos"] == []
+    assert calls.segmentar("   \n\n  ")["trechos"] == []
+
+
+def test_call_indexada_vira_documento_citavel_pela_mesa(tmp_path, monkeypatch):
+    """O ponto do desenho: a call entra no MESMO índice, então herda de graça
+    a recuperação com data e doc ID — e a mesa a cita como qualquer documento."""
+    from finlab.backend import calls, docs as bdocs
+
+    monkeypatch.setattr(bdocs, "DB_PATH", tmp_path / "docs.sqlite")
+
+    r = calls.indexar("009512", "2026-08-05", _CALL, "Call do 2T26")
+    assert r["qa"] == 2 and r["protocolo"] == "call-2026-08-05"
+
+    achados = bdocs.search("9512", "prazo para chegar em 2,0x")
+    assert achados, "a call não foi recuperada"
+    assert achados[0]["data"] == "2026-08-05"
+    assert achados[0]["protocolo"] == "call-2026-08-05"
+    assert achados[0]["categoria"] == "Teleconferência"
+    # a troca inteira veio junta
+    assert "P (Pedro Lima)" in achados[0]["trecho"] and "4T27" in achados[0]["trecho"]
+
+    # e o bloco de contexto a rotula com o ID, como os outros documentos
+    bloco = bdocs.bloco_contexto(achados[:1])
+    assert "[doc call-2026-08-05 · 2026-08-05]" in bloco
+
+    # listar, regravar (substitui, não duplica) e remover
+    assert [c["protocolo"] for c in calls.listar("009512")] == ["call-2026-08-05"]
+    calls.indexar("009512", "2026-08-05", _CALL, "Call do 2T26 (corrigida)")
+    assert len(calls.listar("9512")) == 1, "regravar duplicou a call"
+    assert calls.listar("9512")[0]["titulo"] == "Call do 2T26 (corrigida)"
+
+    assert calls.remover("9512", "call-2026-08-05") is True
+    assert calls.listar("9512") == []
+    assert calls.remover("9512", "call-2026-08-05") is False
+
+    with pytest.raises(ValueError):
+        calls.indexar("009512", "05/08/2026", _CALL)     # data fora do ISO
+    with pytest.raises(ValueError):
+        calls.indexar("009512", "2026-08-05", "   ")     # sem texto
+
+
+def test_esquema_do_indice_nao_diverge_entre_app_e_pipeline(tmp_path):
+    """As duas cópias do DDL (backend/docs.py e o pipeline) precisam descrever
+    o mesmo índice — divergir faria a call e os PDFs viverem em tabelas
+    incompatíveis, e o erro só apareceria em produção."""
+    import sqlite3
+    from finlab.backend import docs as bdocs
+    ipe_docs = _importar_ipe_docs()
+
+    def colunas(ddl, arquivo):
+        con = sqlite3.connect(tmp_path / arquivo)
+        con.executescript(ddl)
+        fora = {}
+        for tabela in ("documentos", "trechos"):
+            fora[tabela] = [r[1] for r in con.execute(f"PRAGMA table_info({tabela})")]
+        con.close()
+        return fora
+
+    assert colunas(bdocs.ESQUEMA, "a.sqlite") == colunas(ipe_docs.ESQUEMA, "b.sqlite")

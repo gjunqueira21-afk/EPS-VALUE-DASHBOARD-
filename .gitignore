@@ -16,6 +16,11 @@ finlab/data/cache/
 finlab/data/history.csv
 # Placar de promessas: memória de análise do usuário sobre a gestão
 finlab/data/promessas.json
+# Conteúdo dos documentos e transcrições de call: baixado/colado localmente,
+# nunca no repositório (parecer 03 §3.4 — o diretório tem parquets versionados,
+# então estes precisam ser excluídos por nome)
+valuation_cvm/data/processed/docs.sqlite
+valuation_cvm/data/raw/docs/
 
 # IDEs / SO
 .vscode/

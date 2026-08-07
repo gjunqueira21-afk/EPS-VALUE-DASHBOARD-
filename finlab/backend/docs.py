@@ -28,6 +28,35 @@ from .settings import CVM_PROCESSED_DIR
 
 DB_PATH = CVM_PROCESSED_DIR / "docs.sqlite"
 
+# O mesmo esquema que a etapa --docs do pipeline cria (valuation_cvm/src/
+# ipe_docs.py). Está declarado aqui também porque a ingestão de calls escreve
+# no índice sem passar pelo pipeline — e um teste garante que as duas cópias
+# não divirjam. `CREATE ... IF NOT EXISTS` faz as duas conviverem.
+ESQUEMA = """
+CREATE TABLE IF NOT EXISTS documentos (
+    protocolo   TEXT PRIMARY KEY,
+    cd_cvm      TEXT NOT NULL,
+    categoria   TEXT,
+    tipo        TEXT,
+    assunto     TEXT,
+    data_entrega TEXT NOT NULL,
+    data_referencia TEXT,
+    link        TEXT NOT NULL,
+    estado      TEXT NOT NULL DEFAULT 'ok',
+    indexado_em TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_docs_empresa ON documentos (cd_cvm, data_entrega DESC);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS trechos USING fts5(
+    texto,
+    protocolo UNINDEXED,
+    cd_cvm UNINDEXED,
+    data_entrega UNINDEXED,
+    ordem UNINDEXED,
+    tokenize = 'unicode61 remove_diacritics 2'
+);
+"""
+
 # Trechos por consulta: o suficiente para dar corpo sem afogar o contexto.
 MAX_TRECHOS = 6
 TAM_TRECHO_CONTEXTO = 700

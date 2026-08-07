@@ -138,6 +138,103 @@
     return caixa;
   }
 
+  /* ------------------------------------------- a mesa fechando com um modelo */
+  /* A discussão vale mais quando vira número que alguém teria de defender.
+     Depois da rodada, o quant lê TODAS as falas e consolida um conjunto de
+     premissas — com a curva de crescimento, que é a projeção do fluxo. O
+     cartão mostra o preço justo que aquilo produz ANTES de aplicar: ver o
+     resultado é parte da decisão, não consequência dela. */
+
+  function temModelo() {
+    const a = ((state.ctx && state.ctx()) || {}).assumptions;
+    return !!(a && global.FLEngine && isNum(a.fcf_base) && isNum(a.shares));
+  }
+
+  function convidarFechamento(pergunta, historico, respostas) {
+    const botao = h('button', {
+      class: 'btn primary sm',
+      onclick: async () => {
+        botao.disabled = true;
+        botao.innerHTML = '<span class="spinner"></span> fechando o modelo…';
+        state.enviando = true;
+        el('chat-send').disabled = true;
+        try {
+          await falar('premissas', loadAgentNames().premissas || 'Premissas',
+            agentIcon('premissas'), pergunta, historico, { respostas: respostas });
+          caixa.remove();
+        } catch (e) {
+          botao.disabled = false;
+          botao.textContent = '📐 Fechar a mesa com um modelo';
+        } finally {
+          state.enviando = false;
+          el('chat-send').disabled = false;
+        }
+      }
+    }, '📐 Fechar a mesa com um modelo');
+
+    const caixa = h('div', { class: 'chat-fechar' }, [
+      h('div', { class: 'dica' },
+        'Quer ver como essa discussão vira número? O quant consolida as premissas '
+        + 'da mesa e projeta o fluxo de caixa — você vê o preço justo antes de aplicar.'),
+      botao
+    ]);
+    const corpo = el('chat-body');
+    corpo.appendChild(caixa);
+    corpo.scrollTop = corpo.scrollHeight;
+  }
+
+  /** A projeção que as premissas propostas produzem, calculada aqui na tela
+   *  com o mesmo motor do painel — nada disso vem do modelo de linguagem. */
+  function projecao(premissas) {
+    const base = ((state.ctx && state.ctx()) || {}).assumptions;
+    if (!base || !global.FLEngine) return null;
+    const a = Object.assign({}, base);
+    ['rf', 'erp', 'beta', 'premio_extra', 'spread_credito', 'wd', 'g_terminal']
+      .forEach((k) => { if (isNum(premissas[k])) a[k] = premissas[k]; });
+    if (Array.isArray(premissas.growth) && premissas.growth.length) {
+      a.growth = premissas.growth.slice(0, 5).map(Number).filter(isNum);
+    }
+    // A mesma trava do painel: Gordon exige WACC > g, e uma perpetuidade
+    // proposta acima do custo de capital produziria um número sem sentido.
+    const w = global.FLEngine.wacc(a).wacc;
+    if (a.g_terminal >= w - 0.005) a.g_terminal = Math.max(0, w - 0.015);
+    const r = global.FLEngine.dcf(a);
+    return (r && isNum(r.preco_justo)) ? { r: r, a: a } : null;
+  }
+
+  function blocoProjecao(premissas) {
+    const p = projecao(premissas);
+    if (!p) return null;
+    const { r, a } = p;
+    const g = global.FLEngine.growthSeries(a.growth, r.anos);
+    const preco = ((state.ctx && state.ctx()).assumptions || {}).preco;
+
+    const anos = r.fluxos.map((f, i) => h('div', { class: 'ano' }, [
+      h('span', { class: 'n' }, 'A' + (i + 1)),
+      h('b', {}, fmt.bigShort(f, 1)),
+      h('span', { class: 'g' }, fmt.pct(g[i], 1))
+    ]));
+
+    return h('div', { class: 'proj' }, [
+      h('div', { class: 'tt' }, 'Como a mesa projetaria o fluxo'),
+      h('div', { class: 'anos' }, anos),
+      h('div', { class: 'saldo' }, [
+        h('span', {}, `WACC ${fmt.pct(r.wacc, 1)}`),
+        h('span', {}, `perpetuidade ${fmt.pct(a.g_terminal, 1)}`),
+        h('span', {}, `peso da perpetuidade ${fmt.pct(r.peso_perpetuidade, 0)}`)
+      ]),
+      h('div', { class: 'preco' }, [
+        h('span', { class: 'r' }, 'preço justo'),
+        h('b', {}, fmt.money(r.preco_justo)),
+        isNum(r.upside)
+          ? h('span', { class: 'up ' + (r.upside >= 0 ? 'pos' : 'neg') },
+              (r.upside >= 0 ? '+' : '') + fmt.pct(r.upside, 1))
+          : null,
+        isNum(preco) ? h('span', { class: 'vs' }, 'contra ' + fmt.money(preco) + ' na tela') : null
+      ])
+    ]);
+  }
+
   /* Promessas achadas nos documentos: o agente propõe, o usuário escolhe item
      a item. Mesmo gate do reconciliador — nada entra no placar sem o clique. */
 
@@ -244,6 +341,9 @@
       h('div', { class: 'tt' },
         'Premissas propostas' + (proposta.confianca ? ' · confiança ' + esc(proposta.confianca) : '')),
       h('div', { class: 'grade' }, linhas),
+      // O resultado ANTES do clique: ver o preço justo que a proposta produz
+      // é parte da decisão de aplicar, não consequência dela.
+      blocoProjecao(p),
       state.ticker ? botao
         : h('div', { class: 'dica' }, 'abra a empresa para aplicar no modelo')
     ]);
@@ -525,6 +625,12 @@
             }
           }
         }
+        // A discussão pode virar modelo: o convite só faz sentido quando há
+        // empresa com DCF na tela e mais de uma fala para consolidar.
+        if (respostas.length >= 2 && state.ticker && temModelo()) {
+          convidarFechamento(texto, anterior, respostas.slice());
+        }
+
         // O custo da rodada, medido pelo provedor — não estimado. Só aparece
         // quando pelo menos uma fala veio com a contagem.
         if (custo.medidas) {

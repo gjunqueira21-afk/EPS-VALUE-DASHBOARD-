@@ -228,6 +228,13 @@ documento.
       calibragem; o chat o transforma num cartão de→para (valor atual riscado,
       proposto ao lado) com o botão de aplicar — o gate humano. O clique muda
       `state.a`, com a trava de Gordon, e os sliders acompanham.
+      **A mesa fecha com um modelo:** terminada a rodada, um botão manda o
+      quant ler TODAS as falas e consolidar um conjunto único de premissas,
+      com a curva de crescimento obrigatória e a declaração de onde a mesa
+      discordou. O cartão mostra a projeção do fluxo ano a ano, o WACC, o peso
+      da perpetuidade e o preço justo resultante — calculados na tela pelo
+      mesmo motor do painel, **antes** de aplicar. Ver o resultado é parte da
+      decisão, não consequência dela.
 
 ## Transversal
 
